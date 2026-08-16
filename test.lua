@@ -1685,16 +1685,7 @@ local function buyWeatherEvent(eventName)
 end
 
 local function startWeatherWatcher()
-    -- Initial: beli event yang dipilih tapi belum aktif
-    local activeList = {}
-    pcall(function() activeList = EventsReplion:GetExpect("WeatherMachine") or {} end)
-    for _, ev in ipairs(Config.SelectedWeatherEvents) do
-        if ev ~= "Select Option" and not table.find(activeList, ev) then
-            buyWeatherEvent(ev)
-            task.wait(0.3)
-        end
-    end
-    -- Event-driven: OnArrayRemove fires saat cuaca berakhir
+    -- Connect watcher langsung (jangan terlambat detect event selesai)
     weatherWatchConn = EventsReplion:OnArrayRemove("WeatherMachine", function(_, removedEvent)
         if not Config.BuyWeatherActive then return end
         if not table.find(Config.SelectedWeatherEvents, removedEvent) then return end
@@ -1706,6 +1697,18 @@ local function startWeatherWatcher()
                 stopWeatherWatcher()
             end
         end)
+    end)
+    -- Initial buy di-defer: tunggu dropdown autoload selesai dulu
+    task.defer(function()
+        if not Config.BuyWeatherActive then return end
+        local activeList = {}
+        pcall(function() activeList = EventsReplion:GetExpect("WeatherMachine") or {} end)
+        for _, ev in ipairs(Config.SelectedWeatherEvents) do
+            if ev ~= "Select Option" and not table.find(activeList, ev) then
+                buyWeatherEvent(ev)
+                task.wait(0.3)
+            end
+        end
     end)
 end
 
