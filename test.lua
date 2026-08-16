@@ -1755,7 +1755,7 @@ local function findTotemUUID(totemName)
             if type(items) == "table" then
                 for _, item in pairs(items) do
                     if type(item) == "table" and item.UUID and item.Id then
-                        local ok2, data = pcall(ItemUtility.GetItemDataFromItemType, ItemUtility, catName, item.Id)
+                        local ok2, data = pcall(ItemUtility.GetItemDataFromItemType, catName, item.Id)
                         if ok2 and data and data.Data then
                             local name = tostring(data.Data.Name or "")
                             if name == totemName then
