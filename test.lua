@@ -1691,6 +1691,7 @@ local function startWeatherWatcher()
     for _, ev in ipairs(Config.SelectedWeatherEvents) do
         if ev ~= "Select Option" and not table.find(activeList, ev) then
             buyWeatherEvent(ev)
+            task.wait(0.3)
         end
     end
     -- Event-driven: OnArrayRemove fires saat cuaca berakhir
@@ -1712,13 +1713,7 @@ local ShopTab = Window:CreateTab("Shop")
 
 local WeatherSection = Window:AddCollapsible(ShopTab, "Auto Buy Weather", false)
 
-Window:AddDropdown(WeatherSection, "Select Weather", "", WEATHER_LIST, true, {}, function(selected)
-    if type(selected) == "table" and #selected > 3 then
-        Orvion:Notify({ Title="Weather", Description="", Content="Max 3 events!", Color=Color3.fromRGB(255,100,100), Delay=2 })
-        local trimmed = {}
-        for i = 1, 3 do trimmed[i] = selected[i] end
-        selected = trimmed
-    end
+Window:AddDropdown(WeatherSection, "Select Weather", "", WEATHER_LIST, 3, {}, function(selected)
     Config.SelectedWeatherEvents = (type(selected) == "table") and selected or {}
 end, "Dropdown_Select Weather")
 
