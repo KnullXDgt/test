@@ -1748,7 +1748,7 @@ local TOTEM_DURATION = 3600
 local function getTotemRF()
     local ch = net:GetChildren()
     for i, v in ipairs(ch) do
-        if v.Name == "SpawnTotem" and v.ClassName == "RemoteEvent" then
+        if (v.Name == "RE/SpawnTotem" or v.Name == "SpawnTotem") and v.ClassName == "RemoteEvent" then
             local prv = ch[i - 1]
             if prv and prv.ClassName == "RemoteFunction" then return prv end
         end
@@ -1827,14 +1827,10 @@ Window:AddDropdown(TotemSection, "Select Totem", "", TOTEM_LIST, false, Config.S
     Config.SelectedTotem = value or "Luck Totem"
 end, "Dropdown_Select Totem")
 
-Window:AddToggle(TotemSection, "Refresh Totem List", "", false, function(state)
-    if not state then return end
+Window:AddButton(TotemSection, "Refresh Totem List", "", "rbxassetid://16932740082", function()
     local uuid = findTotemUUID(Config.SelectedTotem)
     Orvion:Notify({ Title="Totem", Description="", Content=uuid and "Available" or "Not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
-    for _, el in ipairs(Window._allElements or {}) do
-        if el.elementId == "Toggle_Refresh Totem List" and el.Set then el.Set(false) end
-    end
-end, "Toggle_Refresh Totem List")
+end)
 
 Window:AddToggle(TotemSection, "Auto Spawn Totem", "", false, function(state)
     Config.AutoSpawnTotem = state
