@@ -296,6 +296,7 @@ local isFishing = false
 local function castRod()
     if Config.PerfectCast then
         pcall(function() Events.charge:InvokeServer(tick() - 0.5) end)
+        task.wait(0.02)
         pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
     else
         pcall(function() Events.charge:InvokeServer(tick()) end)
@@ -321,7 +322,7 @@ local function startFishing()
                 castRod()
                 if Config.CastWait > 0 then task.wait(Config.CastWait) end
                 pcall(function() Events.fishing:FireServer() end)
-                task.wait(0.3)
+                task.wait(0.05)
             end)
             if not ok and Config.InstantFishing then
                 pcall(function() Events.cancel:InvokeServer(true) end)
@@ -449,17 +450,12 @@ local function startBlatant()
                 pcall(function() Events.charge:InvokeServer(tick() - 0.5) end)
                 pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
             else
-                for i = 1, blatantN do
-                    pcall(function() Events.charge:InvokeServer(tick()) end)
-                end
+                pcall(function() Events.charge:InvokeServer(tick()) end)
                 pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
             end
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
-            for i = 1, blatantN + 1 do
-                pcall(function() Events.fishing:FireServer() end)
-                task.wait(0.01)
-            end
-            blatantN = blatantN % 3 + 1
+            pcall(function() Events.fishing:FireServer() end)
+            task.wait(0.05)
             isFishing = false
         end
         isFishing = false
