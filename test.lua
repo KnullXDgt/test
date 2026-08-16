@@ -295,7 +295,7 @@ local isFishing = false
 
 local function castRod()
     if Config.PerfectCast then
-        pcall(function() Events.charge:InvokeServer(tick() - 0.5) end)
+        pcall(function() Events.charge:InvokeServer(tick() - 0.3) end)
         task.wait(0.02)
         pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
     else
@@ -419,7 +419,7 @@ end
 
 local function castRodV2()
     if Config.PerfectCast then
-        pcall(function() Events.charge:InvokeServer(tick() - 0.5) end)
+        pcall(function() Events.charge:InvokeServer(tick() - 0.3) end)
         pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
     else
         pcall(function() Events.charge:InvokeServer(tick()) end)
@@ -447,7 +447,7 @@ local function startBlatant()
         while Config.BlatantActive do
             isFishing = true
             if Config.PerfectCast then
-                pcall(function() Events.charge:InvokeServer(tick() - 0.5) end)
+                pcall(function() Events.charge:InvokeServer(tick() - 0.3) end)
                 pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
             else
                 pcall(function() Events.charge:InvokeServer(tick()) end)
