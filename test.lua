@@ -1679,7 +1679,7 @@ local function buyWeatherEvent(eventName, silent)
     end)
     if ok and result == true then
         if not silent then
-            Orvion:Notify({ Title="Weather", Description="", Content=eventName, Color=Color3.fromRGB(100,180,255), Delay=3 })
+            Orvion:Notify({ Title="Auto Buy Weather", Description="", Content=eventName, Color=Color3.fromRGB(100,180,255), Delay=3 })
         end
         return true
     end
@@ -1715,7 +1715,7 @@ local function startWeatherWatcher()
             end
         end
         if #bought > 0 then
-            Orvion:Notify({ Title="Weather", Description="", Content=table.concat(bought, ", "), Color=Color3.fromRGB(100,180,255), Delay=4 })
+            Orvion:Notify({ Title="Auto Buy Weather", Description="", Content=table.concat(bought, ", "), Color=Color3.fromRGB(100,180,255), Delay=4 })
         end
     end)
 end
