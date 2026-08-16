@@ -1671,13 +1671,6 @@ local function stopWeatherWatcher()
         weatherWatchConn = nil
     end
     Config.BuyWeatherActive = false
-    pcall(function()
-        for _, el in ipairs(Window._allElements or {}) do
-            if el.elementId == "Toggle_Buy Weather" and el.Set then
-                el.Set(false)
-            end
-        end
-    end)
 end
 
 local function buyWeatherEvent(eventName)
