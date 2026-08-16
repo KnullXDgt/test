@@ -1745,38 +1745,25 @@ local TOTEM_LIST = {"Luck Totem", "Mutation Totem"}
 local autoSpawnThread = nil
 local TOTEM_DURATION = 3600
 
-local function getTotemRF()
-    local ch = net:GetChildren()
-    for i, v in ipairs(ch) do
-        if (v.Name == "RE/SpawnTotem" or v.Name == "SpawnTotem") and v.ClassName == "RemoteEvent" then
-            local prv = ch[i - 1]
-            if prv and prv.ClassName == "RemoteFunction" then return prv end
-        end
-    end
-    return nil
-end
+local spawnTotemRemote = GetServerRemote("RE/SpawnTotem")
 
 local function findTotemUUID(totemName)
     local uuid = nil
     pcall(function()
         local inv = PlayerData:GetExpect("Inventory")
-        local function scanCategory(items, catName)
-            if type(items) ~= "table" then return end
-            for _, item in ipairs(items) do
-                if type(item) == "table" and item.UUID and item.Id then
-                    local data = ItemUtility.GetItemDataFromItemType(catName, item.Id)
-                    if data and data.Data and data.Data.Name == totemName then
-                        uuid = item.UUID
+        for catName, items in pairs(inv) do
+            if type(items) == "table" then
+                for _, item in pairs(items) do
+                    if type(item) == "table" and item.UUID and item.Id then
+                        local ok2, data = pcall(ItemUtility.GetItemDataFromItemType, ItemUtility, catName, item.Id)
+                        if ok2 and data and data.Data then
+                            local name = tostring(data.Data.Name or "")
+                            if name == totemName then
+                                uuid = item.UUID
+                                return
+                            end
+                        end
                     end
-                end
-            end
-        end
-        scanCategory(inv.Totems or {}, "Totems")
-        if not uuid then
-            for catName, items in pairs(inv) do
-                if type(items) == "table" then
-                    scanCategory(items, catName)
-                    if uuid then break end
                 end
             end
         end
@@ -1792,10 +1779,10 @@ local function spawnTotem()
         Orvion:Notify({ Title="Totem", Description="", Content="Not found in inventory", Color=Color3.fromRGB(150,150,170), Delay=3 })
         return false
     end
-    local rf = getTotemRF()
+    local rf = spawnTotemRemote
     if not rf then return false end
-    local ok, result = pcall(function() return rf:InvokeServer(uuid) end)
-    if ok and result then
+    local ok, result = pcall(function() rf:FireServer(uuid); result = true end)
+    if ok then
         Orvion:Notify({ Title="Totem", Description="", Content=totemName, Color=Color3.fromRGB(150,150,170), Delay=3 })
         return true
     end
