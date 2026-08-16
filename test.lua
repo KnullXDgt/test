@@ -1158,10 +1158,6 @@ Window:AddToggle(SupportSection, "Disable Obtained Fish", "", false, function(st
     updateBigPopup()
 end, "Toggle_Disable Obtained Fish")
 
-Window:AddToggle(SupportSection, "Auto Equip Rod", "", false, function(state)
-    setAutoEquipRod(state)
-end, "Toggle_Auto Equip Rod")
-
 Window:AddToggle(SupportSection, "Disable Fishing Animation", "", false, function(state)
     setNoFishingAnimation(state)
 end, "Toggle_Disable Fishing Animation")
@@ -1178,6 +1174,14 @@ Window:AddToggle(SupportSection, "Disable Ability VFX", "", false, function(stat
     setDisableAbilityVFX(state)
 end, "Toggle_Disable Ability VFX")
 
+Window:AddToggle(SupportSection, "Disable Weather VFX", "", false, function(state)
+    setDisableWeatherVFX(state)
+end, "Toggle_Disable Weather VFX")
+
+Window:AddToggle(SupportSection, "Auto Equip Rod", "", false, function(state)
+    setAutoEquipRod(state)
+end, "Toggle_Auto Equip Rod")
+
 Window:AddToggle(SupportSection, "Hide Other Players", "", false, function(state)
     setHideOtherPlayers(state)
 end, "Toggle_Hide Other Players")
@@ -1193,10 +1197,6 @@ end, "Toggle_Bypass Radar")
 Window:AddToggle(SupportSection, "Auto Equip Diving Gear", "", false, function(state)
     setAutoEquipDivingGear(state)
 end, "Toggle_Auto Equip Diving Gear")
-
-Window:AddToggle(SupportSection, "Disable Weather VFX", "", false, function(state)
-    setDisableWeatherVFX(state)
-end, "Toggle_Disable Weather VFX")
 
 Window:AddToggle(SupportSection, "Lock Position", "", false, function(state)
     setLockPosition(state)
@@ -1257,9 +1257,9 @@ Window:AddToggle(StableSection, "Stable Result", "", false, function(state)
         end)
     end
 end, "Toggle_Stable Result")
-Window:AddToggle(StableSection, "Auto Perfect Cast", "", false, function(state)
+Window:AddToggle(StableSection, "Auto Perfect", "", false, function(state)
     Config.PerfectCast = state
-end, "Toggle_Auto Perfect Cast")
+end, "Toggle_Auto Perfect")
 
 -- ====== SELL FEATURES (under Main tab) ======
 local SellSection = Window:AddCollapsible(FishingTab, "Sell Features", false)
