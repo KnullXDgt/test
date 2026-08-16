@@ -182,12 +182,7 @@ local function getSavedLocation()
         return HttpService:JSONDecode(readfile(SAVED_LOCATION_FILE))
     end)
     if not ok or not data then return nil end
-    return CFrame.new(
-        data.X, data.Y, data.Z,
-        data.R00, data.R01, data.R02,
-        data.R10, data.R11, data.R12,
-        data.R20, data.R21, data.R22
-    )
+    return CFrame.new(table.unpack(data))
 end
 
 local function saveCurrentLocation()
@@ -198,10 +193,7 @@ local function saveCurrentLocation()
     local x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22 = root.CFrame:GetComponents()
     local ok = pcall(function()
         writefile(SAVED_LOCATION_FILE, HttpService:JSONEncode({
-            X = x, Y = y, Z = z,
-            R00 = r00, R01 = r01, R02 = r02,
-            R10 = r10, R11 = r11, R12 = r12,
-            R20 = r20, R21 = r21, R22 = r22
+            x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22
         }))
     end)
     return ok
