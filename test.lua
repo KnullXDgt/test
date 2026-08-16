@@ -580,7 +580,16 @@ if fishCaughtRemote and textNotificationRemote then
                     Quantity = 1,
                     CustomDuration = 5
                 })
-
+                if Config.BlatantActive then
+                    firesignal(textNotificationRemote.OnClientEvent, {
+                        Type = "Item",
+                        ItemType = "Fish",
+                        ItemId = fishItemId,
+                        Text = "",
+                        Quantity = 1,
+                        CustomDuration = 5
+                    })
+                end
             end)
         end
     end)
