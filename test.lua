@@ -116,6 +116,8 @@ local Config = {
     SelectEvent           = "Select Option",
     SelectedWeatherEvents = {},
     BuyWeatherActive      = false,
+    SelectedTotem         = "Luck Totem",
+    AutoSpawnTotem        = false,
 }
 
 -- ====== TELEPORT LOCATIONS ======
@@ -1736,6 +1738,112 @@ Window:AddToggle(WeatherSection, "Buy Weather", "", false, function(state)
         stopWeatherWatcher()
     end
 end, "Toggle_Buy Weather")
+
+
+-- ====== AUTOMATION: TOTEM FEATURES ======
+local TOTEM_LIST = {"Luck Totem", "Mutation Totem"}
+local autoSpawnThread = nil
+local TOTEM_DURATION = 3600
+
+local function getTotemRF()
+    local ch = net:GetChildren()
+    for i, v in ipairs(ch) do
+        if v.Name == "SpawnTotem" and v.ClassName == "RemoteEvent" then
+            local prv = ch[i - 1]
+            if prv and prv.ClassName == "RemoteFunction" then return prv end
+        end
+    end
+    return nil
+end
+
+local function findTotemUUID(totemName)
+    local uuid = nil
+    pcall(function()
+        local inv = PlayerData:GetExpect("Inventory")
+        local function scanCategory(items, catName)
+            if type(items) ~= "table" then return end
+            for _, item in ipairs(items) do
+                if type(item) == "table" and item.UUID and item.Id then
+                    local data = ItemUtility.GetItemDataFromItemType(catName, item.Id)
+                    if data and data.Data and data.Data.Name == totemName then
+                        uuid = item.UUID
+                    end
+                end
+            end
+        end
+        scanCategory(inv.Totems or {}, "Totems")
+        if not uuid then
+            for catName, items in pairs(inv) do
+                if type(items) == "table" then
+                    scanCategory(items, catName)
+                    if uuid then break end
+                end
+            end
+        end
+    end)
+    return uuid
+end
+
+local function spawnTotem()
+    local totemName = Config.SelectedTotem
+    if not totemName or totemName == "" then return false end
+    local uuid = findTotemUUID(totemName)
+    if not uuid then
+        Orvion:Notify({ Title="Totem", Description="", Content="Not found in inventory", Color=Color3.fromRGB(150,150,170), Delay=3 })
+        return false
+    end
+    local rf = getTotemRF()
+    if not rf then return false end
+    local ok, result = pcall(function() return rf:InvokeServer(uuid) end)
+    if ok and result then
+        Orvion:Notify({ Title="Totem", Description="", Content=totemName, Color=Color3.fromRGB(150,150,170), Delay=3 })
+        return true
+    end
+    return false
+end
+
+local function stopAutoSpawn()
+    if autoSpawnThread then task.cancel(autoSpawnThread); autoSpawnThread = nil end
+    Config.AutoSpawnTotem = false
+end
+
+local function startAutoSpawn()
+    stopAutoSpawn()
+    Config.AutoSpawnTotem = true
+    autoSpawnThread = task.spawn(function()
+        task.defer(function()
+            while Config.AutoSpawnTotem do
+                spawnTotem()
+                task.wait(TOTEM_DURATION)
+            end
+        end)
+    end)
+end
+
+local AutomationTab = Window:CreateTab("Automation")
+local TotemSection = Window:AddCollapsible(AutomationTab, "Totem Features", false)
+
+Window:AddDropdown(TotemSection, "Select Totem", "", TOTEM_LIST, false, Config.SelectedTotem, function(value)
+    Config.SelectedTotem = value or "Luck Totem"
+end, "Dropdown_Select Totem")
+
+Window:AddToggle(TotemSection, "Refresh Totem List", "", false, function(state)
+    if not state then return end
+    local uuid = findTotemUUID(Config.SelectedTotem)
+    Orvion:Notify({ Title="Totem", Description="", Content=uuid and "Available" or "Not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    for _, el in ipairs(Window._allElements or {}) do
+        if el.elementId == "Toggle_Refresh Totem List" and el.Set then el.Set(false) end
+    end
+end, "Toggle_Refresh Totem List")
+
+Window:AddToggle(TotemSection, "Auto Spawn Totem", "", false, function(state)
+    Config.AutoSpawnTotem = state
+    if state then startAutoSpawn() else stopAutoSpawn() end
+end, "Toggle_Auto Spawn Totem")
+
+Window:AddButton(TotemSection, "Spawn Now", "", "rbxassetid://16932740082", function()
+    spawnTotem()
+end)
 
 -- ====== STARTUP ======
 updateBigPopup()
