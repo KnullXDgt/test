@@ -577,11 +577,9 @@ if fishCaughtRemote and textNotificationRemote then
                     ItemType = "Fish",
                     ItemId = fishItemId,
                     Text = "",
-                    Quantity = 1,
                     CustomDuration = 5
                 })
                 if Config.BlatantActive then
-                    task.wait(0.05)
                     firesignal(textNotificationRemote.OnClientEvent, {
                         Type = "Item",
                         ItemType = "Fish",
