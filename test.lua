@@ -1673,12 +1673,14 @@ local function stopWeatherWatcher()
     Config.BuyWeatherActive = false
 end
 
-local function buyWeatherEvent(eventName)
+local function buyWeatherEvent(eventName, silent)
     local ok, result = pcall(function()
         return weatherPurchaseRF:InvokeServer(eventName)
     end)
     if ok and result == true then
-        Orvion:Notify({ Title="Weather", Description="", Content="Bought: " .. eventName, Color=Color3.fromRGB(100,180,255), Delay=3 })
+        if not silent then
+            Orvion:Notify({ Title="", Description="", Content=eventName, Color=Color3.fromRGB(100,180,255), Delay=3 })
+        end
         return true
     end
     return false
@@ -1703,11 +1705,17 @@ local function startWeatherWatcher()
         if not Config.BuyWeatherActive then return end
         local activeList = {}
         pcall(function() activeList = EventsReplion:GetExpect("WeatherMachine") or {} end)
+        local bought = {}
         for _, ev in ipairs(Config.SelectedWeatherEvents) do
             if ev ~= "Select Option" and not table.find(activeList, ev) then
-                buyWeatherEvent(ev)
+                if buyWeatherEvent(ev, true) then
+                    table.insert(bought, ev)
+                end
                 task.wait(0.3)
             end
+        end
+        if #bought > 0 then
+            Orvion:Notify({ Title="", Description="", Content=table.concat(bought, " | "), Color=Color3.fromRGB(100,180,255), Delay=4 })
         end
     end)
 end
