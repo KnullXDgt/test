@@ -1712,7 +1712,7 @@ local ShopTab = Window:CreateTab("Shop")
 
 local WeatherSection = Window:AddCollapsible(ShopTab, "Auto Buy Weather", false)
 
-Window:AddDropdown(WeatherSection, "Select Weather", "", WEATHER_LIST, true, "Select Option", function(selected)
+Window:AddDropdown(WeatherSection, "Select Weather", "", WEATHER_LIST, true, {}, function(selected)
     if type(selected) == "table" and #selected > 3 then
         Orvion:Notify({ Title="Weather", Description="", Content="Max 3 events!", Color=Color3.fromRGB(255,100,100), Delay=2 })
         local trimmed = {}
