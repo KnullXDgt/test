@@ -55,6 +55,7 @@ local changeSettingRemote    = net:WaitForChild("RE/ChangeSetting", 10)
 local fishingRadarRemote     = GetServerRemote("RF/UpdateFishingRadar")
 local equipOxygenRemote      = GetServerRemote("RF/EquipOxygenTank")
 local unequipOxygenRemote    = GetServerRemote("RF/UnequipOxygenTank")
+local weatherPurchaseRF      = GetServerRemote("RF/PurchaseWeatherEvent")
 
 -- Support Features state
 local cutsceneConns = {}
@@ -74,7 +75,8 @@ local walkOnWaterCharConn = nil
 
 -- ====== INVENTORY ======
 local Replion    = require(ReplicatedStorage.Packages.Replion)
-local PlayerData = Replion.Client:WaitReplion("Data")
+local PlayerData  = Replion.Client:WaitReplion("Data")
+local EventsReplion = Replion.Client:WaitReplion("Events")
 local ItemUtility = require(ReplicatedStorage.Shared.ItemUtility)
 
 local function getFishCount()
@@ -110,8 +112,10 @@ local Config = {
     PerfectCast       = false,
     BlatantActive     = false,
     BlatantDelay      = 0,
-    PriorityEvent    = "Select Option",
-    SelectEvent      = "Select Option",
+    PriorityEvent         = "Select Option",
+    SelectEvent           = "Select Option",
+    SelectedWeatherEvents = {},
+    BuyWeatherActive      = false,
 }
 
 -- ====== TELEPORT LOCATIONS ======
@@ -1655,6 +1659,84 @@ end)
 Window:AddToggle(SavedLocSection, "Auto Teleport on Spawn", "", false, function(state)
     setAutoTeleportOnSpawn(state)
 end, "Toggle_Auto Teleport on Spawn")
+
+
+-- ====== SHOP: AUTO BUY WEATHER ======
+local WEATHER_LIST = {"Fog", "Radiant", "Storm", "Treasure Hunt", "Wind"}
+local weatherWatchConn = nil
+
+local function stopWeatherWatcher()
+    if weatherWatchConn then
+        pcall(function() weatherWatchConn:Disconnect() end)
+        weatherWatchConn = nil
+    end
+    Config.BuyWeatherActive = false
+    pcall(function()
+        for _, el in ipairs(Window._allElements or {}) do
+            if el.elementId == "Toggle_Buy Weather" and el.Set then
+                el.Set(false)
+            end
+        end
+    end)
+end
+
+local function buyWeatherEvent(eventName)
+    local ok, result = pcall(function()
+        return weatherPurchaseRF:InvokeServer(eventName)
+    end)
+    if ok and result == true then
+        Orvion:Notify({ Title="Weather", Description="", Content="Bought: " .. eventName, Color=Color3.fromRGB(100,180,255), Delay=3 })
+        return true
+    end
+    return false
+end
+
+local function startWeatherWatcher()
+    -- Initial: beli event yang dipilih tapi belum aktif
+    local activeList = {}
+    pcall(function() activeList = EventsReplion:GetExpect("WeatherMachine") or {} end)
+    for _, ev in ipairs(Config.SelectedWeatherEvents) do
+        if ev ~= "Select Option" and not table.find(activeList, ev) then
+            buyWeatherEvent(ev)
+        end
+    end
+    -- Event-driven: OnArrayRemove fires saat cuaca berakhir
+    weatherWatchConn = EventsReplion:OnArrayRemove("WeatherMachine", function(_, removedEvent)
+        if not Config.BuyWeatherActive then return end
+        if not table.find(Config.SelectedWeatherEvents, removedEvent) then return end
+        task.spawn(function()
+            task.wait(0.5)
+            if not Config.BuyWeatherActive then return end
+            local success = buyWeatherEvent(removedEvent)
+            if not success then
+                stopWeatherWatcher()
+            end
+        end)
+    end)
+end
+
+local ShopTab = Window:CreateTab("Shop")
+
+local WeatherSection = Window:AddCollapsible(ShopTab, "Auto Buy Weather", false)
+
+Window:AddDropdown(WeatherSection, "Select Weather", "", WEATHER_LIST, true, "Select Option", function(selected)
+    if type(selected) == "table" and #selected > 3 then
+        Orvion:Notify({ Title="Weather", Description="", Content="Max 3 events!", Color=Color3.fromRGB(255,100,100), Delay=2 })
+        local trimmed = {}
+        for i = 1, 3 do trimmed[i] = selected[i] end
+        selected = trimmed
+    end
+    Config.SelectedWeatherEvents = (type(selected) == "table") and selected or {}
+end, "Dropdown_Select Weather")
+
+Window:AddToggle(WeatherSection, "Buy Weather", "", false, function(state)
+    Config.BuyWeatherActive = state
+    if state then
+        startWeatherWatcher()
+    else
+        stopWeatherWatcher()
+    end
+end, "Toggle_Buy Weather")
 
 -- ====== STARTUP ======
 updateBigPopup()
