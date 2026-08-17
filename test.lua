@@ -2194,7 +2194,7 @@ Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://169
         table.insert(newList, name)
     end
     if merchantDropdown then
-        pcall(function() merchantDropdown:Set("Select Option") end)
+        pcall(function() merchantDropdown:Refresh(newList, "Select Option") end)
     end
     Orvion:Notify({ Title="Merchant", Content=tostring(#newList - 1) .. " items found", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
