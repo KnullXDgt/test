@@ -76,7 +76,7 @@ local walkOnWaterCharConn = nil
 -- ====== INVENTORY ======
 local Replion    = require(ReplicatedStorage.Packages.Replion)
 local PlayerData  = Replion.Client:WaitReplion("Data")
-local EventsReplion = Replion.Client:WaitReplion("Events")
+local EventsReplion = nil  -- lazy-loaded saat weather feature dipakai
 local ItemUtility = require(ReplicatedStorage.Shared.ItemUtility)
 
 local function getFishCount()
@@ -1832,19 +1832,4 @@ end)
 updateBigPopup()
 Window:SetActiveTab("Info")
 Window:Show()
-
--- Fix PC click stuck: AutoButtonColor = true causes hover state to get stuck on PC
-task.defer(function()
-    pcall(function()
-        local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui", 5)
-        if not pg then return end
-        for _, v in ipairs(pg:GetDescendants()) do
-            pcall(function()
-                if (v:IsA("TextButton") or v:IsA("ImageButton")) and v.AutoButtonColor then
-                    v.AutoButtonColor = false
-                end
-            end)
-        end
-    end)
-end)
 
