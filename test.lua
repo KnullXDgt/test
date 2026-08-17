@@ -1889,11 +1889,11 @@ local ShopTab = Window:CreateTab("Shop")
 -- ROD FEATURES
 -- ==========================================
 local ROD_MAP = {
-    ["Starter Rod"]=22, ["Luck Rod"]=182, ["Carbon Rod"]=154, ["Grass Rod"]=37,
-    ["Demascus Rod"]=49, ["Ice Rod"]=188, ["Lucky Rod"]=147, ["Midnight Rod"]=53,
-    ["Seabreeze Rod"]=191, ["Eclipse Rod"]=180, ["Steampunk Rod"]=133, ["Chrome Rod"]=95,
-    ["Fluorescent Rod"]=20, ["Magma Rod"]=129, ["Astral Rod"]=117, ["Ares Rod"]=203,
-    ["Angler Rod"]=213, ["Bamboo Rod"]=222,
+    ["Starter Rod"]=1, ["Luck Rod"]=79, ["Carbon Rod"]=76, ["Grass Rod"]=85,
+    ["Demascus Rod"]=77, ["Ice Rod"]=78, ["Lucky Rod"]=4, ["Midnight Rod"]=80,
+    ["Seabreeze Rod"]=657, ["Eclipse Rod"]=656, ["Steampunk Rod"]=6, ["Chrome Rod"]=7,
+    ["Fluorescent Rod"]=255, ["Magma Rod"]=3, ["Astral Rod"]=5, ["Ares Rod"]=126,
+    ["Angler Rod"]=168, ["Bamboo Rod"]=258,
 }
 local ROD_LIST = {"Starter Rod","Luck Rod","Carbon Rod","Grass Rod","Demascus Rod","Ice Rod",
     "Lucky Rod","Midnight Rod","Seabreeze Rod","Eclipse Rod","Steampunk Rod","Chrome Rod",
@@ -1926,11 +1926,12 @@ end)
 -- BAIT FEATURES
 -- ==========================================
 local BAIT_MAP = {
-    ["Topwater Bait"]=49, ["Luck Bait"]=29, ["Midnight Bait"]=71, ["Nature Bait"]=15,
-    ["Chroma Bait"]=58, ["Dark Matter Bait"]=62, ["Corrupt Bait"]=76, ["Aether Bait"]=28,
+    ["Topwater Bait"]=10, ["Luck Bait"]=2, ["Midnight Bait"]=3, ["Nature Bait"]=17,
+    ["Chroma Bait"]=6, ["Dark Matter Bait"]=8, ["Corrupt Bait"]=15, ["Aether Bait"]=16,
+    ["Singularity Bait"]=18,
 }
 local BAIT_LIST = {"Topwater Bait","Luck Bait","Midnight Bait","Nature Bait",
-    "Chroma Bait","Dark Matter Bait","Corrupt Bait","Aether Bait"}
+    "Chroma Bait","Dark Matter Bait","Corrupt Bait","Aether Bait","Singularity Bait"}
 
 local BaitSection = Window:AddCollapsible(ShopTab, "Bait Features", false)
 
@@ -2175,7 +2176,7 @@ Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://169
     pcall(function() itemIds = mr:GetExpect("Items") or {} end)
     merchantItems = {}
     local newList = {"Select Option"}
-    for _, itemId in ipairs(itemIds) do
+    for idx, itemId in ipairs(itemIds) do
         local name = tostring(itemId)
         local price = "?"
         if ok2 and IU then
@@ -2190,7 +2191,7 @@ Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://169
                 end
             end)
         end
-        merchantItems[name] = { id = itemId, price = price }
+        merchantItems[name] = { id = itemId, index = idx, price = price }
         table.insert(newList, name)
     end
     if merchantDropdown then
@@ -2206,10 +2207,11 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
         return
     end
     local itemId = merchantItems[name].id
+    local itemIndex = merchantItems[name].index
     local qty = math.max(1, Config.MerchantQty)
     local bought = 0
     for i = 1, qty do
-        local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
+        local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemIndex) end)
         if ok and result then bought = bought + 1 end
         if i < qty then task.wait(0.3) end
     end
@@ -2225,8 +2227,8 @@ Window:AddToggle(MerchantSection, "Buy Merchant Item", "", false, function(state
             while Config.AutoBuyMerchant do
                 local name = Config.SelectedMerchantItem
                 if name ~= "Select Option" and merchantItems[name] and purchaseMerchantRF then
-                    local itemId = merchantItems[name].id
-                    local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
+                    local itemIndex = merchantItems[name].index
+                    local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemIndex) end)
                     if ok and result then
                         setMerchantBuyCount(1, 1)
                     end
