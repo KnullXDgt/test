@@ -2065,7 +2065,8 @@ local function startAutoBuyBM()
         task.wait(0.5)
         if preBMCF and root then root.CFrame = preBMCF end
         Config.AutoBuyBM = false
-        if bmToggleFunc then pcall(function() bmToggleFunc:Set(false) end) end
+        autoBuyBMThread = nil
+        if bmToggleFunc then task.defer(function() pcall(function() bmToggleFunc:Set(false) end) end) end
         if #bought > 0 then
             Orvion:Notify({ Title="Black Market", Description="", Content="Bought: " .. table.concat(bought, ", "), Color=Color3.fromRGB(150,150,170), Delay=4 })
         else
@@ -2162,7 +2163,7 @@ local function buyBPSlots()
         Orvion:Notify({ Title="Battlepass", Content="No Galaxy Points or all slots owned", Color=Color3.fromRGB(150,150,170), Delay=4 })
     end
     Config.AutoBuyBP = false
-    if bpToggleFunc then pcall(function() bpToggleFunc:Set(false) end) end
+    if bpToggleFunc then task.defer(function() pcall(function() bpToggleFunc:Set(false) end) end) end
 end
 
 local BPSection = Window:AddCollapsible(ShopTab, "Battlepass Shop Features", false)
@@ -2338,7 +2339,7 @@ merchantToggleFunc = Window:AddToggle(MerchantSection, "Buy Merchant Item", "", 
             end
             Orvion:Notify({ Title="Merchant", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
             Config.AutoBuyMerchant = false
-            if merchantToggleFunc then pcall(function() merchantToggleFunc:Set(false) end) end
+            if merchantToggleFunc then task.defer(function() pcall(function() merchantToggleFunc:Set(false) end) end) end
         end)
     else
         if autoBuyMerchantThread then pcall(task.cancel, autoBuyMerchantThread); autoBuyMerchantThread = nil end
