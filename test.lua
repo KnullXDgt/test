@@ -1911,11 +1911,8 @@ Window:AddButton(RodSection, "Buy Rod", "", "rbxassetid://16932740082", function
         Orvion:Notify({ Title="Rod", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
-    local ok, result = pcall(function() return purchaseRodRF:InvokeServer(rodId) end)
-    if ok and result then
-        local success, uuid = result, nil
-        if type(result) == "table" then success = result[1]; uuid = result[2]
-        elseif type(result) == "string" then uuid = result; success = true end
+    local ok, success, uuid = pcall(function() return purchaseRodRF:InvokeServer(rodId) end)
+    if ok then
         if success and uuid and equipItemRE then
             pcall(function() equipItemRE:FireServer(uuid, "Fishing Rods") end)
         end
@@ -1947,10 +1944,8 @@ Window:AddButton(BaitSection, "Buy Bait", "", "rbxassetid://16932740082", functi
         Orvion:Notify({ Title="Bait", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
-    local ok, result = pcall(function() return purchaseBaitRF:InvokeServer(baitId) end)
-    if ok and result then
-        local success, shouldEquip = result, false
-        if type(result) == "table" then success = result[1]; shouldEquip = result[2] end
+    local ok, success, shouldEquip = pcall(function() return purchaseBaitRF:InvokeServer(baitId) end)
+    if ok then
         if shouldEquip and equipBaitRE then
             pcall(function() equipBaitRE:FireServer(baitId) end)
         end
@@ -2130,36 +2125,33 @@ end, "Toggle_Buy Battlepass Item")
 -- ==========================================
 -- MERCHANT FEATURES
 -- ==========================================
-local merchantItems = {}  -- cache dari Replion
-local merchantStatusLabel = nil
-local merchantItemLabel = nil
-local merchantPriceLabel = nil
-local merchantBuyLabel = nil
-
-local function getMerchantReplion()
-    local ok, r = pcall(function()
-        return require(game:GetService("ReplicatedStorage").Packages.Replion).Client:WaitReplion("Merchant")
-    end)
-    return ok and r or nil
-end
+local merchantItems = {}
+local merchantStatusParagraph = nil
 
 local function updateMerchantStatus()
     local itemName = Config.SelectedMerchantItem
-    if merchantItemLabel then pcall(function() merchantItemLabel:Set("Item: " .. (itemName ~= "Select Option" and itemName or "-")) end) end
-    if merchantPriceLabel then
-        local price = "?"
-        if merchantItems[itemName] then price = tostring(merchantItems[itemName].price or "?") end
-        pcall(function() merchantPriceLabel:Set("Price: " .. price .. " Coins") end)
-    end
-    if merchantBuyLabel then pcall(function() merchantBuyLabel:Set("Buy: 0/1") end) end
+    local price = "?"
+    local buyCount = "0/1"
+    if merchantItems[itemName] then price = tostring(merchantItems[itemName].price or "?") end
+    local content = "Item: " .. (itemName ~= "Select Option" and itemName or "-") ..
+        "\nPrice: " .. price .. " Coins" ..
+        "\nBuy: " .. buyCount
+    if merchantStatusParagraph then pcall(function() merchantStatusParagraph:Set(content) end) end
+end
+
+local function setMerchantBuyCount(bought, total)
+    local itemName = Config.SelectedMerchantItem
+    local price = "?"
+    if merchantItems[itemName] then price = tostring(merchantItems[itemName].price or "?") end
+    local content = "Item: " .. (itemName ~= "Select Option" and itemName or "-") ..
+        "\nPrice: " .. price .. " Coins" ..
+        "\nBuy: " .. bought .. "/" .. total
+    if merchantStatusParagraph then pcall(function() merchantStatusParagraph:Set(content) end) end
 end
 
 local MerchantSection = Window:AddCollapsible(ShopTab, "Merchant Features", false)
 
-merchantStatusLabel = Window:AddParagraph(MerchantSection, "Status", "Waiting")
-merchantItemLabel   = Window:AddParagraph(MerchantSection, "Item", "Item: -")
-merchantPriceLabel  = Window:AddParagraph(MerchantSection, "Price", "Price: ?")
-merchantBuyLabel    = Window:AddParagraph(MerchantSection, "Buy", "Buy: 0/1")
+merchantStatusParagraph = Window:AddParagraph(MerchantSection, "Status", "Item: -\nPrice: ? Coins\nBuy: 0/1")
 
 local merchantDropdownItems = {"Select Option"}
 local merchantDropdown = Window:AddDropdown(MerchantSection, "Select Item", "", merchantDropdownItems, false, "Select Option", function(v)
@@ -2220,7 +2212,7 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
         if ok and result then bought = bought + 1 end
         if i < qty then task.wait(0.3) end
     end
-    if merchantBuyLabel then pcall(function() merchantBuyLabel:Set("Buy: " .. bought .. "/" .. qty) end) end
+    setMerchantBuyCount(bought, qty)
     Orvion:Notify({ Title="Merchant", Content=name .. " x" .. bought, Color=Color3.fromRGB(150,150,170), Delay=3 })
 end)
 
@@ -2235,7 +2227,7 @@ Window:AddToggle(MerchantSection, "Buy Merchant Item", "", false, function(state
                     local itemId = merchantItems[name].id
                     local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
                     if ok and result then
-                        if merchantBuyLabel then pcall(function() merchantBuyLabel:Set("Buy: 1/1") end) end
+                        setMerchantBuyCount(1, 1)
                     end
                 end
                 task.wait(1)
