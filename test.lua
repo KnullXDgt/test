@@ -2164,7 +2164,8 @@ Window:AddInput(MerchantSection, "Quantity", "", "1", "Enter quantity...", funct
 end, "Input_Merchant Qty")
 
 Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://16932740082", function()
-    local mr = getMerchantReplion()
+    local mr = nil
+    pcall(function() mr = Replion.Client:WaitReplion("Merchant") end)
     if not mr then
         Orvion:Notify({ Title="Merchant", Content="Replion not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
