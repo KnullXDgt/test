@@ -1801,7 +1801,7 @@ local function scheduleRespawn()
                 if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
                 if Config.AutoSpawnTotem then
                     Orvion:Notify({ Title="Totem", Description="", Content="Gone — respawning", Color=Color3.fromRGB(150,150,170), Delay=2 })
-                    task.wait(1)
+                    task.wait(1.2)
                     spawnTotem()
                 end
             end)
