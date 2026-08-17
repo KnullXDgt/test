@@ -1781,7 +1781,7 @@ local function spawnTotem()
     end
     local rf = spawnTotemRemote
     if not rf then return false end
-    local ok, result = pcall(function() rf:FireServer(uuid); result = true end)
+    local ok = pcall(function() rf:FireServer(uuid) end)
     if ok then
         Orvion:Notify({ Title="Totem", Description="", Content=totemName, Color=Color3.fromRGB(150,150,170), Delay=3 })
         return true
@@ -1835,11 +1835,16 @@ Window:Show()
 
 -- Fix PC click stuck: AutoButtonColor = true causes hover state to get stuck on PC
 task.defer(function()
-    local pg = game:GetService("Players").LocalPlayer.PlayerGui
-    for _, v in ipairs(pg:GetDescendants()) do
-        if (v:IsA("TextButton") or v:IsA("ImageButton")) and v.AutoButtonColor then
-            v.AutoButtonColor = false
+    pcall(function()
+        local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui", 5)
+        if not pg then return end
+        for _, v in ipairs(pg:GetDescendants()) do
+            pcall(function()
+                if (v:IsA("TextButton") or v:IsA("ImageButton")) and v.AutoButtonColor then
+                    v.AutoButtonColor = false
+                end
+            end)
         end
-    end
+    end)
 end)
 
