@@ -2027,7 +2027,7 @@ end
 
 local BMSection = Window:AddCollapsible(ShopTab, "Black Market Features", false)
 
-Window:AddDropdown(BMSection, "Select Item", "", BM_LIST, false, {}, function(selected)
+Window:AddDropdown(BMSection, "Select Item", "", BM_LIST, true, {}, function(selected)
     Config.SelectedBMItems = type(selected) == "table" and selected or {}
 end, "Dropdown_Select BM Item")
 
@@ -2109,7 +2109,7 @@ local BPSection = Window:AddCollapsible(ShopTab, "Battlepass Shop Features", fal
 
 bpStatusLabel = Window:AddParagraph(BPSection, "Status", "Waiting")
 
-Window:AddDropdown(BPSection, "Buy Item", "", BP_LIST, false, {}, function(selected)
+Window:AddDropdown(BPSection, "Buy Item", "", BP_LIST, true, {}, function(selected)
     Config.SelectedBPSlots = type(selected) == "table" and selected or {}
 end, "Dropdown_Select BP Slots")
 
