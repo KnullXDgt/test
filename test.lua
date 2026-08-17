@@ -1774,9 +1774,19 @@ local TOTEM_LIST = {"Luck Totem", "Mutation Totem", "Shiny Totem"}
 local autoSpawnThread = nil
 local totemWatchConn = nil
 local totemCreatedConn = nil
+local totemDistMonitor = nil
+local totemWorldPos = nil  -- posisi totem aktif di world
 
 local spawnTotemRemote   = GetServerRemote("RE/SpawnTotem")
 local totemCreatedRemote = GetServerRemote("RE/TotemCreated")
+local totemSpawnedRemote = GetServerRemote("RE/TotemSpawned")
+
+-- listen RE/TotemSpawned untuk dapat posisi totem
+if totemSpawnedRemote then
+    totemSpawnedRemote.OnClientEvent:Connect(function(pos)
+        totemWorldPos = pos
+    end)
+end
 
 local function findTotemUUID(totemName)
     local uuid = nil
@@ -1831,6 +1841,29 @@ local function scheduleRespawn()
                 if Config.AutoSpawnTotem then
                     task.wait(2)
                     spawnTotem()
+                end
+            end)
+
+            -- monitor jarak: jika player jauh > 100 studs dari totem → re-spawn
+            if totemDistMonitor then pcall(task.cancel, totemDistMonitor); totemDistMonitor = nil end
+            totemDistMonitor = task.spawn(function()
+                while Config.AutoSpawnTotem and model.Parent ~= nil do
+                    task.wait(10)
+                    if not Config.AutoSpawnTotem or model.Parent == nil then break end
+                    if totemWorldPos then
+                        local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                        if root then
+                            local dist = (totemWorldPos - root.Position).Magnitude
+                            if dist > 100 then
+                                -- player jauh → disconnect watcher lama, re-spawn
+                                if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
+                                totemDistMonitor = nil
+                                task.wait(1)
+                                spawnTotem()
+                                break
+                            end
+                        end
+                    end
                 end
             end)
         end)
