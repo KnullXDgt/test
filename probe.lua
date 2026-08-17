@@ -1,49 +1,53 @@
--- Probe: BP currency path + test fire slot 1
+-- Probe: BP currency path deep search + fire test
 local RS = game:GetService("ReplicatedStorage")
 local out = {}
 local function log(s) table.insert(out, s) end
 
--- cari BattlepassCurrency path dari RewardInfo
+-- deep dump RewardInfo.BattlepassCurrency
 local ok1, RI = pcall(function() return require(RS.Shared.RewardInfo) end)
 if ok1 then
-    log("RewardInfo keys:")
-    for k, v in pairs(RI) do
-        local t = type(v)
-        if t == "table" then
-            log("  " .. k .. " = table:")
-            for k2, v2 in pairs(v) do
-                if type(v2) ~= "table" and type(v2) ~= "function" then
-                    log("    " .. tostring(k2) .. "=" .. tostring(v2))
-                end
-            end
-        elseif t ~= "function" then
-            log("  " .. k .. "=" .. tostring(v))
+    local bc = RI.BattlepassCurrency
+    log("BattlepassCurrency type=" .. type(bc))
+    if type(bc) == "table" then
+        for k, v in pairs(bc) do
+            log("  " .. tostring(k) .. "=" .. tostring(v))
         end
+    elseif type(bc) == "function" then
+        local ok2, val = pcall(bc)
+        log("  fn result=" .. tostring(val))
     end
+    -- try calling it
+    local ok3, bcVal = pcall(function() return RI:BattlepassCurrency() end)
+    if ok3 then log("  :BattlepassCurrency()=" .. tostring(bcVal)) end
 end
 
--- cek PlayerData path untuk BP currency
-local ok2, PlayerData = pcall(function()
+-- scan PlayerData for any key with value >= 1000 (likely currency)
+local ok4, PlayerData = pcall(function()
     return require(RS.Packages.Replion).Client:WaitReplion("Data")
 end)
-if ok2 then
-    -- try common paths
-    for _, path in ipairs({"GalaxyPoints", "BattlepassCurrency", "GalaxyCurrency", "GP", "StarCoins"}) do
-        local ok3, val = pcall(function() return PlayerData:Get(path) end)
-        if ok3 and val ~= nil then
-            log("PlayerData." .. path .. "=" .. tostring(val))
+if ok4 then
+    local ok5, allData = pcall(function() return PlayerData:Get() end)
+    if ok5 and type(allData) == "table" then
+        log("PlayerData top-level keys:")
+        for k, v in pairs(allData) do
+            if type(v) == "number" and v > 0 then
+                log("  " .. tostring(k) .. "=" .. tostring(v))
+            end
         end
     end
 end
 
--- test fire slot 1 directly
-log("=== TEST FIRE SLOT 1 ===")
-local ok4, Net = pcall(function() return require(RS.Packages.Net) end)
-if ok4 then
+-- test fire slots 1,2,3 and see if in-game notif appears
+log("=== TEST FIRE ===")
+local ok6, Net = pcall(function() return require(RS.Packages.Net) end)
+if ok6 then
     local re = Net:RemoteEvent("BPPurchaseRequest")
     if re then
-        local ok5 = pcall(function() re:FireServer(1) end)
-        log("FireServer(1) ok=" .. tostring(ok5))
+        for _, idx in ipairs({1, 2, 3}) do
+            local ok7 = pcall(function() re:FireServer(idx) end)
+            log("FireServer(" .. idx .. ") ok=" .. tostring(ok7))
+            task.wait(0.5)
+        end
     end
 end
 
