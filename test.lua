@@ -2032,10 +2032,11 @@ local function startAutoBuyBM()
         task.wait(0.5)
         if preBMCF and root then root.CFrame = preBMCF end
         Config.AutoBuyBM = false
+        if bmToggleFunc then pcall(function() bmToggleFunc:Set(false) end) end
         if #bought > 0 then
-            Orvion:Notify({ Title="Black Market", Content="Bought: " .. table.concat(bought, ", "), Color=Color3.fromRGB(150,150,170), Delay=4 })
+            Orvion:Notify({ Title="Black Market", Description="", Content="Bought: " .. table.concat(bought, ", "), Color=Color3.fromRGB(150,150,170), Delay=4 })
         else
-            Orvion:Notify({ Title="Black Market", Content="Nothing bought / out of stock", Color=Color3.fromRGB(150,150,170), Delay=3 })
+            Orvion:Notify({ Title="Black Market", Description="", Content="Nothing bought / out of stock", Color=Color3.fromRGB(150,150,170), Delay=3 })
         end
     end)
 end
@@ -2056,7 +2057,8 @@ Window:AddButton(BMSection, "Refresh List", "", "rbxassetid://16932740082", func
     end
 end)
 
-Window:AddToggle(BMSection, "Buy Black Market Item", "", false, function(state)
+local bmToggleFunc = nil
+bmToggleFunc = Window:AddToggle(BMSection, "Buy Black Market Item", "", false, function(state)
     Config.AutoBuyBM = state
     if state then
         startAutoBuyBM()
@@ -2269,21 +2271,29 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
 end)
 
 local autoBuyMerchantThread = nil
-Window:AddToggle(MerchantSection, "Buy Merchant Item", "", false, function(state)
+local merchantToggleFunc = nil
+merchantToggleFunc = Window:AddToggle(MerchantSection, "Buy Merchant Item", "", false, function(state)
     Config.AutoBuyMerchant = state
     if state then
         autoBuyMerchantThread = task.spawn(function()
-            while Config.AutoBuyMerchant do
-                local name = Config.SelectedMerchantItem
-                if name ~= "Select Option" and merchantItems[name] and purchaseMerchantRF then
-                    local itemId = merchantItems[name].id
+            local name = Config.SelectedMerchantItem
+            if name ~= "Select Option" and merchantItems[name] and purchaseMerchantRF then
+                local itemId = merchantItems[name].id
+                local price = tonumber(merchantItems[name].price) or 0
+                local coins = 0
+                pcall(function() coins = PlayerData:GetExpect("Coins") or 0 end)
+                if price > 0 and coins < price then
+                    Orvion:Notify({ Title="Merchant", Description="", Content="Not enough coins", Color=Color3.fromRGB(220,80,80), Delay=3 })
+                else
                     local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
                     if ok and result then
                         updateMerchantStatus(1, 1)
+                        Orvion:Notify({ Title="Merchant", Description="", Content=name .. " x1 bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
                     end
                 end
-                task.wait(1)
             end
+            Config.AutoBuyMerchant = false
+            if merchantToggleFunc then pcall(function() merchantToggleFunc:Set(false) end) end
         end)
     else
         if autoBuyMerchantThread then pcall(task.cancel, autoBuyMerchantThread); autoBuyMerchantThread = nil end
