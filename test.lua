@@ -1748,7 +1748,7 @@ end, "Toggle_Buy Weather")
 
 
 -- ====== AUTOMATION: TOTEM FEATURES ======
-local TOTEM_LIST = {"Luck Totem", "Mutation Totem"}
+local TOTEM_LIST = {"Luck Totem", "Mutation Totem", "Shiny Totem"}
 local autoSpawnThread = nil
 local TOTEM_DURATION = 3600
 
