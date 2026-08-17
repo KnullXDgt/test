@@ -56,6 +56,13 @@ local fishingRadarRemote     = GetServerRemote("RF/UpdateFishingRadar")
 local equipOxygenRemote      = GetServerRemote("RF/EquipOxygenTank")
 local unequipOxygenRemote    = GetServerRemote("RF/UnequipOxygenTank")
 local weatherPurchaseRF      = GetServerRemote("RF/PurchaseWeatherEvent")
+local purchaseBaitRF         = GetServerRemote("RF/PurchaseBait")
+local equipBaitRE            = GetServerRemote("RE/EquipBait")
+local purchaseRodRF          = GetServerRemote("RF/PurchaseFishingRod")
+local equipItemRE            = GetServerRemote("RE/EquipItem")
+local purchaseBMRF           = GetServerRemote("RF/PurchaseBlackMarketItem")
+local bpPurchaseRE           = GetServerRemote("RE/BPPurchaseRequest")
+local purchaseMerchantRF     = GetServerRemote("RF/PurchaseMarketItem")
 
 -- Support Features state
 local cutsceneConns = {}
@@ -118,6 +125,20 @@ local Config = {
     BuyWeatherActive      = false,
     SelectedTotem         = "Luck Totem",
     AutoSpawnTotem        = false,
+    -- Rod
+    SelectedRod           = "Starter Rod",
+    -- Bait
+    SelectedBait          = "Topwater Bait",
+    -- Black Market
+    SelectedBMItems       = {},
+    AutoBuyBM             = false,
+    -- Battlepass
+    SelectedBPSlots       = {},
+    AutoBuyBP             = false,
+    -- Merchant
+    SelectedMerchantItem  = "Select Option",
+    MerchantQty           = 1,
+    AutoBuyMerchant       = false,
 }
 
 -- ====== TELEPORT LOCATIONS ======
@@ -143,6 +164,7 @@ local LOCATIONS = {
     ["Sisyphus Statue"]          = CFrame.new(-3739.76123, -135.074448, -1010.62256, -0.935245752, 9.59386242e-08, -0.353999078, 9.15687366e-08, 1, 2.90942843e-08, 0.353999078, -5.20494403e-09, -0.935245752),
     ["Lucky Abyss"]              = CFrame.new(-9132.19824, -269.540222, 813.390991, 0.85008198, 1.07898984e-07, -0.526650369, -8.86397729e-08, 1, 6.18017495e-08, 0.526650369, -5.85438409e-09, 0.85008198),
     ["Lucky Volcano"]            = CFrame.new(-8569.07227, -69.1043396, -424.654999, 0.52721554, 2.7758805e-08, -0.849731624, -1.33568694e-08, 1, 2.43804692e-08, 0.849731624, -1.5040077e-09, 0.52721554),
+    ["Lucky Volcano Black Market"] = CFrame.new(-8610.20312, -66.52478, -451.74463, -0.2025885880, -0.0000000350, -0.9792639613, -0.0000000417, 1.0000000000, -0.0000000271, 0.9792639613, 0.0000000354, -0.2025885880),
     ["Mariana Trench"]           = CFrame.new(-9255.89844, -255.639084, -1.05099988, 0.855513036, 2.17598988e-08, 0.517781258, 7.29563077e-10, 1, -4.32307061e-08, -0.517781258, 3.7362188e-08, 0.855513036),
     ["Mutation Vents"]           = CFrame.new(-9112.33496, -91.77034, -1639.62903, 0.916036785, 1.55229181e-08, 0.401094198, -1.53244155e-08, 1, -3.7028427e-09, -0.401094198, -2.75459433e-09, 0.916036785),
     ["Pirate Cove"]              = CFrame.new(3406.97192, 4.19296837, 3497.08594, 0.710760236, -6.10149513e-08, -0.703434408, 3.57538994e-08, 1, -5.06123961e-08, 0.703434408, 1.08227542e-08, 0.710760236),
@@ -1858,6 +1880,372 @@ end, "Toggle_Auto Spawn Totem")
 Window:AddButton(TotemSection, "Spawn Now", "", "rbxassetid://16932740082", function()
     spawnTotem(true)
 end)
+
+-- ====== SHOP TAB: ROD, BAIT, BLACK MARKET, BATTLEPASS, MERCHANT ======
+
+local ShopTab = Window:CreateTab("Shop")
+
+-- ==========================================
+-- ROD FEATURES
+-- ==========================================
+local ROD_MAP = {
+    ["Starter Rod"]=22, ["Luck Rod"]=182, ["Carbon Rod"]=154, ["Grass Rod"]=37,
+    ["Demascus Rod"]=49, ["Ice Rod"]=188, ["Lucky Rod"]=147, ["Midnight Rod"]=53,
+    ["Seabreeze Rod"]=191, ["Eclipse Rod"]=180, ["Steampunk Rod"]=133, ["Chrome Rod"]=95,
+    ["Fluorescent Rod"]=20, ["Magma Rod"]=129, ["Astral Rod"]=117, ["Ares Rod"]=203,
+    ["Angler Rod"]=213, ["Bamboo Rod"]=222,
+}
+local ROD_LIST = {"Starter Rod","Luck Rod","Carbon Rod","Grass Rod","Demascus Rod","Ice Rod",
+    "Lucky Rod","Midnight Rod","Seabreeze Rod","Eclipse Rod","Steampunk Rod","Chrome Rod",
+    "Fluorescent Rod","Magma Rod","Astral Rod","Ares Rod","Angler Rod","Bamboo Rod"}
+
+local RodSection = Window:AddCollapsible(ShopTab, "Rod Features", false)
+
+Window:AddDropdown(RodSection, "Select Rod", "", ROD_LIST, false, Config.SelectedRod, function(v)
+    Config.SelectedRod = v or "Starter Rod"
+end, "Dropdown_Select Rod")
+
+Window:AddButton(RodSection, "Buy Rod", "", "rbxassetid://16932740082", function()
+    local rodId = ROD_MAP[Config.SelectedRod]
+    if not rodId or not purchaseRodRF then
+        Orvion:Notify({ Title="Rod", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        return
+    end
+    local ok, result = pcall(function() return purchaseRodRF:InvokeServer(rodId) end)
+    if ok and result then
+        local success, uuid = result, nil
+        if type(result) == "table" then success = result[1]; uuid = result[2]
+        elseif type(result) == "string" then uuid = result; success = true end
+        if success and uuid and equipItemRE then
+            pcall(function() equipItemRE:FireServer(uuid, "Fishing Rods") end)
+        end
+        Orvion:Notify({ Title="Rod", Content=Config.SelectedRod .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
+    else
+        Orvion:Notify({ Title="Rod", Content="Purchase failed", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    end
+end)
+
+-- ==========================================
+-- BAIT FEATURES
+-- ==========================================
+local BAIT_MAP = {
+    ["Topwater Bait"]=49, ["Luck Bait"]=29, ["Midnight Bait"]=71, ["Nature Bait"]=15,
+    ["Chroma Bait"]=58, ["Dark Matter Bait"]=62, ["Corrupt Bait"]=76, ["Aether Bait"]=28,
+}
+local BAIT_LIST = {"Topwater Bait","Luck Bait","Midnight Bait","Nature Bait",
+    "Chroma Bait","Dark Matter Bait","Corrupt Bait","Aether Bait"}
+
+local BaitSection = Window:AddCollapsible(ShopTab, "Bait Features", false)
+
+Window:AddDropdown(BaitSection, "Select Bait", "", BAIT_LIST, false, Config.SelectedBait, function(v)
+    Config.SelectedBait = v or "Topwater Bait"
+end, "Dropdown_Select Bait")
+
+Window:AddButton(BaitSection, "Buy Bait", "", "rbxassetid://16932740082", function()
+    local baitId = BAIT_MAP[Config.SelectedBait]
+    if not baitId or not purchaseBaitRF then
+        Orvion:Notify({ Title="Bait", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        return
+    end
+    local ok, result = pcall(function() return purchaseBaitRF:InvokeServer(baitId) end)
+    if ok and result then
+        local success, shouldEquip = result, false
+        if type(result) == "table" then success = result[1]; shouldEquip = result[2] end
+        if shouldEquip and equipBaitRE then
+            pcall(function() equipBaitRE:FireServer(baitId) end)
+        end
+        Orvion:Notify({ Title="Bait", Content=Config.SelectedBait .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
+    else
+        Orvion:Notify({ Title="Bait", Content="Purchase failed", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    end
+end)
+
+-- ==========================================
+-- BLACK MARKET FEATURES
+-- ==========================================
+local BM_MAP = {
+    ["Undersea Racer"]="undersea_racer", ["Venombone"]="venombone_skin",
+    ["Phantom Tide"]="phantom_skin", ["Raging Hadalith"]="hadalith_skin",
+    ["Mecha Nautical Trinket"]="trinket_skin", ["Basic Flippers"]="basic_flippers",
+    ["Gilded Boots"]="gilded_boots", ["Winged Boots M"]="winged_boots_m",
+    ["Winged Boots F"]="winged_boots_f", ["Luck III Potion"]="luck_3_potion",
+    ["Mutation III Potion"]="mut_3_potion", ["Mutation IV Potion"]="mut_4_potion",
+    ["Dark Megalodon Hunt Potion"]="wet_1_potion", ["Megalodon Hunt Potion"]="wet_2_potion",
+    ["Meteor Shower Potion"]="wet_3_potion", ["Aurora Borealis Potion"]="wet_4_potion",
+    ["Glacial Serpent Hunt Potion"]="wet_5_potion", ["Coin Toss Emote"]="coin_toss",
+    ["Minor Fortune Ability"]="minor_fort_ability",
+}
+local BM_LIST = {"Undersea Racer","Venombone","Phantom Tide","Raging Hadalith",
+    "Mecha Nautical Trinket","Basic Flippers","Gilded Boots","Winged Boots M","Winged Boots F",
+    "Luck III Potion","Mutation III Potion","Mutation IV Potion","Dark Megalodon Hunt Potion",
+    "Megalodon Hunt Potion","Meteor Shower Potion","Aurora Borealis Potion",
+    "Glacial Serpent Hunt Potion","Coin Toss Emote","Minor Fortune Ability"}
+
+local BM_CF = CFrame.new(-8610.20312, -66.52478, -451.74463, -0.2025885880, -0.0000000350,
+    -0.9792639613, -0.0000000417, 1.0000000000, -0.0000000271, 0.9792639613, 0.0000000354, -0.2025885880)
+
+local autoBuyBMThread = nil
+
+local function buyBMItem(itemName)
+    local itemId = BM_MAP[itemName]
+    if not itemId or not purchaseBMRF then return false end
+    local ok, result = pcall(function() return purchaseBMRF:InvokeServer(itemId) end)
+    return ok and result and (type(result) == "table" and result.Success or result == true)
+end
+
+local function teleportToBM(cf)
+    local root = game:GetService("Players").LocalPlayer.Character
+        and game:GetService("Players").LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if root then root.CFrame = cf end
+end
+
+local function startAutoBuyBM()
+    if autoBuyBMThread then pcall(task.cancel, autoBuyBMThread); autoBuyBMThread = nil end
+    Config.AutoBuyBM = true
+    autoBuyBMThread = task.spawn(function()
+        local root = game:GetService("Players").LocalPlayer.Character
+            and game:GetService("Players").LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local preBMCF = root and root.CFrame
+        teleportToBM(BM_CF)
+        task.wait(1.5)
+        local bought = {}
+        for _, name in ipairs(Config.SelectedBMItems) do
+            if buyBMItem(name) then
+                table.insert(bought, name)
+            end
+        end
+        task.wait(0.5)
+        if preBMCF and root then root.CFrame = preBMCF end
+        Config.AutoBuyBM = false
+        if #bought > 0 then
+            Orvion:Notify({ Title="Black Market", Content="Bought: " .. table.concat(bought, ", "), Color=Color3.fromRGB(150,150,170), Delay=4 })
+        else
+            Orvion:Notify({ Title="Black Market", Content="Nothing bought / out of stock", Color=Color3.fromRGB(150,150,170), Delay=3 })
+        end
+    end)
+end
+
+local BMSection = Window:AddCollapsible(ShopTab, "Black Market Features", false)
+
+Window:AddDropdown(BMSection, "Select Item", "", BM_LIST, false, {}, function(selected)
+    Config.SelectedBMItems = type(selected) == "table" and selected or {}
+end, "Dropdown_Select BM Item")
+
+Window:AddButton(BMSection, "Refresh List", "", "rbxassetid://16932740082", function()
+    local ok, BMC = pcall(function() return require(game:GetService("ReplicatedStorage").Shared.BlackMarketConfig) end)
+    if ok and BMC then
+        local ok2, items = pcall(function() return BMC.GetItems() end)
+        if ok2 and items then
+            Orvion:Notify({ Title="Black Market", Content=tostring(#items) .. " items in stock", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        end
+    end
+end)
+
+Window:AddToggle(BMSection, "Buy Black Market Item", "", false, function(state)
+    Config.AutoBuyBM = state
+    if state then
+        startAutoBuyBM()
+    else
+        if autoBuyBMThread then pcall(task.cancel, autoBuyBMThread); autoBuyBMThread = nil end
+        Config.AutoBuyBM = false
+    end
+end, "Toggle_Buy Black Market Item")
+
+-- ==========================================
+-- BATTLEPASS SHOP FEATURES
+-- ==========================================
+local BP_LIST = {
+    "Slot 1 -- Star Charm [2000]", "Slot 2 -- Seven Rings [4000]",
+    "Slot 3 -- Luck I Potion [5000]", "Slot 4 -- Galactic Containment [11000]",
+    "Slot 5 -- Tyrian Constellation [15000]", "Slot 6 -- Stargazing [18000]",
+    "Slot 7 -- Cosmic Totem [21000]", "Slot 8 -- Royal Star Lantern [23000]",
+    "Slot 9 -- Orbital Lantern [26000]", "Slot 10 -- Cosmic Totem [30000]",
+    "Slot 11 -- Constellatio [34000]", "Slot 12 -- 2026 Celestial Plaque [38000]",
+    "Slot 13 -- TreasureCrate [45000]", "Slot 14 -- Superstar Boat [50000]",
+    "Slot 15 -- Starfall Halo [53000]", "Slot 16 -- Golden Containment [55000]",
+    "Slot 17 -- TreasureCrate [58000]", "Slot 18 -- Low Gravity [60000]",
+}
+
+local bpStatusLabel = nil
+local autoBuyBPThread = nil
+
+local function updateBPStatus(text)
+    if bpStatusLabel then
+        pcall(function() bpStatusLabel:Set(text) end)
+    end
+end
+
+local function buyBPSlots()
+    if not bpPurchaseRE then return end
+    local slots = Config.SelectedBPSlots
+    if not slots or #slots == 0 then return end
+    local ok2, DataReplion = pcall(function()
+        return require(game:GetService("ReplicatedStorage").Packages.Replion).Client:WaitReplion("Data")
+    end)
+    for i, slotName in ipairs(slots) do
+        local index = tonumber(slotName:match("^Slot (%d+)"))
+        if index then
+            local owned = false
+            if ok2 then
+                pcall(function()
+                    local bp = DataReplion:Get("GalaxyBP26")
+                    if bp and bp[tostring(index)] then owned = true end
+                end)
+            end
+            if not owned then
+                updateBPStatus("Buy " .. i .. "/" .. #slots)
+                pcall(function() bpPurchaseRE:FireServer(index) end)
+                task.wait(0.5)
+                updateBPStatus("Slot " .. index .. " bought")
+                task.wait(0.3)
+            end
+        end
+    end
+    updateBPStatus("Done")
+    Config.AutoBuyBP = false
+end
+
+local BPSection = Window:AddCollapsible(ShopTab, "Battlepass Shop Features", false)
+
+bpStatusLabel = Window:AddParagraph(BPSection, "Status", "Waiting")
+
+Window:AddDropdown(BPSection, "Buy Item", "", BP_LIST, false, {}, function(selected)
+    Config.SelectedBPSlots = type(selected) == "table" and selected or {}
+end, "Dropdown_Select BP Slots")
+
+Window:AddToggle(BPSection, "Buy Battlepass Item", "", false, function(state)
+    Config.AutoBuyBP = state
+    if state then
+        updateBPStatus("Starting...")
+        autoBuyBPThread = task.spawn(function()
+            buyBPSlots()
+        end)
+    else
+        if autoBuyBPThread then pcall(task.cancel, autoBuyBPThread); autoBuyBPThread = nil end
+        Config.AutoBuyBP = false
+        updateBPStatus("Waiting")
+    end
+end, "Toggle_Buy Battlepass Item")
+
+-- ==========================================
+-- MERCHANT FEATURES
+-- ==========================================
+local merchantItems = {}  -- cache dari Replion
+local merchantStatusLabel = nil
+local merchantItemLabel = nil
+local merchantPriceLabel = nil
+local merchantBuyLabel = nil
+
+local function getMerchantReplion()
+    local ok, r = pcall(function()
+        return require(game:GetService("ReplicatedStorage").Packages.Replion).Client:WaitReplion("Merchant")
+    end)
+    return ok and r or nil
+end
+
+local function updateMerchantStatus()
+    local itemName = Config.SelectedMerchantItem
+    if merchantItemLabel then pcall(function() merchantItemLabel:Set("Item: " .. (itemName ~= "Select Option" and itemName or "-")) end) end
+    if merchantPriceLabel then
+        local price = "?"
+        if merchantItems[itemName] then price = tostring(merchantItems[itemName].price or "?") end
+        pcall(function() merchantPriceLabel:Set("Price: " .. price .. " Coins") end)
+    end
+    if merchantBuyLabel then pcall(function() merchantBuyLabel:Set("Buy: 0/1") end) end
+end
+
+local MerchantSection = Window:AddCollapsible(ShopTab, "Merchant Features", false)
+
+merchantStatusLabel = Window:AddParagraph(MerchantSection, "Status", "Waiting")
+merchantItemLabel   = Window:AddParagraph(MerchantSection, "Item", "Item: -")
+merchantPriceLabel  = Window:AddParagraph(MerchantSection, "Price", "Price: ?")
+merchantBuyLabel    = Window:AddParagraph(MerchantSection, "Buy", "Buy: 0/1")
+
+local merchantDropdownItems = {"Select Option"}
+local merchantDropdown = Window:AddDropdown(MerchantSection, "Select Item", "", merchantDropdownItems, false, "Select Option", function(v)
+    Config.SelectedMerchantItem = v or "Select Option"
+    updateMerchantStatus()
+end, "Dropdown_Select Merchant Item")
+
+Window:AddInput(MerchantSection, "Quantity", "", "1", "Enter quantity...", function(v)
+    Config.MerchantQty = tonumber(v) or 1
+end, "Input_Merchant Qty")
+
+Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://16932740082", function()
+    local mr = getMerchantReplion()
+    if not mr then
+        Orvion:Notify({ Title="Merchant", Content="Replion not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        return
+    end
+    local ok2, IU = pcall(function() return require(game:GetService("ReplicatedStorage").Shared.ItemUtility) end)
+    local itemIds = {}
+    pcall(function() itemIds = mr:GetExpect("Items") or {} end)
+    merchantItems = {}
+    local newList = {"Select Option"}
+    for _, itemId in ipairs(itemIds) do
+        local name = tostring(itemId)
+        local price = "?"
+        if ok2 and IU then
+            pcall(function()
+                local data = IU.GetItemDataFromItemType("Items", itemId)
+                    or IU.GetItemDataFromItemType("Potions", itemId)
+                    or IU.GetItemDataFromItemType("Fishing Rods", itemId)
+                    or IU.GetItemDataFromItemType("Baits", itemId)
+                if data and data.Data and data.Data.Name then
+                    name = data.Data.Name
+                    price = tostring(data.Price or "?")
+                end
+            end)
+        end
+        merchantItems[name] = { id = itemId, price = price }
+        table.insert(newList, name)
+    end
+    if merchantDropdown then
+        pcall(function() merchantDropdown:Set("Select Option") end)
+    end
+    Orvion:Notify({ Title="Merchant", Content=tostring(#newList - 1) .. " items found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+end)
+
+Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", function()
+    local name = Config.SelectedMerchantItem
+    if name == "Select Option" or not merchantItems[name] then
+        Orvion:Notify({ Title="Merchant", Content="Select item first", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        return
+    end
+    local itemId = merchantItems[name].id
+    local qty = math.max(1, Config.MerchantQty)
+    local bought = 0
+    for i = 1, qty do
+        local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
+        if ok and result then bought = bought + 1 end
+        if i < qty then task.wait(0.3) end
+    end
+    if merchantBuyLabel then pcall(function() merchantBuyLabel:Set("Buy: " .. bought .. "/" .. qty) end) end
+    Orvion:Notify({ Title="Merchant", Content=name .. " x" .. bought, Color=Color3.fromRGB(150,150,170), Delay=3 })
+end)
+
+local autoBuyMerchantThread = nil
+Window:AddToggle(MerchantSection, "Buy Merchant Item", "", false, function(state)
+    Config.AutoBuyMerchant = state
+    if state then
+        autoBuyMerchantThread = task.spawn(function()
+            while Config.AutoBuyMerchant do
+                local name = Config.SelectedMerchantItem
+                if name ~= "Select Option" and merchantItems[name] and purchaseMerchantRF then
+                    local itemId = merchantItems[name].id
+                    local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
+                    if ok and result then
+                        if merchantBuyLabel then pcall(function() merchantBuyLabel:Set("Buy: 1/1") end) end
+                    end
+                end
+                task.wait(1)
+            end
+        end)
+    else
+        if autoBuyMerchantThread then pcall(task.cancel, autoBuyMerchantThread); autoBuyMerchantThread = nil end
+        Config.AutoBuyMerchant = false
+    end
+end, "Toggle_Buy Merchant Item")
 
 -- ====== STARTUP ======
 updateBigPopup()
