@@ -1319,7 +1319,7 @@ end, "Toggle_Auto Sell")
 
 Window:AddButton(SellSection, "Sell All Now", "", "rbxassetid://16932740082", function()
     sellAll()
-    Orvion:Notify({ Title="Auto Sell", Description="", Content="Sold!", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    Orvion:Notify({ Title="Orvion Hub", Description="", Content="Sold!", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 
 -- ====== TELEPORT TAB ======
