@@ -2179,7 +2179,7 @@ local merchantDropdown = Window:AddDropdown(MerchantSection, "Select Item", "", 
     updateMerchantStatus()
 end, "Dropdown_Select Merchant Item")
 
-Window:AddInput(MerchantSection, "Quantity", "", "1", "Enter quantity...", function(v)
+Window:AddInput(MerchantSection, "Quantity", "", "Enter quantity...", function(v)
     Config.MerchantQty = tonumber(v) or 1
 end, "Input_Merchant Qty")
 
