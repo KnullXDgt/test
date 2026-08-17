@@ -2141,16 +2141,6 @@ end, "Toggle_Buy Battlepass Item")
 -- ==========================================
 local merchantItems = {}
 local merchantStatusParagraph = nil
-local merchantTimerThread = nil
-
-local function getMerchantRefreshText()
-    local t = workspace:GetServerTimeNow()
-    local secs = math.max(0, (t // 86400 + 1) * 86400 - t)
-    local h = math.floor(secs / 3600)
-    local m = math.floor(secs % 3600 / 60)
-    local s = math.floor(secs % 60)
-    return string.format("Next Refresh: %dH, %dM, %dS", h, m, s)
-end
 
 local function updateMerchantStatus(bought, total)
     local itemName = Config.SelectedMerchantItem
@@ -2159,19 +2149,8 @@ local function updateMerchantStatus(bought, total)
     local buyStr = bought and (bought .. "/" .. total) or "0/1"
     local content = "Item: " .. (itemName ~= "Select Option" and itemName or "-") ..
         "\nPrice: " .. price .. " Coins" ..
-        "\nBuy: " .. buyStr ..
-        "\n" .. getMerchantRefreshText()
+        "\nBuy: " .. buyStr
     if merchantStatusParagraph then pcall(function() merchantStatusParagraph:Set(content) end) end
-end
-
-local function startMerchantTimer()
-    if merchantTimerThread then pcall(task.cancel, merchantTimerThread) end
-    merchantTimerThread = task.spawn(function()
-        while true do
-            updateMerchantStatus()
-            task.wait(1)
-        end
-    end)
 end
 
 local MerchantSection = Window:AddCollapsible(ShopTab, "Merchant Features", false)
@@ -2231,7 +2210,7 @@ Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://169
     if merchantDropdown then
         pcall(function() merchantDropdown:Refresh(newList, defaultItem) end)
     end
-    startMerchantTimer()
+    updateMerchantStatus()
     Orvion:Notify({ Title="Merchant", Content=tostring(#newList) .. " items found", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 
@@ -2279,6 +2258,5 @@ end, "Toggle_Buy Merchant Item")
 -- ====== STARTUP ======
 updateBigPopup()
 Window:SetActiveTab("Info")
-startMerchantTimer()
 Window:Show()
 
