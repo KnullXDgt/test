@@ -1803,6 +1803,7 @@ local function findTotemUUID(totemName)
 end
 
 local spawnTotem -- forward declare
+local lastSpawnedUUID = nil  -- track UUID milik kita
 
 local function scheduleRespawn()
     if not Config.AutoSpawnTotem then return end
@@ -1810,13 +1811,20 @@ local function scheduleRespawn()
     if totemCreatedConn then totemCreatedConn:Disconnect(); totemCreatedConn = nil end
     if autoSpawnThread then pcall(task.cancel, autoSpawnThread); autoSpawnThread = nil end
 
-    -- Event-driven: RE/TotemCreated fires when model spawns in world
     if totemCreatedRemote then
-        totemCreatedConn = totemCreatedRemote.OnClientEvent:Connect(function(model)
-            if totemCreatedConn then totemCreatedConn:Disconnect(); totemCreatedConn = nil end
-            -- cancel fallback timer, event took over
-            if autoSpawnThread then pcall(task.cancel, autoSpawnThread); autoSpawnThread = nil end
+        totemCreatedConn = totemCreatedRemote.OnClientEvent:Connect(function(model, totemId)
+            -- filter: hanya model yang di-spawn oleh kita (cek posisi dekat player)
             if not model then return end
+            local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if root then
+                local ok, pivot = pcall(function() return model:GetPivot() end)
+                if ok and pivot then
+                    local dist = (pivot.Position - root.Position).Magnitude
+                    if dist > 50 then return end  -- bukan totem kita
+                end
+            end
+            if totemCreatedConn then totemCreatedConn:Disconnect(); totemCreatedConn = nil end
+            if autoSpawnThread then pcall(task.cancel, autoSpawnThread); autoSpawnThread = nil end
             totemWatchConn = model.AncestryChanged:Connect(function()
                 if model.Parent ~= nil then return end
                 if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
@@ -2081,24 +2089,28 @@ local function buyBPSlots()
         updateBPStatus("No slots selected")
         return
     end
+    local total = #slots
+    local bought = 0
     for i, slotName in ipairs(slots) do
         if not Config.AutoBuyBP then break end
         local index = tonumber(slotName:match("^Slot (%d+)"))
         if index then
-            -- check ownership via PlayerData
             local owned = false
             pcall(function()
                 local bp = PlayerData:Get("GalaxyBP26")
                 if bp and bp[tostring(index)] then owned = true end
             end)
             if not owned then
-                updateBPStatus("Buy " .. i .. "/" .. #slots .. " (Slot " .. index .. ")")
+                updateBPStatus("Buy " .. i .. "/" .. total .. " (Slot " .. index .. ")")
                 pcall(function() bpPurchaseRE:FireServer(index) end)
+                bought = bought + 1
                 task.wait(0.8)
+            else
+                updateBPStatus("Slot " .. index .. " already owned, skip")
             end
         end
     end
-    updateBPStatus("Done")
+    updateBPStatus("Done — bought " .. bought .. "/" .. total)
     Config.AutoBuyBP = false
 end
 
@@ -2166,8 +2178,8 @@ local MerchantSection = Window:AddCollapsible(ShopTab, "Merchant Features", fals
 
 merchantStatusParagraph = Window:AddParagraph(MerchantSection, "Status", "Item: -\nPrice: ? Coins\nBuy: 0/1")
 
-local merchantDropdownItems = {"Select Option"}
-local merchantDropdown = Window:AddDropdown(MerchantSection, "Select Item", "", merchantDropdownItems, false, "Select Option", function(v)
+local merchantDropdownItems = {}
+local merchantDropdown = Window:AddDropdown(MerchantSection, "Select Item", "", merchantDropdownItems, false, nil, function(v)
     Config.SelectedMerchantItem = v or "Select Option"
     updateMerchantStatus()
 end, "Dropdown_Select Merchant Item")
@@ -2193,7 +2205,7 @@ Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://169
     local itemIds = {}
     pcall(function() itemIds = mr:GetExpect("Items") or {} end)
     merchantItems = {}
-    local newList = {"Select Option"}
+    local newList = {}
     for _, itemId in ipairs(itemIds) do
         local name = tostring(itemId)
         local price = "?"
@@ -2214,11 +2226,13 @@ Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://169
         merchantItems[name] = { id = itemId, price = price }
         table.insert(newList, name)
     end
+    local defaultItem = newList[1] or "Select Option"
+    Config.SelectedMerchantItem = defaultItem
     if merchantDropdown then
-        pcall(function() merchantDropdown:Refresh(newList, "Select Option") end)
+        pcall(function() merchantDropdown:Refresh(newList, defaultItem) end)
     end
     startMerchantTimer()
-    Orvion:Notify({ Title="Merchant", Content=tostring(#newList - 1) .. " items found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    Orvion:Notify({ Title="Merchant", Content=tostring(#newList) .. " items found", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 
 Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", function()
