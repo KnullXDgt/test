@@ -2111,7 +2111,15 @@ local function buyBPSlots()
         end
     end
     updateBPStatus("Done — bought " .. bought .. "/" .. total)
+    if bought == 0 and total > 0 then
+        Orvion:Notify({ Title="Battlepass", Content="No Galaxy Points or all slots owned", Color=Color3.fromRGB(150,150,170), Delay=4 })
+    end
     Config.AutoBuyBP = false
+    -- auto toggle off
+    pcall(function()
+        local el = AllElements and AllElements["Toggle_Buy Battlepass Item"]
+        if el then el:Set(false) end
+    end)
 end
 
 local BPSection = Window:AddCollapsible(ShopTab, "Battlepass Shop Features", false)
