@@ -1750,9 +1750,12 @@ end, "Toggle_Buy Weather")
 -- ====== AUTOMATION: TOTEM FEATURES ======
 local TOTEM_LIST = {"Luck Totem", "Mutation Totem", "Shiny Totem"}
 local autoSpawnThread = nil
+local totemWatchConn = nil
+local totemCreatedConn = nil
 local TOTEM_DURATION = 3600
 
-local spawnTotemRemote = GetServerRemote("RE/SpawnTotem")
+local spawnTotemRemote   = GetServerRemote("RE/SpawnTotem")
+local totemCreatedRemote = GetServerRemote("RE/TotemCreated")
 
 local function findTotemUUID(totemName)
     local uuid = nil
@@ -1778,7 +1781,43 @@ local function findTotemUUID(totemName)
     return uuid
 end
 
-local function spawnTotem()
+local spawnTotem -- forward declare
+
+local function scheduleRespawn()
+    if not Config.AutoSpawnTotem then return end
+    if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
+    if totemCreatedConn then totemCreatedConn:Disconnect(); totemCreatedConn = nil end
+    if autoSpawnThread then task.cancel(autoSpawnThread); autoSpawnThread = nil end
+
+    -- Event-driven: RE/TotemCreated fires when model spawns in world
+    if totemCreatedRemote then
+        totemCreatedConn = totemCreatedRemote.OnClientEvent:Connect(function(model)
+            if totemCreatedConn then totemCreatedConn:Disconnect(); totemCreatedConn = nil end
+            -- cancel fallback timer, event took over
+            if autoSpawnThread then task.cancel(autoSpawnThread); autoSpawnThread = nil end
+            if not model then return end
+            totemWatchConn = model.AncestryChanged:Connect(function()
+                if model.Parent ~= nil then return end
+                if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
+                if Config.AutoSpawnTotem then
+                    Orvion:Notify({ Title="Totem", Description="", Content="Gone — respawning", Color=Color3.fromRGB(150,150,170), Delay=2 })
+                    task.wait(1)
+                    spawnTotem()
+                end
+            end)
+        end)
+    end
+
+    -- Fallback: 1hr timer if RE/TotemCreated never fires
+    autoSpawnThread = task.defer(function()
+        task.wait(TOTEM_DURATION)
+        if Config.AutoSpawnTotem then
+            spawnTotem()
+        end
+    end)
+end
+
+spawnTotem = function()
     local totemName = Config.SelectedTotem
     if not totemName or totemName == "" then return false end
     local uuid = findTotemUUID(totemName)
@@ -1791,6 +1830,7 @@ local function spawnTotem()
     local ok = pcall(function() rf:FireServer(uuid) end)
     if ok then
         Orvion:Notify({ Title="Totem", Description="", Content=totemName, Color=Color3.fromRGB(150,150,170), Delay=3 })
+        if Config.AutoSpawnTotem then scheduleRespawn() end
         return true
     end
     return false
@@ -1798,19 +1838,16 @@ end
 
 local function stopAutoSpawn()
     if autoSpawnThread then task.cancel(autoSpawnThread); autoSpawnThread = nil end
+    if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
+    if totemCreatedConn then totemCreatedConn:Disconnect(); totemCreatedConn = nil end
     Config.AutoSpawnTotem = false
 end
 
 local function startAutoSpawn()
     stopAutoSpawn()
     Config.AutoSpawnTotem = true
-    autoSpawnThread = task.spawn(function()
-        task.defer(function()
-            while Config.AutoSpawnTotem do
-                spawnTotem()
-                task.wait(TOTEM_DURATION)
-            end
-        end)
+    autoSpawnThread = task.defer(function()
+        spawnTotem()
     end)
 end
 
