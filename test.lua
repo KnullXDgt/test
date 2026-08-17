@@ -1689,6 +1689,13 @@ local function buyWeatherEvent(eventName, silent)
 end
 
 local function startWeatherWatcher()
+    -- Lazy-load EventsReplion
+    if not EventsReplion then
+        pcall(function()
+            EventsReplion = Replion.Client:WaitReplion("Events")
+        end)
+    end
+    if not EventsReplion then return end
     -- Connect watcher langsung (jangan terlambat detect event selesai)
     weatherWatchConn = EventsReplion:OnArrayRemove("WeatherMachine", function(_, removedEvent)
         if not Config.BuyWeatherActive then return end
