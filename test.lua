@@ -2265,5 +2265,6 @@ end, "Toggle_Buy Merchant Item")
 -- ====== STARTUP ======
 updateBigPopup()
 Window:SetActiveTab("Info")
+startMerchantTimer()
 Window:Show()
 
