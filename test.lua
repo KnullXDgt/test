@@ -1162,7 +1162,7 @@ ensureAnimPatch()
 
 -- ====== UI (NEW LIBRARY) ======
 local Orvion = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/KnullXDgt/Orvion-UI-Library/main/source.luau"
+    "https://raw.githubusercontent.com/KnullXDgt/Orvion-UI-Library/main/source.luau?t=" .. os.time()
 ))()
 
 local _execName = "Unknown"
