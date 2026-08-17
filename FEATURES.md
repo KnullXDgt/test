@@ -11,10 +11,6 @@
 Info | Main | Teleport | Automation | Shop
 ```
 
----
-
-## Info Tab
-- **What is Orvion?** — About paragraph, credits (idan + ALE)
 
 ---
 
