@@ -1889,7 +1889,18 @@ Window:AddButton(TotemSection, "Spawn Now", "", "rbxassetid://16932740082", func
     spawnTotem(true)
 end)
 
--- ====== SHOP TAB: ROD, BAIT, BLACK MARKET, BATTLEPASS, MERCHANT ======
+-- Helper: update paragraph text, support both old (Frame) dan new (table:Set) library
+local function setParagraphText(para, text)
+    if not para then return end
+    if type(para) == "table" and para.Set then
+        pcall(function() para:Set(text) end)
+    else
+        pcall(function()
+            local label = para:FindFirstChild("ParagraphContent")
+            if label then label.Text = tostring(text) end
+        end)
+    end
+end
 
 local ShopTab = Window:CreateTab("Shop")
 
@@ -2076,7 +2087,7 @@ local bpToggleFunc = nil
 
 local function updateBPStatus(text)
     if bpStatusLabel then
-        pcall(function() bpStatusLabel:Set(text) end)
+        setParagraphText(bpStatusLabel, text)
     end
 end
 
@@ -2155,7 +2166,7 @@ local function updateMerchantStatus(bought, total)
     local content = "Item: " .. (itemName ~= "Select Option" and itemName or "-") ..
         "\nPrice: " .. price .. " Coins" ..
         "\nBuy: " .. buyStr
-    if merchantStatusParagraph then pcall(function() merchantStatusParagraph:Set(content) end) end
+    setParagraphText(merchantStatusParagraph, content)
 end
 
 local MerchantSection = Window:AddCollapsible(ShopTab, "Merchant Features", false)
