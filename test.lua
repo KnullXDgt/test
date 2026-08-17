@@ -2072,6 +2072,7 @@ local BP_LIST = {
 
 local bpStatusLabel = nil
 local autoBuyBPThread = nil
+local bpToggleFunc = nil
 
 local function updateBPStatus(text)
     if bpStatusLabel then
@@ -2115,11 +2116,7 @@ local function buyBPSlots()
         Orvion:Notify({ Title="Battlepass", Content="No Galaxy Points or all slots owned", Color=Color3.fromRGB(150,150,170), Delay=4 })
     end
     Config.AutoBuyBP = false
-    -- auto toggle off
-    pcall(function()
-        local el = AllElements and AllElements["Toggle_Buy Battlepass Item"]
-        if el then el:Set(false) end
-    end)
+    if bpToggleFunc then pcall(function() bpToggleFunc:Set(false) end) end
 end
 
 local BPSection = Window:AddCollapsible(ShopTab, "Battlepass Shop Features", false)
@@ -2130,7 +2127,7 @@ Window:AddDropdown(BPSection, "Buy Item", "", BP_LIST, 999, {}, function(selecte
     Config.SelectedBPSlots = type(selected) == "table" and selected or {}
 end, "Dropdown_Select BP Slots")
 
-Window:AddToggle(BPSection, "Buy Battlepass Item", "", false, function(state)
+bpToggleFunc = Window:AddToggle(BPSection, "Buy Battlepass Item", "", false, function(state)
     Config.AutoBuyBP = state
     if state then
         updateBPStatus("Starting...")
