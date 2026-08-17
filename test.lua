@@ -1729,9 +1729,9 @@ local function startWeatherWatcher()
     end)
 end
 
-local ShopTab = Window:CreateTab("Shop")
+local AutomationTab = Window:CreateTab("Automation")
 
-local WeatherSection = Window:AddCollapsible(ShopTab, "Auto Buy Weather", false)
+local WeatherSection = Window:AddCollapsible(AutomationTab, "Weather Features", false)
 
 Window:AddDropdown(WeatherSection, "Select Weather", "", WEATHER_LIST, 3, {}, function(selected)
     Config.SelectedWeatherEvents = (type(selected) == "table") and selected or {}
@@ -1746,8 +1746,8 @@ Window:AddToggle(WeatherSection, "Buy Weather", "", false, function(state)
     end
 end, "Toggle_Buy Weather")
 
+local TotemSection = Window:AddCollapsible(AutomationTab, "Totem Features", false)
 
--- ====== AUTOMATION: TOTEM FEATURES ======
 local TOTEM_LIST = {"Luck Totem", "Mutation Totem", "Shiny Totem"}
 local autoSpawnThread = nil
 local totemWatchConn = nil
@@ -1847,11 +1847,8 @@ end
 local function startAutoSpawn()
     stopAutoSpawn()
     Config.AutoSpawnTotem = true
-    task.spawn(spawnTotem) -- tidak assign ke autoSpawnThread → tidak di-cancel oleh scheduleRespawn
+    task.spawn(spawnTotem)
 end
-
-local AutomationTab = Window:CreateTab("Automation")
-local TotemSection = Window:AddCollapsible(AutomationTab, "Totem Features", false)
 
 Window:AddDropdown(TotemSection, "Select Totem", "", TOTEM_LIST, false, Config.SelectedTotem, function(value)
     Config.SelectedTotem = value or "Luck Totem"
