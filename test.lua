@@ -1800,7 +1800,6 @@ local function scheduleRespawn()
                 if model.Parent ~= nil then return end
                 if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
                 if Config.AutoSpawnTotem then
-                    Orvion:Notify({ Title="Totem", Description="", Content="Gone — respawning", Color=Color3.fromRGB(150,150,170), Delay=2 })
                     task.wait(2)
                     spawnTotem()
                 end
@@ -1817,7 +1816,7 @@ local function scheduleRespawn()
     end)
 end
 
-spawnTotem = function()
+spawnTotem = function(isManual)
     local totemName = Config.SelectedTotem
     if not totemName or totemName == "" then return false end
     local uuid = findTotemUUID(totemName)
@@ -1829,7 +1828,9 @@ spawnTotem = function()
     if not rf then return false end
     local ok = pcall(function() rf:FireServer(uuid) end)
     if ok then
-        Orvion:Notify({ Title="Totem", Description="", Content=totemName, Color=Color3.fromRGB(150,150,170), Delay=3 })
+        if isManual then
+            Orvion:Notify({ Title="Totem", Description="", Content=totemName .. " spawned", Color=Color3.fromRGB(150,150,170), Delay=3 })
+        end
         if Config.AutoSpawnTotem then scheduleRespawn() end
         return true
     end
@@ -1867,7 +1868,7 @@ Window:AddToggle(TotemSection, "Auto Spawn Totem", "", false, function(state)
 end, "Toggle_Auto Spawn Totem")
 
 Window:AddButton(TotemSection, "Spawn Now", "", "rbxassetid://16932740082", function()
-    spawnTotem()
+    spawnTotem(true)
 end)
 
 -- ====== STARTUP ======
