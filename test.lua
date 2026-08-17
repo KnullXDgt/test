@@ -2230,7 +2230,7 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
     local bought = 0
     for i = 1, qty do
         local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
-        if ok and result then bought = bought + 1 end
+        if ok then bought = bought + 1 end
         if i < qty then task.wait(0.3) end
     end
     updateMerchantStatus(bought, qty)
