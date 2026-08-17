@@ -1833,3 +1833,13 @@ updateBigPopup()
 Window:SetActiveTab("Info")
 Window:Show()
 
+-- Fix PC click stuck: AutoButtonColor = true causes hover state to get stuck on PC
+task.defer(function()
+    local pg = game:GetService("Players").LocalPlayer.PlayerGui
+    for _, v in ipairs(pg:GetDescendants()) do
+        if (v:IsA("TextButton") or v:IsA("ImageButton")) and v.AutoButtonColor then
+            v.AutoButtonColor = false
+        end
+    end
+end)
+
