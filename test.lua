@@ -2129,26 +2129,37 @@ end, "Toggle_Buy Battlepass Item")
 -- ==========================================
 local merchantItems = {}
 local merchantStatusParagraph = nil
+local merchantTimerThread = nil
 
-local function updateMerchantStatus()
+local function getMerchantRefreshText()
+    local t = workspace:GetServerTimeNow()
+    local secs = math.max(0, (t // 86400 + 1) * 86400 - t)
+    local h = math.floor(secs / 3600)
+    local m = math.floor(secs % 3600 / 60)
+    local s = math.floor(secs % 60)
+    return string.format("Next Refresh: %dH, %dM, %dS", h, m, s)
+end
+
+local function updateMerchantStatus(bought, total)
     local itemName = Config.SelectedMerchantItem
     local price = "?"
-    local buyCount = "0/1"
     if merchantItems[itemName] then price = tostring(merchantItems[itemName].price or "?") end
+    local buyStr = bought and (bought .. "/" .. total) or "0/1"
     local content = "Item: " .. (itemName ~= "Select Option" and itemName or "-") ..
         "\nPrice: " .. price .. " Coins" ..
-        "\nBuy: " .. buyCount
+        "\nBuy: " .. buyStr ..
+        "\n" .. getMerchantRefreshText()
     if merchantStatusParagraph then pcall(function() merchantStatusParagraph:Set(content) end) end
 end
 
-local function setMerchantBuyCount(bought, total)
-    local itemName = Config.SelectedMerchantItem
-    local price = "?"
-    if merchantItems[itemName] then price = tostring(merchantItems[itemName].price or "?") end
-    local content = "Item: " .. (itemName ~= "Select Option" and itemName or "-") ..
-        "\nPrice: " .. price .. " Coins" ..
-        "\nBuy: " .. bought .. "/" .. total
-    if merchantStatusParagraph then pcall(function() merchantStatusParagraph:Set(content) end) end
+local function startMerchantTimer()
+    if merchantTimerThread then pcall(task.cancel, merchantTimerThread) end
+    merchantTimerThread = task.spawn(function()
+        while true do
+            updateMerchantStatus()
+            task.wait(1)
+        end
+    end)
 end
 
 local MerchantSection = Window:AddCollapsible(ShopTab, "Merchant Features", false)
@@ -2172,32 +2183,41 @@ Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://169
         Orvion:Notify({ Title="Merchant", Content="Replion not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
-    local ok2, IU = pcall(function() return require(game:GetService("ReplicatedStorage").Shared.ItemUtility) end)
+    local ok2, MID = pcall(function() return require(game:GetService("ReplicatedStorage").Shared.MarketItemData) end)
+    local ok3, IU  = pcall(function() return require(game:GetService("ReplicatedStorage").Shared.ItemUtility) end)
+    -- build MarketItemData map
+    local midMap = {}
+    if ok2 and MID then
+        for _, v in ipairs(MID) do midMap[v.Id] = v end
+    end
     local itemIds = {}
     pcall(function() itemIds = mr:GetExpect("Items") or {} end)
     merchantItems = {}
     local newList = {"Select Option"}
-    for idx, itemId in ipairs(itemIds) do
+    for _, itemId in ipairs(itemIds) do
         local name = tostring(itemId)
         local price = "?"
-        if ok2 and IU then
-            pcall(function()
-                local data = IU.GetItemDataFromItemType("Items", itemId)
-                    or IU.GetItemDataFromItemType("Potions", itemId)
-                    or IU.GetItemDataFromItemType("Fishing Rods", itemId)
-                    or IU.GetItemDataFromItemType("Baits", itemId)
-                if data and data.Data and data.Data.Name then
-                    name = data.Data.Name
-                    price = tostring(data.Price or "?")
-                end
-            end)
+        local md = midMap[itemId]
+        if md then
+            price = tostring(md.Price or "?")
+            if ok3 and IU and md.Type and md.Identifier then
+                pcall(function()
+                    local data = IU.GetItemDataFromItemType(md.Type, md.Identifier)
+                    if data and data.Data and data.Data.Name then
+                        name = data.Data.Name
+                    end
+                end)
+            else
+                name = tostring(md.Identifier or itemId)
+            end
         end
-        merchantItems[name] = { id = itemId, index = idx, price = price }
+        merchantItems[name] = { id = itemId, price = price }
         table.insert(newList, name)
     end
     if merchantDropdown then
         pcall(function() merchantDropdown:Refresh(newList, "Select Option") end)
     end
+    startMerchantTimer()
     Orvion:Notify({ Title="Merchant", Content=tostring(#newList - 1) .. " items found", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 
@@ -2208,15 +2228,14 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
         return
     end
     local itemId = merchantItems[name].id
-    local itemIndex = merchantItems[name].index
     local qty = math.max(1, Config.MerchantQty)
     local bought = 0
     for i = 1, qty do
-        local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemIndex) end)
+        local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
         if ok and result then bought = bought + 1 end
         if i < qty then task.wait(0.3) end
     end
-    setMerchantBuyCount(bought, qty)
+    updateMerchantStatus(bought, qty)
     Orvion:Notify({ Title="Merchant", Content=name .. " x" .. bought, Color=Color3.fromRGB(150,150,170), Delay=3 })
 end)
 
@@ -2228,10 +2247,10 @@ Window:AddToggle(MerchantSection, "Buy Merchant Item", "", false, function(state
             while Config.AutoBuyMerchant do
                 local name = Config.SelectedMerchantItem
                 if name ~= "Select Option" and merchantItems[name] and purchaseMerchantRF then
-                    local itemIndex = merchantItems[name].index
-                    local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemIndex) end)
+                    local itemId = merchantItems[name].id
+                    local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
                     if ok and result then
-                        setMerchantBuyCount(1, 1)
+                        updateMerchantStatus(1, 1)
                     end
                 end
                 task.wait(1)
