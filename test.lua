@@ -2308,7 +2308,8 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
 end)
 
 local autoBuyMerchantThread = nil
-Window:AddToggle(MerchantSection, "Buy Merchant Item", "", false, function(state)
+local merchantToggleFunc = nil
+merchantToggleFunc = Window:AddToggle(MerchantSection, "Buy Merchant Item", "", false, function(state)
     Config.AutoBuyMerchant = state
     if state then
         autoBuyMerchantThread = task.spawn(function()
@@ -2337,6 +2338,7 @@ Window:AddToggle(MerchantSection, "Buy Merchant Item", "", false, function(state
             end
             Orvion:Notify({ Title="Merchant", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
             Config.AutoBuyMerchant = false
+            if merchantToggleFunc then pcall(function() merchantToggleFunc:Set(false) end) end
         end)
     else
         if autoBuyMerchantThread then pcall(task.cancel, autoBuyMerchantThread); autoBuyMerchantThread = nil end
