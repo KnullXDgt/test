@@ -2233,21 +2233,39 @@ end)
 Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", function()
     local name = Config.SelectedMerchantItem
     if name == "Select Option" or not merchantItems[name] then
-        Orvion:Notify({ Title="Merchant", Content="Select item first", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        Orvion:Notify({ Title="Merchant", Description="", Content="Select item first", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
     local itemId = merchantItems[name].id
+    local price = tonumber(merchantItems[name].price) or 0
+    -- cek coins
+    local coins = 0
+    pcall(function() coins = PlayerData:GetExpect("Coins") or 0 end)
+    if price > 0 and coins < price then
+        Orvion:Notify({ Title="Merchant", Description="", Content="Not enough coins", Color=Color3.fromRGB(220,80,80), Delay=3 })
+        return
+    end
     local qty = math.max(1, Config.MerchantQty)
     local bought = 0
     for i = 1, qty do
         updateMerchantStatus(bought, qty)
         local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
-        if ok and result then bought = bought + 1 end
+        if ok and result then
+            bought = bought + 1
+        else
+            -- cek coins lagi
+            local c = 0
+            pcall(function() c = PlayerData:GetExpect("Coins") or 0 end)
+            if price > 0 and c < price then
+                Orvion:Notify({ Title="Merchant", Description="", Content="Not enough coins", Color=Color3.fromRGB(220,80,80), Delay=3 })
+                break
+            end
+        end
         updateMerchantStatus(bought, qty)
         if i < qty then task.wait(0.3) end
     end
     updateMerchantStatus(bought, qty)
-    Orvion:Notify({ Title="Merchant", Content=name .. " x" .. bought, Color=Color3.fromRGB(150,150,170), Delay=3 })
+    Orvion:Notify({ Title="Merchant", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
 end)
 
 local autoBuyMerchantThread = nil
