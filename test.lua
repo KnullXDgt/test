@@ -2072,28 +2072,29 @@ local function updateBPStatus(text)
 end
 
 local function buyBPSlots()
-    if not bpPurchaseRE then return end
+    if not bpPurchaseRE then
+        Orvion:Notify({ Title="Battlepass", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        return
+    end
     local slots = Config.SelectedBPSlots
-    if not slots or #slots == 0 then return end
-    local ok2, DataReplion = pcall(function()
-        return require(game:GetService("ReplicatedStorage").Packages.Replion).Client:WaitReplion("Data")
-    end)
+    if not slots or #slots == 0 then
+        updateBPStatus("No slots selected")
+        return
+    end
     for i, slotName in ipairs(slots) do
+        if not Config.AutoBuyBP then break end
         local index = tonumber(slotName:match("^Slot (%d+)"))
         if index then
+            -- check ownership via PlayerData
             local owned = false
-            if ok2 then
-                pcall(function()
-                    local bp = DataReplion:Get("GalaxyBP26")
-                    if bp and bp[tostring(index)] then owned = true end
-                end)
-            end
+            pcall(function()
+                local bp = PlayerData:Get("GalaxyBP26")
+                if bp and bp[tostring(index)] then owned = true end
+            end)
             if not owned then
-                updateBPStatus("Buy " .. i .. "/" .. #slots)
+                updateBPStatus("Buy " .. i .. "/" .. #slots .. " (Slot " .. index .. ")")
                 pcall(function() bpPurchaseRE:FireServer(index) end)
-                task.wait(0.5)
-                updateBPStatus("Slot " .. index .. " bought")
-                task.wait(0.3)
+                task.wait(0.8)
             end
         end
     end
