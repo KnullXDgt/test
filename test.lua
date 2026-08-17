@@ -1319,7 +1319,7 @@ end, "Toggle_Auto Sell")
 
 Window:AddButton(SellSection, "Sell All Now", "", "rbxassetid://16932740082", function()
     sellAll()
-    Orvion:Notify({ Title="Orvion Hub", Description="", Content="Sold!", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Sold!", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 
 -- ====== TELEPORT TAB ======
@@ -1425,7 +1425,7 @@ end, "Dropdown_Select Map")
 
 Window:AddButton(TpSection, "Teleport", "", "", function()
     teleportTo(Config.TeleportLocation)
-    Orvion:Notify({ Title="Teleport", Description="", Content="Teleported to " .. Config.TeleportLocation, Color=Color3.fromRGB(150,150,170), Delay=2 })
+    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. Config.TeleportLocation, Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 
 
@@ -1621,15 +1621,15 @@ Window:AddButtonGrid(TpNpcSection,
 
     end)
     if teleported then
-        Orvion:Notify({ Title="Teleport", Description="", Content="Teleported to " .. name, Color=Color3.fromRGB(150,150,170), Delay=2 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. name, Color=Color3.fromRGB(150,150,170), Delay=2 })
     else
-        Orvion:Notify({ Title="Teleport", Description="", Content="NPC not found: " .. name, Color=Color3.fromRGB(150,150,170), Delay=2 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="NPC not found: " .. name, Color=Color3.fromRGB(150,150,170), Delay=2 })
     end
     end},
     { Title = "Refresh", Callback = function()
         local nl = getNPCNames()
         SelectNpcDropdown:Refresh(nl, nl[1] or "Select NPC")
-        Orvion:Notify({ Title="NPC", Description="", Content="Refreshed " .. #nl .. " NPCs!", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Refreshed " .. #nl .. " NPCs!", Color=Color3.fromRGB(150,150,170), Delay=2 })
     end}
 )
 
@@ -1655,7 +1655,7 @@ Window:AddButtonGrid(TpPlayerSection,
             if not tr then return end
             root.CFrame = tr.CFrame + Vector3.new(3, 0, 0)
         end)
-        Orvion:Notify({ Title="Teleport", Description="", Content="Teleported to " .. tostring(Config.TeleportPlayer), Color=Color3.fromRGB(150,150,170), Delay=2 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. tostring(Config.TeleportPlayer), Color=Color3.fromRGB(150,150,170), Delay=2 })
     end},
     { Title = "Refresh", Callback = function()
         local pl = getPlayerList(); SelectPlayerDropdown:Refresh(pl, pl[1] or "Select Player")
@@ -1667,18 +1667,18 @@ local SavedLocSection = Window:AddCollapsible(TpTab, "Saved Location", false)
 Window:AddButton(SavedLocSection, "Save Current Location", "", "rbxassetid://16932740082", function()
     local ok = saveCurrentLocation()
     local msg = ok and "Location saved!" or "Failed to save location."
-    Orvion:Notify({ Title="Teleport", Description="", Content=msg, Color=Color3.fromRGB(150,150,170), Delay=2 })
+    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=msg, Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 Window:AddButton(SavedLocSection, "Teleport to Saved", "", "rbxassetid://16932740082", function()
     local ok, result = pcall(teleportToSaved)
     local msg = (ok and result) and "Teleported to saved!" or "No saved location."
-    Orvion:Notify({ Title="Teleport", Description="", Content=msg, Color=Color3.fromRGB(150,150,170), Delay=2 })
+    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=msg, Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 Window:AddButton(SavedLocSection, "Reset Saved Location", "", "rbxassetid://16932740082", function()
     pcall(function()
         if isfile(SAVED_LOCATION_FILE) then delfile(SAVED_LOCATION_FILE) end
     end)
-    Orvion:Notify({ Title="Teleport", Description="", Content="Saved location cleared.", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Saved location cleared.", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 Window:AddToggle(SavedLocSection, "Auto Teleport on Spawn", "", false, function(state)
     setAutoTeleportOnSpawn(state)
@@ -1703,7 +1703,7 @@ local function buyWeatherEvent(eventName, silent)
     end)
     if ok and result == true then
         if not silent then
-            Orvion:Notify({ Title="Auto Buy Weather", Description="", Content=eventName, Color=Color3.fromRGB(150,150,170), Delay=3 })
+            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=eventName, Color=Color3.fromRGB(150,150,170), Delay=3 })
         end
         return true
     end
@@ -1746,7 +1746,7 @@ local function startWeatherWatcher()
             end
         end
         if #bought > 0 then
-            Orvion:Notify({ Title="Auto Buy Weather", Description="", Content=table.concat(bought, ", "), Color=Color3.fromRGB(150,150,170), Delay=4 })
+            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=table.concat(bought, ", "), Color=Color3.fromRGB(150,150,170), Delay=4 })
         end
     end)
 end
@@ -1875,7 +1875,7 @@ spawnTotem = function(isManual)
     if not totemName or totemName == "" then return false end
     local uuid = findTotemUUID(totemName)
     if not uuid then
-        Orvion:Notify({ Title="Totem", Description="", Content="Not found in inventory", Color=Color3.fromRGB(150,150,170), Delay=3 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not found in inventory", Color=Color3.fromRGB(150,150,170), Delay=3 })
         return false
     end
     local rf = spawnTotemRemote
@@ -1883,7 +1883,7 @@ spawnTotem = function(isManual)
     local ok = pcall(function() rf:FireServer(uuid) end)
     if ok then
         if isManual then
-            Orvion:Notify({ Title="Totem", Description="", Content=totemName .. " spawned", Color=Color3.fromRGB(150,150,170), Delay=3 })
+            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=totemName .. " spawned", Color=Color3.fromRGB(150,150,170), Delay=3 })
         end
         if Config.AutoSpawnTotem then scheduleRespawn() end
         return true
@@ -1910,7 +1910,7 @@ end, "Dropdown_Select Totem")
 
 Window:AddButton(TotemSection, "Refresh Totem List", "", "rbxassetid://16932740082", function()
     local uuid = findTotemUUID(Config.SelectedTotem)
-    Orvion:Notify({ Title="Totem", Description="", Content=uuid and "Available" or "Not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=uuid and "Available" or "Not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 
 Window:AddToggle(TotemSection, "Auto Spawn Totem", "", false, function(state)
@@ -1960,7 +1960,7 @@ end, "Dropdown_Select Rod")
 Window:AddButton(RodSection, "Buy Rod", "", "rbxassetid://16932740082", function()
     local rodId = ROD_MAP[Config.SelectedRod]
     if not rodId or not purchaseRodRF then
-        Orvion:Notify({ Title="Rod", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
     local ok, success, uuid = pcall(function() return purchaseRodRF:InvokeServer(rodId) end)
@@ -1968,9 +1968,9 @@ Window:AddButton(RodSection, "Buy Rod", "", "rbxassetid://16932740082", function
         if success and uuid and equipItemRE then
             pcall(function() equipItemRE:FireServer(uuid, "Fishing Rods") end)
         end
-        Orvion:Notify({ Title="Rod", Content=Config.SelectedRod .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=Config.SelectedRod .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
     else
-        Orvion:Notify({ Title="Rod", Content="Purchase failed", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Purchase failed", Color=Color3.fromRGB(150,150,170), Delay=2 })
     end
 end)
 
@@ -1994,7 +1994,7 @@ end, "Dropdown_Select Bait")
 Window:AddButton(BaitSection, "Buy Bait", "", "rbxassetid://16932740082", function()
     local baitId = BAIT_MAP[Config.SelectedBait]
     if not baitId or not purchaseBaitRF then
-        Orvion:Notify({ Title="Bait", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
     local ok, success, shouldEquip = pcall(function() return purchaseBaitRF:InvokeServer(baitId) end)
@@ -2002,9 +2002,9 @@ Window:AddButton(BaitSection, "Buy Bait", "", "rbxassetid://16932740082", functi
         if shouldEquip and equipBaitRE then
             pcall(function() equipBaitRE:FireServer(baitId) end)
         end
-        Orvion:Notify({ Title="Bait", Content=Config.SelectedBait .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=Config.SelectedBait .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
     else
-        Orvion:Notify({ Title="Bait", Content="Purchase failed", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Purchase failed", Color=Color3.fromRGB(150,150,170), Delay=2 })
     end
 end)
 
@@ -2068,9 +2068,9 @@ local function startAutoBuyBM()
         autoBuyBMThread = nil
         if bmToggleFunc then task.defer(function() pcall(function() bmToggleFunc:Set(false) end) end) end
         if #bought > 0 then
-            Orvion:Notify({ Title="Black Market", Description="", Content="Bought: " .. table.concat(bought, ", "), Color=Color3.fromRGB(150,150,170), Delay=4 })
+            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Bought: " .. table.concat(bought, ", "), Color=Color3.fromRGB(150,150,170), Delay=4 })
         else
-            Orvion:Notify({ Title="Black Market", Description="", Content="Nothing bought / out of stock", Color=Color3.fromRGB(150,150,170), Delay=3 })
+            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Nothing bought / out of stock", Color=Color3.fromRGB(150,150,170), Delay=3 })
         end
     end)
 end
@@ -2086,7 +2086,7 @@ Window:AddButton(BMSection, "Refresh List", "", "rbxassetid://16932740082", func
     if ok and BMC then
         local ok2, items = pcall(function() return BMC.GetItems() end)
         if ok2 and items then
-            Orvion:Notify({ Title="Black Market", Content=tostring(#items) .. " items in stock", Color=Color3.fromRGB(150,150,170), Delay=2 })
+            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=tostring(#items) .. " items in stock", Color=Color3.fromRGB(150,150,170), Delay=2 })
         end
     end
 end)
@@ -2129,7 +2129,7 @@ end
 
 local function buyBPSlots()
     if not bpPurchaseRE then
-        Orvion:Notify({ Title="Battlepass", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
     local slots = Config.SelectedBPSlots
@@ -2160,7 +2160,7 @@ local function buyBPSlots()
     end
     updateBPStatus("Done — bought " .. bought .. "/" .. total)
     if bought == 0 and total > 0 then
-        Orvion:Notify({ Title="Battlepass", Content="No Galaxy Points or all slots owned", Color=Color3.fromRGB(150,150,170), Delay=4 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="No Galaxy Points or all slots owned", Color=Color3.fromRGB(150,150,170), Delay=4 })
     end
     Config.AutoBuyBP = false
     if bpToggleFunc then task.defer(function() pcall(function() bpToggleFunc:Set(false) end) end) end
@@ -2223,7 +2223,7 @@ Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://169
     local mr = nil
     pcall(function() mr = Replion.Client:WaitReplion("Merchant") end)
     if not mr then
-        Orvion:Notify({ Title="Merchant", Content="Replion not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Replion not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
     local ok2, MID = pcall(function() return require(game:GetService("ReplicatedStorage").Shared.MarketItemData) end)
@@ -2263,7 +2263,7 @@ Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://169
         pcall(function() merchantDropdown:Refresh(newList, defaultItem) end)
     end
     updateMerchantStatus()
-    Orvion:Notify({ Title="Merchant", Content=tostring(#newList) .. " items found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=tostring(#newList) .. " items found", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 
 local merchantBuying = false
@@ -2272,7 +2272,7 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
     merchantBuying = true
     local name = Config.SelectedMerchantItem
     if name == "Select Option" or not merchantItems[name] then
-        Orvion:Notify({ Title="Merchant", Description="", Content="Select item first", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select item first", Color=Color3.fromRGB(150,150,170), Delay=2 })
         merchantBuying = false
         return
     end
@@ -2281,7 +2281,7 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
     local coins = 0
     pcall(function() coins = PlayerData:GetExpect("Coins") or 0 end)
     if price > 0 and coins < price then
-        Orvion:Notify({ Title="Merchant", Description="", Content="Not enough coins", Color=Color3.fromRGB(220,80,80), Delay=3 })
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not enough coins", Color=Color3.fromRGB(150,150,170), Delay=3 })
         merchantBuying = false
         return
     end
@@ -2296,7 +2296,7 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
             local c = 0
             pcall(function() c = PlayerData:GetExpect("Coins") or 0 end)
             if price > 0 and c < price then
-                Orvion:Notify({ Title="Merchant", Description="", Content="Not enough coins", Color=Color3.fromRGB(220,80,80), Delay=3 })
+                Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not enough coins", Color=Color3.fromRGB(150,150,170), Delay=3 })
                 break
             end
         end
@@ -2304,7 +2304,7 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
         if i < qty then task.wait(0.5) end
     end
     updateMerchantStatus(bought, qty)
-    Orvion:Notify({ Title="Merchant", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
+    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
     merchantBuying = false
 end)
 
@@ -2328,7 +2328,7 @@ merchantToggleFunc = Window:AddToggle(MerchantSection, "Buy Merchant Item", "", 
                 local coins = 0
                 pcall(function() coins = PlayerData:GetExpect("Coins") or 0 end)
                 if price > 0 and coins < price then
-                    Orvion:Notify({ Title="Merchant", Description="", Content="Not enough coins", Color=Color3.fromRGB(220,80,80), Delay=3 })
+                    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not enough coins", Color=Color3.fromRGB(150,150,170), Delay=3 })
                     break
                 end
                 updateMerchantStatus(bought, qty)
@@ -2337,7 +2337,7 @@ merchantToggleFunc = Window:AddToggle(MerchantSection, "Buy Merchant Item", "", 
                 updateMerchantStatus(bought, qty)
                 if i < qty then task.wait(0.5) end
             end
-            Orvion:Notify({ Title="Merchant", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
+            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
             Config.AutoBuyMerchant = false
             if merchantToggleFunc then task.defer(function() pcall(function() merchantToggleFunc:Set(false) end) end) end
         end)
