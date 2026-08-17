@@ -2086,7 +2086,7 @@ Window:AddButton(BMSection, "Refresh List", "", "rbxassetid://16932740082", func
     if ok and BMC then
         local ok2, items = pcall(function() return BMC.GetItems() end)
         if ok2 and items then
-            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=tostring(#items) .. " items in stock", Color=Color3.fromRGB(150,150,170), Delay=2 })
+            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Stock refreshed", Color=Color3.fromRGB(150,150,170), Delay=2 })
         end
     end
 end)
