@@ -2232,22 +2232,26 @@ Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://169
     Orvion:Notify({ Title="Merchant", Content=tostring(#newList) .. " items found", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 
+local merchantBuying = false
 Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", function()
+    if merchantBuying then return end
+    merchantBuying = true
     local name = Config.SelectedMerchantItem
     if name == "Select Option" or not merchantItems[name] then
         Orvion:Notify({ Title="Merchant", Description="", Content="Select item first", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        merchantBuying = false
         return
     end
     local itemId = merchantItems[name].id
     local price = tonumber(merchantItems[name].price) or 0
-    -- cek coins
     local coins = 0
     pcall(function() coins = PlayerData:GetExpect("Coins") or 0 end)
     if price > 0 and coins < price then
         Orvion:Notify({ Title="Merchant", Description="", Content="Not enough coins", Color=Color3.fromRGB(220,80,80), Delay=3 })
+        merchantBuying = false
         return
     end
-    local qty = math.max(1, Config.MerchantQty)
+    local qty = 1
     local bought = 0
     for i = 1, qty do
         updateMerchantStatus(bought, qty)
@@ -2255,7 +2259,6 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
         if ok and result then
             bought = bought + 1
         else
-            -- cek coins lagi
             local c = 0
             pcall(function() c = PlayerData:GetExpect("Coins") or 0 end)
             if price > 0 and c < price then
@@ -2264,10 +2267,11 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
             end
         end
         updateMerchantStatus(bought, qty)
-        if i < qty then task.wait(0.3) end
+        if i < qty then task.wait(0.5) end
     end
     updateMerchantStatus(bought, qty)
     Orvion:Notify({ Title="Merchant", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
+    merchantBuying = false
 end)
 
 local autoBuyMerchantThread = nil
