@@ -2308,29 +2308,35 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
 end)
 
 local autoBuyMerchantThread = nil
-local merchantToggleFunc = nil
-merchantToggleFunc = Window:AddToggle(MerchantSection, "Buy Merchant Item", "", false, function(state)
+Window:AddToggle(MerchantSection, "Buy Merchant Item", "", false, function(state)
     Config.AutoBuyMerchant = state
     if state then
         autoBuyMerchantThread = task.spawn(function()
             local name = Config.SelectedMerchantItem
-            if name ~= "Select Option" and merchantItems[name] and purchaseMerchantRF then
-                local itemId = merchantItems[name].id
-                local price = tonumber(merchantItems[name].price) or 0
+            if name == "Select Option" or not merchantItems[name] or not purchaseMerchantRF then
+                Config.AutoBuyMerchant = false
+                return
+            end
+            local itemId = merchantItems[name].id
+            local price = tonumber(merchantItems[name].price) or 0
+            local qty = math.max(1, Config.MerchantQty)
+            local bought = 0
+            for i = 1, qty do
+                if not Config.AutoBuyMerchant then break end
                 local coins = 0
                 pcall(function() coins = PlayerData:GetExpect("Coins") or 0 end)
                 if price > 0 and coins < price then
                     Orvion:Notify({ Title="Merchant", Description="", Content="Not enough coins", Color=Color3.fromRGB(220,80,80), Delay=3 })
-                else
-                    local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
-                    if ok and result then
-                        updateMerchantStatus(1, 1)
-                        Orvion:Notify({ Title="Merchant", Description="", Content=name .. " x1 bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
-                    end
+                    break
                 end
+                updateMerchantStatus(bought, qty)
+                local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
+                if ok and result then bought = bought + 1 end
+                updateMerchantStatus(bought, qty)
+                if i < qty then task.wait(0.5) end
             end
+            Orvion:Notify({ Title="Merchant", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
             Config.AutoBuyMerchant = false
-            if merchantToggleFunc then pcall(function() merchantToggleFunc:Set(false) end) end
         end)
     else
         if autoBuyMerchantThread then pcall(task.cancel, autoBuyMerchantThread); autoBuyMerchantThread = nil end
