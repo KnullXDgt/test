@@ -1752,7 +1752,6 @@ local TOTEM_LIST = {"Luck Totem", "Mutation Totem", "Shiny Totem"}
 local autoSpawnThread = nil
 local totemWatchConn = nil
 local totemCreatedConn = nil
-local TOTEM_DURATION = 3600
 
 local spawnTotemRemote   = GetServerRemote("RE/SpawnTotem")
 local totemCreatedRemote = GetServerRemote("RE/TotemCreated")
@@ -1806,14 +1805,6 @@ local function scheduleRespawn()
             end)
         end)
     end
-
-    -- Fallback: 1hr timer if RE/TotemCreated never fires
-    autoSpawnThread = task.defer(function()
-        task.wait(TOTEM_DURATION)
-        if Config.AutoSpawnTotem then
-            spawnTotem()
-        end
-    end)
 end
 
 spawnTotem = function(isManual)
