@@ -1787,21 +1787,21 @@ local function scheduleRespawn()
     if not Config.AutoSpawnTotem then return end
     if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
     if totemCreatedConn then totemCreatedConn:Disconnect(); totemCreatedConn = nil end
-    if autoSpawnThread then task.cancel(autoSpawnThread); autoSpawnThread = nil end
+    if autoSpawnThread then pcall(task.cancel, autoSpawnThread); autoSpawnThread = nil end
 
     -- Event-driven: RE/TotemCreated fires when model spawns in world
     if totemCreatedRemote then
         totemCreatedConn = totemCreatedRemote.OnClientEvent:Connect(function(model)
             if totemCreatedConn then totemCreatedConn:Disconnect(); totemCreatedConn = nil end
             -- cancel fallback timer, event took over
-            if autoSpawnThread then task.cancel(autoSpawnThread); autoSpawnThread = nil end
+            if autoSpawnThread then pcall(task.cancel, autoSpawnThread); autoSpawnThread = nil end
             if not model then return end
             totemWatchConn = model.AncestryChanged:Connect(function()
                 if model.Parent ~= nil then return end
                 if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
                 if Config.AutoSpawnTotem then
                     Orvion:Notify({ Title="Totem", Description="", Content="Gone — respawning", Color=Color3.fromRGB(150,150,170), Delay=2 })
-                    task.wait(1.2)
+                    task.wait(2)
                     spawnTotem()
                 end
             end)
@@ -1837,7 +1837,7 @@ spawnTotem = function()
 end
 
 local function stopAutoSpawn()
-    if autoSpawnThread then task.cancel(autoSpawnThread); autoSpawnThread = nil end
+    if autoSpawnThread then pcall(task.cancel, autoSpawnThread); autoSpawnThread = nil end
     if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
     if totemCreatedConn then totemCreatedConn:Disconnect(); totemCreatedConn = nil end
     Config.AutoSpawnTotem = false
@@ -1846,9 +1846,7 @@ end
 local function startAutoSpawn()
     stopAutoSpawn()
     Config.AutoSpawnTotem = true
-    autoSpawnThread = task.defer(function()
-        spawnTotem()
-    end)
+    task.spawn(spawnTotem) -- tidak assign ke autoSpawnThread → tidak di-cancel oleh scheduleRespawn
 end
 
 local AutomationTab = Window:CreateTab("Automation")
