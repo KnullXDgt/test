@@ -31,7 +31,6 @@ Info | Main | Teleport | Automation | Shop
 - Hide Other Players
 - Walk on Water
 - Lock Position
-- Real Ping display
 
 ### Instant Fishing (V1)
 - Toggle on/off
