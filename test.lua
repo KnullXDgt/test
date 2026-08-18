@@ -2238,21 +2238,17 @@ Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://169
     merchantItems = {}
     local newList = {}
     for _, itemId in ipairs(itemIds) do
-        local name = tostring(itemId)
-        local price = "?"
         local md = midMap[itemId]
-        if md then
-            price = tostring(md.Price or "?")
-            if ok3 and IU and md.Type and md.Identifier then
-                pcall(function()
-                    local data = IU.GetItemDataFromItemType(md.Type, md.Identifier)
-                    if data and data.Data and data.Data.Name then
-                        name = data.Data.Name
-                    end
-                end)
-            else
-                name = tostring(md.Identifier or itemId)
-            end
+        if not md or md.Currency ~= "Coins" then continue end
+        local name = tostring(md.Identifier or itemId)
+        local price = tostring(md.Price or "?")
+        if ok3 and IU and md.Type and md.Identifier then
+            pcall(function()
+                local data = IU.GetItemDataFromItemType(md.Type, md.Identifier)
+                if data and data.Data and data.Data.Name then
+                    name = data.Data.Name
+                end
+            end)
         end
         merchantItems[name] = { id = itemId, price = price }
         table.insert(newList, name)
