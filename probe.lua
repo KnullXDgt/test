@@ -54,7 +54,6 @@ for i, itemId in ipairs(itemIds) do
 end
 
 if writefile then
-    writefile("probe.txt", table.concat(out, "
-"))
+    writefile("probe.txt", table.concat(out, "\n"))
     log("Written to probe.txt")
 end
