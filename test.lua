@@ -1770,7 +1770,19 @@ end, "Toggle_Buy Weather")
 
 local TotemSection = Window:AddCollapsible(AutomationTab, "Totem Features", false)
 
-local TOTEM_LIST = {"Luck Totem", "Mutation Totem", "Shiny Totem"}
+local TOTEM_LIST = {
+    "Abyssal Totem",
+    "Cosmic Totem",
+    "Easter Totem",
+    "Love Totem",
+    "Luck Totem",
+    "Mutation Totem",
+    "Noob Totem",
+    "Shiny Totem",
+    "Super Cosmic Totem",
+    "Super Easter Totem",
+    "Super Love Totem"
+}
 local autoSpawnThread = nil
 local totemWatchConn = nil
 local totemCreatedConn = nil
@@ -1909,8 +1921,27 @@ Window:AddDropdown(TotemSection, "Select Totem", "", TOTEM_LIST, false, Config.S
 end, "Dropdown_Select Totem")
 
 Window:AddButton(TotemSection, "Refresh Totem List", "", "rbxassetid://16932740082", function()
-    local uuid = findTotemUUID(Config.SelectedTotem)
-    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=uuid and "Available" or "Not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    local inv = nil
+    pcall(function() inv = PlayerData:Get("Inventory") end)
+    if not inv or not inv.Totems then
+        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Inventory not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        return
+    end
+    local ownedTypes = {}
+    for _, item in ipairs(inv.Totems) do
+        if type(item) == "table" and item.Id then ownedTypes[item.Id] = true end
+    end
+    local names = {}
+    for typeId in pairs(ownedTypes) do
+        local name = tostring(typeId)
+        pcall(function()
+            local d = ItemUtility.GetItemDataFromItemType("Totems", typeId)
+            if d and d.Data and d.Data.Name then name = d.Data.Name end
+        end)
+        table.insert(names, name)
+    end
+    local content = #names > 0 and table.concat(names, ", ") or "No totems found"
+    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=content, Color=Color3.fromRGB(150,150,170), Delay=4 })
 end)
 
 Window:AddToggle(TotemSection, "Auto Spawn Totem", "", false, function(state)
