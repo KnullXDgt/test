@@ -2006,8 +2006,16 @@ do
         Config.AutoEnchantReroll = state
     end, "Toggle_Auto Enchant Reroll")
     Window:AddButtonGrid(EnchantSection,
-        { Title = "Teleport to Altar 1", Callback = function() end },
-        { Title = "Teleport to Altar 2", Callback = function() end }
+        { Title = "Teleport to Altar 1", Callback = function()
+            local char = LocalPlayer.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if root then pcall(function() root.CFrame = CFrame.new(3246.00122, -1300.65588, 1395.11926, -0.430797249, 0, 0.902448714, 0, 1, 0, -0.902448714, 0, -0.430797249) end) end
+        end },
+        { Title = "Teleport to Altar 2", Callback = function()
+            local char = LocalPlayer.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if root then pcall(function() root.CFrame = CFrame.new(1478.63489, 130.679703, -609.361938, -0.996601522, 2.26994281e-08, -0.0823735297, 2.58843453e-08, 1, -3.7596422e-08, 0.0823735297, -3.96008382e-08, -0.996601522) end) end
+        end }
     )
 end
 
