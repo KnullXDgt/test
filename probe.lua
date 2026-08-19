@@ -1,8 +1,16 @@
--- Probe: FULL GAME DUMP v3
+-- Probe: FULL GAME DUMP v4 - fixed IDs + skins + completed quests
 local RS = game:GetService("ReplicatedStorage")
 local out = {}
 local function log(s) table.insert(out, s) print(s) end
 local function save() if writefile then writefile("probe.txt", table.concat(out, "\n")) end end
+local function dumpStruct(t, d)
+    if d > 2 or type(t) ~= "table" then return tostring(t) end
+    local p = {}
+    for k,v in pairs(t) do
+        if type(v) ~= "table" then table.insert(p, tostring(k).."="..tostring(v)) end
+    end
+    return "{"..table.concat(p,", ").."}"
+end
 
 local ok0, IU = pcall(require, RS.Shared.ItemUtility)
 if not ok0 then log("IU fail"); save() return end
@@ -10,33 +18,60 @@ local Replion = require(RS.Packages.Replion)
 local PlayerData = Replion.Client:WaitReplion("Data")
 local inventory = PlayerData and PlayerData:Get("Inventory") or {}
 
-local function dumpItems(label, getFn)
+-- Debug: show first rod structure
+log("=== DEBUG FIRST ROD STRUCTURE ===")
+pcall(function()
+    local rods = IU:GetFishingRods()
+    if rods and rods[1] then
+        log("  First item keys (non-table): "..dumpStruct(rods[1], 0))
+        if rods[1].Data then log("  .Data keys: "..dumpStruct(rods[1].Data, 0)) end
+    end
+end)
+save()
+
+local function getItemId(item)
+    if not item then return "?" end
+    -- Try various ID fields
+    if item.Id then return tostring(item.Id) end
+    if item.Identifier then return tostring(item.Identifier) end
+    if item.RodId then return tostring(item.RodId) end
+    if item.ItemId then return tostring(item.ItemId) end
+    if item.Data then
+        if item.Data.Id then return tostring(item.Data.Id) end
+        if item.Data.Identifier then return tostring(item.Data.Identifier) end
+    end
+    return "?"
+end
+
+local function dumpItems(label, getFn, typeFilter)
     pcall(function()
         local ok, items = pcall(getFn)
         if not ok or type(items) ~= "table" then log("=== "..label.." = ERROR ===") return end
-        log("=== "..label.." ("..tostring(#items)..") ===")
+        local filtered = {}
         for _, item in ipairs(items) do
             if type(item)=="table" and item.Data then
-                local name = tostring(item.Data.Name or "?")
-                local id = tostring(item.Id or "?")
-                local tier = item.Data.Tier and (" T"..tostring(item.Data.Tier)) or ""
-                local prob = item.Probability and (" "..string.format("1/%d",math.floor(1/item.Probability.Chance+0.5))) or ""
-                log("  id="..id.." "..name..tier..prob)
+                local t = item.Data.Type or item.Data.ItemType or ""
+                if not typeFilter or t == typeFilter or t:lower():find(typeFilter:lower(),1,true) then
+                    table.insert(filtered, item)
+                end
             end
+        end
+        log("=== "..label.." ("..#filtered..") ===")
+        for _, item in ipairs(filtered) do
+            local name = tostring(item.Data.Name or "?")
+            local id = getItemId(item)
+            local tier = item.Data.Tier and " T"..tostring(item.Data.Tier) or ""
+            log("  id="..id.." "..name..tier)
         end
         save()
     end)
 end
 
--- RARITY TABLE
+-- RARITY
 log("=== RARITY TIERS ===")
-log("  1=Common 2=Uncommon 3=Rare 4=Epic 5=Legendary 6=Mythic 7=Secret 8=Forgotten")
-pcall(function()
-    local RARITY = {[1]="Common",[2]="Uncommon",[3]="Rare",[4]="Epic",[5]="Legendary",[6]="Mythic",[7]="Secret",[8]="Forgotten"}
-    for tier,name in pairs(RARITY) do log("  "..tier.."="..name) end
-end)
+log("  1=Common, 2=Uncommon, 3=Rare, 4=Epic, 5=Legendary, 6=Mythic, 7=Secret, 8=Forgotten")
 
--- ROD ENCHANTS
+-- MY ROD ENCHANTS
 log("=== MY ROD ENCHANTS ===")
 pcall(function()
     local eq = PlayerData:Get("EquippedItems") or {}
@@ -50,18 +85,18 @@ pcall(function()
                 local meta = item.Metadata or {}
                 if meta.EnchantId then
                     local ok2,e1=pcall(function() return IU:GetEnchantData(meta.EnchantId) end)
-                    log("    E1("..meta.EnchantId.."): "..(ok2 and e1 and e1.Data and e1.Data.Name or "?"))
+                    log("    E1: "..(ok2 and e1 and e1.Data and e1.Data.Name or "?").." (id="..tostring(meta.EnchantId)..")")
                 end
                 if meta.EnchantId2 then
                     local ok3,e2=pcall(function() return IU:GetEnchantData(meta.EnchantId2) end)
-                    log("    E2("..meta.EnchantId2.."): "..(ok3 and e2 and e2.Data and e2.Data.Name or "?"))
+                    log("    E2: "..(ok3 and e2 and e2.Data and e2.Data.Name or "?").." (id="..tostring(meta.EnchantId2)..")")
                 end
             end
         end
     end
 end)
 
--- ALL GAME ITEMS
+-- GAME ITEMS
 dumpItems("ALL FISHING RODS", function() return IU:GetFishingRods() end)
 dumpItems("ALL BAITS", function() return IU:GetBaits() end)
 dumpItems("ALL HALOS", function() return IU:GetHalos() end)
@@ -74,7 +109,6 @@ dumpItems("ALL BOATS", function() return IU:GetBoats() end)
 dumpItems("ALL EMOTES", function() return IU:GetEmotes() end)
 dumpItems("ALL ABILITIES", function() return IU:GetAbilities() end)
 dumpItems("ALL GEARS", function() return IU:GetGears() end)
-dumpItems("ALL TROPHIES", function() return IU:GetTrophies() end)
 dumpItems("ALL PET EGGS", function() return IU:GetPetEggs() end)
 
 -- ENCHANT STONE POOLS
@@ -83,7 +117,7 @@ pcall(function()
     local stones = IU:GetEnchantStones()
     for _, stone in ipairs(stones) do
         if stone and stone.Data then
-            log("-- "..tostring(stone.Data.Name).." id="..tostring(stone.Id or"?").." --")
+            log("-- "..tostring(stone.Data.Name).." id="..getItemId(stone).." --")
             if stone.Enchants then
                 for ename,prob in pairs(stone.Enchants) do
                     log("  "..tostring(ename).." "..tostring(prob).."%")
@@ -94,59 +128,55 @@ pcall(function()
 end)
 save()
 
--- ALL FISH
-log("=== ALL FISH (by tier) ===")
+-- ALL FISH BY TIER
+log("=== ALL FISH BY TIER ===")
 pcall(function()
     local fish = IU:GetFish()
-    log("Total fish: "..tostring(#fish))
+    log("Total: "..tostring(#fish))
     local byTier = {}
     for _,f in ipairs(fish) do
         if f and f.Data then
             local t = tostring(f.Data.Tier or "?")
             byTier[t] = byTier[t] or {}
-            table.insert(byTier[t], f.Data.Name or "?")
+            table.insert(byTier[t], (f.Data.Name or "?").."(id="..getItemId(f)..")")
         end
     end
-    for tier,names in pairs(byTier) do
-        log("  Tier "..tier..": "..table.concat(names,", "):sub(1,200))
+    for tier=1,10 do
+        local names = byTier[tostring(tier)]
+        if names then log("  T"..tier.." ("..#names.."): "..table.concat(names,", "):sub(1,500)) end
     end
+    if byTier["?"] then log("  T? ("..#byTier["?"]..")") end
 end)
 save()
 
--- QUESTS
-log("=== QUESTS ===")
+-- ACTIVE + COMPLETED QUESTS
+log("=== ACTIVE QUESTS ===")
 pcall(function()
-    local quests = PlayerData:Get("Quests")
-    if type(quests)=="table" then
-        for qtype, qdata in pairs(quests) do
-            log("  ["..qtype.."]")
-            if type(qdata)=="table" then
-                for qname, qinfo in pairs(qdata) do
-                    log("    "..tostring(qname))
-                    if type(qinfo)=="table" then
-                        local obj = qinfo.Objectives or {}
-                        if type(obj)=="table" then
-                            local total = 0
-                            for _ in pairs(obj) do total=total+1 end
-                            log("      Objectives: "..total.." | Step: "..tostring(qinfo.CurrentObj or"?"))
-                        end
-                    end
-                end
+    local q = PlayerData:Get("Quests") or {}
+    for qtype,qdata in pairs(q) do
+        if type(qdata)=="table" then
+            for qname,qinfo in pairs(qdata) do
+                log("  ["..qtype.."] "..tostring(qname).." step="..tostring(type(qinfo)=="table" and qinfo.CurrentObj or "?"))
             end
         end
     end
 end)
+log("=== COMPLETED QUESTS ===")
+pcall(function()
+    local cq = PlayerData:Get("CompletedQuests") or {}
+    if type(cq)=="table" then
+        for _,qname in ipairs(cq) do log("  "..tostring(qname)) end
+    end
+end)
 
--- KEY STATS
-log("=== KEY STATS ===")
-for _,k in ipairs({"Level","XP","Coins","Tix","Tokens","RAP","LoginStreak","Statistics"}) do
-    pcall(function()
-        local v = PlayerData:Get(k)
-        if type(v)=="table" then
-            local p={}; for k2,v2 in pairs(v) do table.insert(p,k2.."="..tostring(v2)) end
-            log("  "..k.."="..table.concat(p,", "):sub(1,300))
-        elseif v~=nil then log("  "..k.."="..tostring(v)) end
-    end)
+-- STATS
+log("=== STATS ===")
+for _,k in ipairs({"Level","XP","Coins","Tix","Tokens","RAP","LoginStreak"}) do
+    pcall(function() local v=PlayerData:Get(k); if v~=nil then log("  "..k.."="..tostring(v)) end end)
 end
+pcall(function()
+    local s=PlayerData:Get("Statistics") or {}
+    for k,v in pairs(s) do if type(v)~="table" then log("  Stat."..k.."="..tostring(v)) end end
+end)
 
 save(); log("DONE"); save()
