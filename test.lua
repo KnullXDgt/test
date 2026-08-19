@@ -234,6 +234,7 @@ local function saveCurrentLocation()
     return ok
 end
 
+-- ====== UTILITIES ======
 local function teleportToSaved()
     local cf = getSavedLocation()
     if not cf then return false end
@@ -304,6 +305,12 @@ local function teleportTo(name)
     end)
 end
 
+local function teleportToBM(cf)
+    local root = game:GetService("Players").LocalPlayer.Character
+        and game:GetService("Players").LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if root then root.CFrame = cf end
+end
+
 -- ====== PERFECT CAST HELPER ======
 local function waitForPerfectCast()
     local power = 0.7
@@ -326,6 +333,7 @@ end
 
 -- ====== FISHING SYSTEM V1 ======
 local fishThread = nil
+-- ====== STATE ======
 local isFishing = false
 
 local function castRod()
@@ -2178,11 +2186,7 @@ local function buyBMItem(itemName)
     return ok and result and (type(result) == "table" and result.Success or result == true)
 end
 
-local function teleportToBM(cf)
-    local root = game:GetService("Players").LocalPlayer.Character
-        and game:GetService("Players").LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if root then root.CFrame = cf end
-end
+
 
 local function startAutoBuyBM()
     if autoBuyBMThread then pcall(task.cancel, autoBuyBMThread); autoBuyBMThread = nil end
