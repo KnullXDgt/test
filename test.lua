@@ -1168,6 +1168,43 @@ end
 ensureAnimPatch()
 
 -- ====== UI (NEW LIBRARY) ======
+
+-- ====== CONSTANTS ======
+local EVENT_LIST = {
+    "Admin - 1x1x1 Rage",
+    "Admin - 2025 Anniversary",
+    "Admin - 2025 Christmas",
+    "Admin - 2026 Valentines",
+    "Admin - 3RR0R 3V3NT",
+    "Admin - Bermuda Triangle",
+    "Admin - Black Hole",
+    "Admin - Bloodmoon",
+    "Admin - Frostmoon",
+    "Admin - Ghost Worm",
+    "Admin - Leviathan Awakening",
+    "Admin - Meteor Rain",
+    "Admin - Purple Bloodmoon",
+    "Admin - Volcano Eruption",
+    "Dark Megalodon Hunt",
+    "Glacial Serpent Hunt",
+    "Megalodon Hunt",
+    "Thunderzilla Hunt",
+}
+
+local TOTEM_LIST = {
+    "Abyssal Totem",
+    "Cosmic Totem",
+    "Easter Totem",
+    "Love Totem",
+    "Luck Totem",
+    "Mutation Totem",
+    "Noob Totem",
+    "Shiny Totem",
+    "Super Cosmic Totem",
+    "Super Easter Totem",
+    "Super Love Totem"
+}
+
 local Orvion = loadstring(game:HttpGet(
     "https://raw.githubusercontent.com/KnullXDgt/Orvion-UI-Library/main/source.luau?t=" .. os.time()
 ))()
@@ -1467,26 +1504,26 @@ local function getBestEventPos()
 end
 
 local TpEventSection = Window:AddCollapsible(TpTab, "Teleport to Event", false)
-local EVENT_LIST = {
-    "Admin - 1x1x1 Rage",
-    "Admin - 2025 Anniversary",
-    "Admin - 2025 Christmas",
-    "Admin - 2026 Valentines",
-    "Admin - 3RR0R 3V3NT",
-    "Admin - Bermuda Triangle",
-    "Admin - Black Hole",
-    "Admin - Bloodmoon",
-    "Admin - Frostmoon",
-    "Admin - Ghost Worm",
-    "Admin - Leviathan Awakening",
-    "Admin - Meteor Rain",
-    "Admin - Purple Bloodmoon",
-    "Admin - Volcano Eruption",
-    "Dark Megalodon Hunt",
-    "Glacial Serpent Hunt",
-    "Megalodon Hunt",
-    "Thunderzilla Hunt",
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 local eventWatcherConn = nil
 local eventTeleportActive = false
 Window:AddDropdown(TpEventSection, "Priority Event", "", EVENT_LIST, false, "Select Option", function(value)
@@ -1794,19 +1831,19 @@ end, "Toggle_Buy Weather")
 
 local TotemSection = Window:AddCollapsible(AutomationTab, "Totem Features", false)
 
-local TOTEM_LIST = {
-    "Abyssal Totem",
-    "Cosmic Totem",
-    "Easter Totem",
-    "Love Totem",
-    "Luck Totem",
-    "Mutation Totem",
-    "Noob Totem",
-    "Shiny Totem",
-    "Super Cosmic Totem",
-    "Super Easter Totem",
-    "Super Love Totem"
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
 local autoSpawnThread = nil
 local totemWatchConn = nil
 local totemCreatedConn = nil
