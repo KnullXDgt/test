@@ -1,51 +1,32 @@
--- Probe: event model names + cleanName test
+-- Probe: exact match test for EVENT_LIST vs workspace
 local out = {}
 local function log(s) table.insert(out, s) print(s) end
 
-local function cleanName(n)
-    n = n:lower():gsub("^[^%a]*", "")
-    n = n:gsub("%s*hunt%s*$", "")
-    n = n:gsub("%s*event%s*$", "")
-    n = n:match("^%s*(.-)%s*$") or n
-    return n
+local EVENT_LIST = {
+    "Admin - 1x1x1 Rage","Admin - 2025 Anniversary","Admin - 2025 Christmas",
+    "Admin - 2026 Valentines","Admin - 3RR0R 3V3NT","Admin - Bermuda Triangle",
+    "Admin - Black Hole","Admin - Bloodmoon","Admin - Frostmoon",
+    "Admin - Ghost Worm","Admin - Leviathan Awakening","Admin - Meteor Rain",
+    "Admin - Purple Bloodmoon","Admin - Volcano Eruption",
+    "Dark Megalodon Hunt","Glacial Serpent Hunt","Megalodon Hunt","Thunderzilla Hunt"
+}
+
+log("=== EXACT MATCH test ===")
+for _, eventName in ipairs(EVENT_LIST) do
+    local lowerName = eventName:lower()
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and obj.Name:lower() == lowerName then
+            log("EXACT: " .. eventName .. " => " .. obj.Name .. " @ " .. tostring(obj:GetPivot().Position))
+        end
+    end
 end
 
--- Find models in Props (where events live based on probe)
+log("=== All Models in Props ===")
 local props = workspace:FindFirstChild("Props")
 if props then
-    log("=== Models in Props ===")
-    for _, obj in ipairs(props:GetChildren()) do
+    for _, obj in ipairs(props:GetDescendants()) do
         if obj:IsA("Model") then
-            log(obj.Name .. " => clean: " .. cleanName(obj.Name))
-        end
-    end
-end
-
--- Check WorldSetup for event markers
-local worldSetup = workspace:FindFirstChild("WorldSetup")
-if worldSetup then
-    log("=== WorldSetup children ===")
-    for _, obj in ipairs(worldSetup:GetChildren()) do
-        if obj:IsA("Model") then
-            log(obj.Name .. " => clean: " .. cleanName(obj.Name))
-        end
-    end
-end
-
--- Test EVENT_LIST items vs current workspace
-local EVENT_LIST = {
-    "Megalodon", "Dark Megalodon", "Thunderzilla",
-    "Leviathan", "Void Kraken", "Treasure Hunt"
-}
-log("=== EVENT_LIST match test ===")
-for _, eventName in ipairs(EVENT_LIST) do
-    local cleanEvent = cleanName(eventName)
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") then
-            local cleanModel = cleanName(obj.Name)
-            if cleanModel == cleanEvent then
-                log("MATCH: " .. eventName .. " => " .. obj.Name .. " (parent: " .. tostring(obj.Parent and obj.Parent.Name) .. ")")
-            end
+            log("Props/" .. tostring(obj.Parent and obj.Parent.Name) .. "/" .. obj.Name)
         end
     end
 end
