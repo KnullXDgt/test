@@ -153,23 +153,63 @@ pcall(function()
 end)
 save()
 
--- ACTIVE + COMPLETED QUESTS
-log("=== ACTIVE QUESTS ===")
+-- ALL QUESTS DUMP
+log("=== ACTIVE QUESTS (full) ===")
 pcall(function()
     local q = PlayerData:Get("Quests") or {}
     for qtype,qdata in pairs(q) do
         if type(qdata)=="table" then
             for qname,qinfo in pairs(qdata) do
-                log("  ["..qtype.."] "..tostring(qname).." step="..tostring(type(qinfo)=="table" and qinfo.CurrentObj or "?"))
+                log("  ["..qtype.."] "..tostring(qname))
+                if type(qinfo)=="table" then
+                    log("    Step: "..tostring(qinfo.CurrentObj or"?").." | Timestamp: "..tostring(qinfo.Timestamp or"?"))
+                    local obj = qinfo.Objectives or {}
+                    if type(obj)=="table" then
+                        for step,odata in pairs(obj) do
+                            if type(odata)=="table" then
+                                local p={}
+                                for k,v in pairs(odata) do
+                                    if type(v)~="table" then table.insert(p, tostring(k).."="..tostring(v)) end
+                                end
+                                log("    Obj "..step..": "..table.concat(p,", "))
+                            end
+                        end
+                    end
+                end
             end
         end
     end
 end)
+
 log("=== COMPLETED QUESTS ===")
 pcall(function()
     local cq = PlayerData:Get("CompletedQuests") or {}
     if type(cq)=="table" then
+        log("  Total completed: "..tostring(#cq))
         for _,qname in ipairs(cq) do log("  "..tostring(qname)) end
+    end
+end)
+
+log("=== ALL GAME QUESTS (from module) ===")
+for _, path in ipairs({"Quests","QuestData","QuestDatabase","MainlineQuests","SideQuests"}) do
+    pcall(function()
+        local m = require(RS.Shared[path])
+        if type(m)=="table" then
+            local count = 0; for _ in pairs(m) do count=count+1 end
+            log("  RS.Shared."..path.." = "..count.." entries")
+            for name,data in pairs(m) do
+                log("    "..tostring(name))
+            end
+        end
+    end)
+end
+
+-- Try ExpiredQuests
+log("=== EXPIRED QUESTS ===")
+pcall(function()
+    local eq = PlayerData:Get("ExpiredQuests") or {}
+    if type(eq)=="table" then
+        for _,qname in pairs(eq) do log("  "..tostring(qname)) end
     end
 end)
 
