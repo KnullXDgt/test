@@ -1406,10 +1406,22 @@ local function startEventWalkOnWater()
 end
 
 local function findEventPosition(eventName)
-    local lowerName = eventName:lower():gsub(" hunt", "")
+    -- 1. EventSpawnLocations (exact, works for Thunderzilla too)
+    local pos = nil
+    pcall(function()
+        if EventsReplion then
+            local locs = EventsReplion:GetExpect("EventSpawnLocations")
+            if locs and locs[eventName] then pos = locs[eventName] end
+        end
+    end)
+    if pos then return pos end
+    -- 2. Fallback: workspace exact match (admin events)
+    local lowerName = eventName:lower()
+    local stripped = lowerName:gsub("%s*hunt%s*$", "")
     for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and obj.Name:lower():find(lowerName, 1, true) then
-            return obj:GetPivot().Position
+        if obj:IsA("Model") then
+            local n = obj.Name:lower()
+            if n == lowerName or n == stripped then return obj:GetPivot().Position end
         end
     end
     return nil
@@ -1514,8 +1526,10 @@ Window:AddToggle(TpEventSection, "Start Auto Event", "", false, function(state)
             if not removed:IsA("Model") then return end
             local eventName = (currentSource == "priority") and Config.PriorityEvent or Config.SelectEvent
             if not eventName or eventName == "Select Option" then return end
-            local lowerName = eventName:lower():gsub(" hunt", "")
-            if lowerName == "" or not removed.Name:lower():find(lowerName, 1, true) then return end
+            local lowerName = eventName:lower()
+            local strippedName = lowerName:gsub("%s*hunt%s*$", "")
+            local removedLower = removed.Name:lower()
+            if removedLower ~= lowerName and removedLower ~= strippedName then return end
             task.defer(function()
                     if not eventTeleportActive then return end
                     local pos, source = getBestEventPos()
