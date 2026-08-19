@@ -1,79 +1,92 @@
--- Probe: FULL GAME DATA using proper IU methods
+-- Probe: FULL GAME DATA - fixed nil checks
 local RS = game:GetService("ReplicatedStorage")
 local out = {}
 local function log(s) table.insert(out, s) print(s) end
 local function save() if writefile then writefile("probe.txt", table.concat(out, "\n")) end end
 
-local IU = require(RS.Shared.ItemUtility)
+local ok0, IU = pcall(require, RS.Shared.ItemUtility)
+if not ok0 then log("IU fail: "..tostring(IU)) save() return end
 local Replion = require(RS.Packages.Replion)
 local PlayerData = Replion.Client:WaitReplion("Data")
 local inventory = PlayerData and PlayerData:Get("Inventory") or {}
 
--- Helper: dump array of items
+local function safeCall(fn, ...)
+    local ok, r = pcall(fn, ...)
+    return ok and type(r) == "table" and r or nil
+end
+
 local function dumpItems(label, items)
-    if not items or #items == 0 then log(label.." = empty") return end
-    log("=== "..label.." ("..#items..") ===")
-    for _, item in ipairs(items) do
-        if item and item.Data then
-            local name = item.Data.Name or "?"
-            local id = item.Id or "?"
-            local tier = item.Data.Tier or ""
-            local extra = tier ~= "" and " [Tier "..tostring(tier).."]" or ""
-            -- Check if player owns it
-            local owned = 0
-            pcall(function()
-                local catItems = inventory[item.Data.Type or ""] or {}
-                for _, inv in ipairs(catItems) do
-                    if inv.Id == id then owned = owned + 1 end
-                end
-            end)
-            local ownedStr = owned > 0 and " [OWNED x"..owned.."]" or ""
-            log("  id="..tostring(id).." "..name..extra..ownedStr)
+    if type(items) ~= "table" then log("=== "..label.." = nil/invalid ===") return end
+    local n = 0; for _ in pairs(items) do n=n+1 end
+    if n == 0 then log("=== "..label.." = empty ===") return end
+    log("=== "..label.." ("..n..") ===")
+    local arr = {}
+    for _, item in pairs(items) do table.insert(arr, item) end
+    for _, item in ipairs(arr) do
+        if type(item) == "table" and item.Data then
+            local name = tostring(item.Data.Name or "?")
+            local id = tostring(item.Id or "?")
+            local tier = item.Data.Tier and (" T"..item.Data.Tier) or ""
+            log("  id="..id.." "..name..tier)
         end
     end
 end
 
--- ====== ROD ENCHANTS (resolve from Metadata) ======
-log("=== MY EQUIPPED ROD ENCHANTS ===")
+-- ROD ENCHANTS
+log("=== MY ROD ENCHANTS ===")
 pcall(function()
     local eq = PlayerData:Get("EquippedItems") or {}
     for slot, uuid in pairs(eq) do
         local rods = inventory["Fishing Rods"] or {}
         for _, item in ipairs(rods) do
             if tostring(item.UUID) == tostring(uuid) then
-                local ok, data = pcall(IU.GetItemDataFromItemType, "Fishing Rods", item.Id)
-                local name = ok and data and data.Data and data.Data.Name or "id="..tostring(item.Id)
+                local ok1, data = pcall(IU.GetItemDataFromItemType, "Fishing Rods", item.Id)
+                local rodName = ok1 and data and data.Data and data.Data.Name or "id="..tostring(item.Id)
+                log("  Slot "..slot..": "..rodName)
                 local meta = item.Metadata or {}
-                local e1 = meta.EnchantId and IU:GetEnchantData(meta.EnchantId) or nil
-                local e2 = meta.EnchantId2 and IU:GetEnchantData(meta.EnchantId2) or nil
-                log("  Slot "..slot..": "..name)
-                log("    Enchant 1: "..(e1 and e1.Data and e1.Data.Name or "none"))
-                log("    Enchant 2: "..(e2 and e2.Data and e2.Data.Name or "none"))
+                if meta.EnchantId then
+                    local ok2, e1 = pcall(function() return IU:GetEnchantData(meta.EnchantId) end)
+                    log("    E1 id="..tostring(meta.EnchantId)..": "..(ok2 and e1 and e1.Data and e1.Data.Name or "?"))
+                end
+                if meta.EnchantId2 then
+                    local ok3, e2 = pcall(function() return IU:GetEnchantData(meta.EnchantId2) end)
+                    log("    E2 id="..tostring(meta.EnchantId2)..": "..(ok3 and e2 and e2.Data and e2.Data.Name or "?"))
+                end
             end
         end
     end
 end)
 
--- ====== ALL GAME ITEMS VIA IU METHODS ======
-pcall(function() dumpItems("ALL FISHING RODS", IU:GetFishingRods()) end)
-pcall(function() dumpItems("ALL BAITS", IU:GetBaits()) end)
-pcall(function() dumpItems("ALL HALOS", IU:GetHalos()) end)
-pcall(function() dumpItems("ALL LANTERNS", IU:GetLanterns()) end)
-pcall(function() dumpItems("ALL CHARMS", IU:GetCharms()) end)
-pcall(function() dumpItems("ALL POTIONS", IU:GetPotions()) end)
-pcall(function() dumpItems("ALL TOTEMS", IU:GetTotems()) end)
-pcall(function() dumpItems("ALL PETS", IU:GetPets()) end)
-pcall(function() dumpItems("ALL BOATS", IU:GetBoats()) end)
-pcall(function() dumpItems("ALL EMOTES", IU:GetEmotes()) end)
-pcall(function() dumpItems("ALL ABILITIES/GEARS", IU:GetAbilities()) end)
-pcall(function() dumpItems("ALL GEARS", IU:GetGears()) end)
-pcall(function() dumpItems("ALL TROPHIES", IU:GetTrophies()) end)
-pcall(function() dumpItems("ALL PET EGGS", IU:GetPetEggs()) end)
+-- ALL GAME ITEMS via IU methods (try both : and . syntax)
+local methods = {
+    {"ALL FISHING RODS", function() return IU:GetFishingRods() end},
+    {"ALL BAITS", function() return IU:GetBaits() end},
+    {"ALL HALOS", function() return IU:GetHalos() end},
+    {"ALL LANTERNS", function() return IU:GetLanterns() end},
+    {"ALL CHARMS", function() return IU:GetCharms() end},
+    {"ALL POTIONS", function() return IU:GetPotions() end},
+    {"ALL TOTEMS", function() return IU:GetTotems() end},
+    {"ALL PETS", function() return IU:GetPets() end},
+    {"ALL BOATS", function() return IU:GetBoats() end},
+    {"ALL EMOTES", function() return IU:GetEmotes() end},
+    {"ALL ABILITIES", function() return IU:GetAbilities() end},
+    {"ALL GEARS", function() return IU:GetGears() end},
+    {"ALL TROPHIES", function() return IU:GetTrophies() end},
+    {"ALL PET EGGS", function() return IU:GetPetEggs() end},
+}
+for _, m in ipairs(methods) do
+    pcall(function()
+        local ok, result = pcall(m[2])
+        if ok then dumpItems(m[1], result) else log("=== "..m[1].." ERROR: "..tostring(result).." ===") end
+    end)
+    save()
+end
 
--- ====== ENCHANT STONES + POOLS ======
-log("=== ENCHANT STONES + POOLS ===")
+-- ENCHANT STONE POOLS
+log("=== ENCHANT STONE POOLS ===")
 pcall(function()
-    local stones = IU:GetEnchantStones()
+    local ok, stones = pcall(function() return IU:GetEnchantStones() end)
+    if not ok or type(stones) ~= "table" then log("  error: "..tostring(stones)) return end
     for _, stone in ipairs(stones) do
         if stone and stone.Data then
             log("-- "..tostring(stone.Data.Name).." --")
@@ -86,18 +99,17 @@ pcall(function()
     end
 end)
 
--- ====== ALL FISH ======
-log("=== ALL FISH (first 50) ===")
+-- ALL FISH (first 100)
+log("=== ALL FISH ===")
 pcall(function()
-    local fish = IU:GetFish()
+    local ok, fish = pcall(function() return IU:GetFish() end)
+    if not ok or type(fish) ~= "table" then log("error: "..tostring(fish)) return end
     for i, f in ipairs(fish) do
-        if i > 50 then log("  ...(+"..#fish-50.." more)"); break end
+        if i > 100 then log("  ...("..#fish-100.." more)"); break end
         if f and f.Data then
-            log("  id="..tostring(f.Id).." "..tostring(f.Data.Name).." T"..tostring(f.Data.Tier or "?"))
+            log("  id="..tostring(f.Id or"?").." "..tostring(f.Data.Name or"?").." T"..tostring(f.Data.Tier or"?"))
         end
     end
 end)
 
-save()
-log("DONE")
-save()
+save(); log("DONE"); save()
