@@ -32,9 +32,8 @@ end
 log("=== RARITY TIERS ===")
 log("  1=Common 2=Uncommon 3=Rare 4=Epic 5=Legendary 6=Mythic 7=Secret 8=Forgotten")
 pcall(function()
-    local tiers = IU:GetTierFromRarity and {} or nil
-    local RARITY = {Common=1,Uncommon=2,Rare=3,Epic=4,Legendary=5,Mythic=6,Secret=7,Forgotten=8}
-    for name,tier in pairs(RARITY) do log("  "..tier.."="..name) end
+    local RARITY = {[1]="Common",[2]="Uncommon",[3]="Rare",[4]="Epic",[5]="Legendary",[6]="Mythic",[7]="Secret",[8]="Forgotten"}
+    for tier,name in pairs(RARITY) do log("  "..tier.."="..name) end
 end)
 
 -- ROD ENCHANTS
