@@ -1,37 +1,54 @@
--- Probe: check RS.Events coordinates + workspace model pos for all events
+-- Probe: watch until thunderzilla found (60s max)
 local out = {}
 local function log(s) table.insert(out, s) print(s) end
-local RS = game:GetService("ReplicatedStorage")
+local function save() if writefile then writefile("probe.txt", table.concat(out, "\n")) end end
 
-local EVENT_LIST = {
-    "Dark Megalodon Hunt","Glacial Serpent Hunt","Megalodon Hunt","Thunderzilla Hunt"
-}
-
-for _, eventName in ipairs(EVENT_LIST) do
-    log("--- " .. eventName .. " ---")
-    -- Check RS.Events coordinates
-    pcall(function()
-        local ev = RS.Events[eventName]
-        if ev then
-            local coords = ev.Coordinates
-            if coords and #coords > 0 then
-                for i, c in ipairs(coords) do
-                    log("  RS.Events coord[" .. i .. "]: " .. tostring(c))
-                end
-            else
-                log("  RS.Events: Coordinates nil or empty")
+local function checkObj(obj)
+    local lower = obj.Name:lower()
+    if lower:find("thunder", 1, true) or lower:find("thunderzilla", 1, true) then
+        log("FOUND: " .. obj.ClassName .. " | " .. obj.Name .. " | parent=" .. tostring(obj.Parent and obj.Parent.Name))
+        pcall(function()
+            if obj:IsA("Model") then
+                log("  POS: " .. tostring(obj:GetPivot().Position))
+            elseif obj:IsA("BasePart") then
+                log("  POS: " .. tostring(obj.Position))
             end
-        else
-            log("  RS.Events: not found")
-        end
-    end)
-    -- Check workspace model position
-    local lowerName = eventName:lower():gsub(" hunt", "")
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and obj.Name:lower():find(lowerName, 1, true) then
-            log("  Workspace model: " .. obj.Name .. " @ " .. tostring(obj:GetPivot().Position))
-        end
+        end)
+        save()
+        return true
     end
+    return false
 end
 
-if writefile then writefile("probe.txt", table.concat(out, "\n")) end
+-- Immediate scan
+log("=== Immediate scan ===")
+local found = false
+for _, obj in ipairs(workspace:GetDescendants()) do
+    if checkObj(obj) then found = true end
+end
+if not found then log("Nothing yet, watching...") end
+save()
+
+-- Watch DescendantAdded
+local conn = workspace.DescendantAdded:Connect(function(obj)
+    checkObj(obj)
+end)
+
+-- Periodic rescan every 5s for 60s
+local elapsed = 0
+local function rescan()
+    elapsed = elapsed + 5
+    log("=== Rescan t=" .. elapsed .. "s ===")
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        checkObj(obj)
+    end
+    save()
+    if elapsed < 60 then
+        task.delay(5, rescan)
+    else
+        conn:Disconnect()
+        log("DONE (60s)")
+        save()
+    end
+end
+task.delay(5, rescan)
