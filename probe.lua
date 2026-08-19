@@ -1,4 +1,4 @@
--- Probe: EquippedItems resolve + enchant stones inventory
+-- Probe: FULL inventory dump - all categories, all items
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local out = {}
@@ -12,76 +12,72 @@ if not PlayerData then log("No PlayerData") save() return end
 
 local inventory = PlayerData:Get("Inventory") or {}
 
--- ====== Resolve UUID to item name ======
+-- Resolve UUID helper
 local function resolveUUID(uuid)
     for catName, items in pairs(inventory) do
         if type(items) == "table" then
             for _, item in ipairs(items) do
-                if item.UUID == uuid then
+                if tostring(item.UUID) == tostring(uuid) then
                     local ok, data = pcall(IU.GetItemDataFromItemType, catName, item.Id)
-                    if ok and data and data.Data and data.Data.Name then
-                        return data.Data.Name, catName, item.Id
-                    end
-                    return "id=" .. tostring(item.Id), catName, item.Id
+                    local name = ok and data and data.Data and data.Data.Name or ("id="..tostring(item.Id))
+                    return name, catName, item.Id
                 end
             end
         end
     end
-    return "NOT FOUND", "?", "?"
+    return "UNKNOWN", "?", "?"
 end
 
--- ====== EquippedItems ======
+-- ====== EQUIPPED ITEMS ======
 log("=== EQUIPPED ITEMS ===")
 pcall(function()
-    local eq = PlayerData:Get("EquippedItems")
-    if type(eq) == "table" then
-        for slot, uuid in pairs(eq) do
-            local name, cat, id = resolveUUID(tostring(uuid))
-            log("  Slot " .. tostring(slot) .. ": " .. name .. " [" .. cat .. "] id=" .. tostring(id))
-        end
-    else
-        log("  EquippedItems = " .. tostring(eq))
+    local eq = PlayerData:Get("EquippedItems") or {}
+    for slot, uuid in pairs(eq) do
+        local name, cat, id = resolveUUID(tostring(uuid))
+        log("  ["..tostring(slot).."] "..name.." ("..cat..") id="..tostring(id).." uuid="..tostring(uuid):sub(1,8))
     end
 end)
 
--- ====== ENCHANT STONES (tradeui pattern) ======
-log("=== ENCHANT STONES IN INVENTORY ===")
-local stoneCount = 0
-for catName, items in pairs(inventory) do
-    if type(items) == "table" then
-        for _, item in ipairs(items) do
-            local ok, data = pcall(IU.GetItemDataFromItemType, catName, item.Id)
-            if ok and data and data.Data then
-                local id = tonumber(item.Id)
-                local dataName = (data.Data.Name or ""):lower()
-                local isStone = (id == 929) or (id == 558) or dataName:find("enchant stone", 1, true)
-                if isStone then
-                    stoneCount = stoneCount + 1
-                    log("  " .. (data.Data.Name or tostring(item.Id)) .. " UUID=" .. tostring(item.UUID):sub(1,8) .. "...")
-                end
-            end
-        end
+-- ====== FULL INVENTORY BY CATEGORY ======
+log("=== FULL INVENTORY ===")
+local catOrder = {"Fishing Rods","Baits","Bait Skins","Fish","Enchant Stones","Items","Totems","Pets","Pet Eggs","Potions","Emotes","Boats","Lanterns","Halos","Charms","Booths","Abilities"}
+local seen = {}
+local function dumpCat(catName)
+    if seen[catName] then return end
+    seen[catName] = true
+    local items = inventory[catName]
+    if not items or type(items) ~= "table" then return end
+    if #items == 0 then return end
+    log("--- " .. catName .. " (" .. #items .. " items) ---")
+    local counts = {}
+    for _, item in ipairs(items) do
+        local ok, data = pcall(IU.GetItemDataFromItemType, catName, item.Id)
+        local name = ok and data and data.Data and data.Data.Name or ("id="..tostring(item.Id))
+        counts[name] = (counts[name] or 0) + 1
+    end
+    for name, count in pairs(counts) do
+        log("  "..name.." x"..count)
     end
 end
-log("Total stones: " .. stoneCount)
+-- Dump in order
+for _, cat in ipairs(catOrder) do dumpCat(cat) end
+-- Dump remaining categories
+for catName in pairs(inventory) do dumpCat(catName) end
 
--- ====== SECRET FISH ======
-log("=== SECRET FISH ===")
-local secretTotal = 0
-local secretTypes = {}
-for catName, items in pairs(inventory) do
-    if type(items) == "table" then
-        for _, item in ipairs(items) do
-            local ok, data = pcall(IU.GetItemDataFromItemType, catName, item.Id)
-            if ok and data and data.Data and data.Data.Type == "Fish" and tonumber(data.Data.Tier) == 7 then
-                local name = data.Data.Name or tostring(item.Id)
-                secretTypes[name] = (secretTypes[name] or 0) + 1
-                secretTotal = secretTotal + 1
-            end
-        end
-    end
+-- ====== STATS ======
+log("=== KEY STATS ===")
+for _, k in ipairs({"Level","XP","Coins","Tix","Tokens","RAP","Enchants","LoginStreak","TotalSessionTime"}) do
+    local v = PlayerData:Get(k)
+    if v ~= nil then log("  "..k.." = "..tostring(v)) end
 end
-for name, count in pairs(secretTypes) do log("  " .. name .. " x" .. count) end
-log("Total: " .. secretTotal)
 
+-- ====== SETTINGS ======
+log("=== SETTINGS ===")
+pcall(function()
+    local s = PlayerData:Get("Settings") or {}
+    for k,v in pairs(s) do log("  "..tostring(k).." = "..tostring(v)) end
+end)
+
+save()
+log("DONE - saved to probe.txt")
 save()
