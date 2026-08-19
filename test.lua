@@ -125,6 +125,13 @@ local Config = {
     BuyWeatherActive      = false,
     SelectedTotem         = "Luck Totem",
     AutoSpawnTotem        = false,
+    EnchantType           = "Normal Enchant Stone",
+    TargetEnchant         = "Select Option",
+    AutoEnchantReroll     = false,
+    SelectedSecretFish    = "Select Option",
+    TranscendedOption     = "Select Option",
+    TranscendedAmount     = 1,
+    AutoCreateTranscended = false,
     -- Rod
     SelectedRod           = "Starter Rod",
     -- Bait
@@ -1982,6 +1989,58 @@ local function setParagraphText(para, text)
         end)
     end
 end
+
+
+-- ===== ENCHANT FEATURES =====
+local EnchantSection = Window:AddCollapsible(AutomationTab, "Enchant Features", false)
+
+local enchantStatusPara = Window:AddParagraph(EnchantSection, "Enchant Status", "Rod: -
+Enchant: -
+Stone: -")
+
+local ENCHANT_STONE_LIST = {"Normal Enchant Stone", "Runic Enchant Stone", "Evolved Enchant Stone"}
+Window:AddDropdown(EnchantSection, "Enchant Type", "", ENCHANT_STONE_LIST, false, "Normal Enchant Stone", function(v)
+    Config.EnchantType = v or "Normal Enchant Stone"
+end, "Dropdown_Enchant Type")
+
+Window:AddDropdown(EnchantSection, "Target Enchant", "", {}, false, "Select Option", function(v)
+    Config.TargetEnchant = v or "Select Option"
+end, "Dropdown_Target Enchant")
+
+Window:AddToggle(EnchantSection, "Auto Enchant Reroll", "", false, function(state)
+    Config.AutoEnchantReroll = state
+end, "Toggle_Auto Enchant Reroll")
+
+Window:AddButtonGrid(EnchantSection, {
+    { Title = "Teleport to Altar 1", Callback = function() end },
+    { Title = "Teleport to Altar 2", Callback = function() end },
+})
+
+-- ===== CREATE TRANSCENDED STONE =====
+local TranscendedSection = Window:AddCollapsible(AutomationTab, "Create Transcended Stone", false)
+
+local transcendedFishPara  = Window:AddParagraph(TranscendedSection, "Fish List", "No secret fish found")
+local transcendedStatusPara = Window:AddParagraph(TranscendedSection, "Status", "Waiting")
+
+Window:AddDropdown(TranscendedSection, "Select Secret Fish", "", {}, false, "Select Option", function(v)
+    Config.SelectedSecretFish = v or "Select Option"
+end, "Dropdown_Select Secret Fish")
+
+Window:AddDropdown(TranscendedSection, "Select Option", "", {}, false, "Select Option", function(v)
+    Config.TranscendedOption = v or "Select Option"
+end, "Dropdown_Transcended Option")
+
+Window:AddButton(TranscendedSection, "Refresh Fish List", "", "rbxassetid://16932740082", function()
+    -- placeholder refresh logic
+end)
+
+Window:AddInput(TranscendedSection, "Amount", "", "Enter amount...", function(v)
+    Config.TranscendedAmount = tonumber(v) or 1
+end, "Input_Transcended Amount")
+
+Window:AddToggle(TranscendedSection, "Enable Auto Create", "", false, function(state)
+    Config.AutoCreateTranscended = state
+end, "Toggle_Enable Auto Create")
 
 local ShopTab = Window:CreateTab("Shop")
 
