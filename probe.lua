@@ -1,43 +1,27 @@
--- Probe: totem types owned (ipairs + item.Id)
-local RS = game:GetService("ReplicatedStorage")
+-- Probe: list workspace models that could be events
 local out = {}
 local function log(s) table.insert(out, s) print(s) end
 
-local Replion = require(RS.Packages.Replion)
-local PlayerData = Replion.Client:WaitReplion("Data")
-if not PlayerData then log("No PlayerData") return end
+local keywords = {"event","megalodon","dark","thunderzilla","leviathan","kraken","boss","raid","treasure","hunt"}
 
-local ok2, IU = pcall(function() return require(RS.Shared.ItemUtility) end)
-log("IU=" .. tostring(ok2))
-
-local inv = nil
-pcall(function() inv = PlayerData:Get("Inventory") end)
-if not inv then log("No inventory") return end
-
-local totems = inv.Totems or {}
-log("Totems type=" .. type(totems))
-
--- Collect unique totem type IDs
-local ownedTypes = {}
-for _, item in ipairs(totems) do
-    if type(item) == "table" and item.Id then
-        ownedTypes[item.Id] = true
+log("=== Workspace Models (event-related) ===")
+for _, obj in ipairs(workspace:GetDescendants()) do
+    if obj:IsA("Model") then
+        local lower = obj.Name:lower()
+        for _, kw in ipairs(keywords) do
+            if lower:find(kw, 1, true) then
+                log(obj.Name .. " | parent=" .. tostring(obj.Parent and obj.Parent.Name))
+                break
+            end
+        end
     end
 end
 
-log("Unique totem types: " .. tostring(#ownedTypes))
-local names = {}
-for typeId in pairs(ownedTypes) do
-    local name = tostring(typeId)
-    if ok2 and IU then
-        pcall(function()
-            local d = IU.GetItemDataFromItemType("Totems", typeId)
-            if d and d.Data and d.Data.Name then name = d.Data.Name end
-        end)
+log("=== All top-level Models ===")
+for _, obj in ipairs(workspace:GetChildren()) do
+    if obj:IsA("Model") then
+        log("TOP: " .. obj.Name)
     end
-    log("typeId=" .. tostring(typeId) .. " name=" .. name)
-    table.insert(names, name)
 end
-log("Owned: " .. table.concat(names, ", "))
 
 if writefile then writefile("probe.txt", table.concat(out, "\n")) end
