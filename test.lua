@@ -552,7 +552,7 @@ local function startAutoSell()
     -- baseline = inventory sekarang, jadi hanya ikan BARU yang dihitung
     baselineFishCount = getFishCount()
 
-    -- Count mode: kalau inventory sudah >= threshold → langsung jual sekarang
+    -- Count mode: kalau inventory sudah >= threshold -> langsung jual sekarang
     -- (tidak nunggu ikan baru)
     if Config.AutoSellMode == "Count" and baselineFishCount >= Config.SellCount then
         sellAll()
@@ -979,7 +979,7 @@ local function setHideOtherPlayers(state)
         end))
     else
         for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
-            hidePlayer(p)  -- state = false → transparencyModifier = 0 = show
+            hidePlayer(p)  -- state = false -> transparencyModifier = 0 = show
         end
     end
 end
@@ -1055,7 +1055,7 @@ local function setWalkOnWater(state)
             local isWaterNow = checkWaterAt(feetPos)
 
             if isWaterNow and not inWater then
-                -- baru masuk air → raycast untuk dapat exact surface Y
+                -- baru masuk air -> raycast untuk dapat exact surface Y
                 inWater = true
                 waterSurfaceY = getWaterSurfaceY(pos) or (pos.Y - 2)
                 walkPlatform.CFrame = CFrame.new(pos.X, waterSurfaceY, pos.Z)
@@ -1089,7 +1089,7 @@ local function setLockPosition(state)
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if root then
             lockedCFrame = root.CFrame
-            -- Anchored = true → tidak bisa di-fling, tidak BAC (pure client)
+            -- Anchored = true -> tidak bisa di-fling, tidak BAC (pure client)
             pcall(function() root.Anchored = true end)
         end
     else
@@ -1190,7 +1190,7 @@ local Window = Orvion:CreateWindow({
 -- ====== INFO TAB ======
 local InfoTab = Window:CreateTab("Info")
 local InfoSection = Window:AddCollapsible(InfoTab, "What is Orvion?", true)
-Window:AddParagraph(InfoSection, "What is Orvion Hub?", "Orvion Hub is a reflection of my coding journey — built through trial, error, and a lot of iteration. It shows how much I have grown as a developer, and how much I still have left to learn.\nLowkey started this just for myself, no cap. Somewhere along the way it turned into something worth sharing.")
+Window:AddParagraph(InfoSection, "What is Orvion Hub?", "Orvion Hub is a reflection of my coding journey  built through trial, error, and a lot of iteration. It shows how much I have grown as a developer, and how much I still have left to learn.\nLowkey started this just for myself, no cap. Somewhere along the way it turned into something worth sharing.")
 
 local FishingTab = Window:CreateTab("Main")
 
@@ -1880,7 +1880,7 @@ local function scheduleRespawn()
                 end
             end)
 
-            -- monitor jarak: jika player jauh > 100 studs dari totem → re-spawn
+            -- monitor jarak: jika player jauh > 100 studs dari totem -> re-spawn
             if totemDistMonitor then pcall(task.cancel, totemDistMonitor); totemDistMonitor = nil end
             totemDistMonitor = task.spawn(function()
                 while Config.AutoSpawnTotem and model.Parent ~= nil do
@@ -1891,7 +1891,7 @@ local function scheduleRespawn()
                         if root then
                             local dist = (totemWorldPos - root.Position).Magnitude
                             if dist > 100 then
-                                -- player jauh → disconnect watcher lama, re-spawn
+                                -- player jauh -> disconnect watcher lama, re-spawn
                                 if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
                                 totemDistMonitor = nil
                                 task.wait(1)
@@ -2254,7 +2254,7 @@ local function buyBPSlots()
             end
         end
     end
-    updateBPStatus("Done — bought " .. bought .. "/" .. total)
+    updateBPStatus("Done  bought " .. bought .. "/" .. total)
     if bought == 0 and total > 0 then
         Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="No Galaxy Points or all slots owned", Color=Color3.fromRGB(150,150,170), Delay=4 })
     end
