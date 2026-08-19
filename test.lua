@@ -1994,7 +1994,7 @@ end
 -- ===== ENCHANT FEATURES =====
 do
     local EnchantSection = Window:AddCollapsible(AutomationTab, "Enchant Features", false)
-    Window:AddParagraph(EnchantSection, "Enchant Status", "Rod: -\nEnchant: -\nStone: -")
+    Window:AddParagraph(EnchantSection, "Enchant Status", "Current Rod: None\nEnchant 1: None\nEnchant 2: None\nEnchant Stones Left: 0")
     local EST = {"Normal Enchant Stone", "Runic Enchant Stone", "Evolved Enchant Stone"}
     Window:AddDropdown(EnchantSection, "Enchant Type", "", EST, false, "Normal Enchant Stone", function(v)
         Config.EnchantType = v or "Normal Enchant Stone"
@@ -2005,24 +2005,20 @@ do
     Window:AddToggle(EnchantSection, "Auto Enchant Reroll", "", false, function(state)
         Config.AutoEnchantReroll = state
     end, "Toggle_Auto Enchant Reroll")
-    Window:AddButtonGrid(EnchantSection, {
+    Window:AddButtonGrid(EnchantSection,
         { Title = "Teleport to Altar 1", Callback = function() end },
-        { Title = "Teleport to Altar 2", Callback = function() end },
-    })
+        { Title = "Teleport to Altar 2", Callback = function() end }
+    )
 end
 
 -- ===== CREATE TRANSCENDED STONE =====
 do
     local TranscendedSection = Window:AddCollapsible(AutomationTab, "Create Transcended Stone", false)
-    Window:AddParagraph(TranscendedSection, "Fish List", "No secret fish found")
     Window:AddParagraph(TranscendedSection, "Status", "Waiting")
     Window:AddDropdown(TranscendedSection, "Select Secret Fish", "", {}, false, "Select Option", function(v)
         Config.SelectedSecretFish = v or "Select Option"
     end, "Dropdown_Select Secret Fish")
-    Window:AddDropdown(TranscendedSection, "Select Option", "", {}, false, "Select Option", function(v)
-        Config.TranscendedOption = v or "Select Option"
-    end, "Dropdown_Transcended Option")
-    Window:AddButton(TranscendedSection, "Refresh Fish List", "", "rbxassetid://16932740082", function() end)
+Window:AddButton(TranscendedSection, "Refresh Fish List", "", "rbxassetid://16932740082", function() end)
     Window:AddInput(TranscendedSection, "Amount", "", "Enter amount...", function(v)
         Config.TranscendedAmount = tonumber(v) or 1
     end, "Input_Transcended Amount")
