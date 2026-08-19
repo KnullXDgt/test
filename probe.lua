@@ -43,7 +43,7 @@ local function getItemId(item)
     return "?"
 end
 
-local function dumpItems(label, getFn, typeFilter)
+local function dumpItems(label, getFn, typeFilter, skinFilter)
     pcall(function()
         local ok, items = pcall(getFn)
         if not ok or type(items) ~= "table" then log("=== "..label.." = ERROR ===") return end
@@ -51,7 +51,9 @@ local function dumpItems(label, getFn, typeFilter)
         for _, item in ipairs(items) do
             if type(item)=="table" and item.Data then
                 local t = item.Data.Type or item.Data.ItemType or ""
-                if not typeFilter or t == typeFilter or t:lower():find(typeFilter:lower(),1,true) then
+                local isSkin = item.IsSkin == true
+                local skinOk = skinFilter == nil or (skinFilter == false and not isSkin) or (skinFilter == true and isSkin)
+                if skinOk and (not typeFilter or t == typeFilter or t:lower():find(typeFilter:lower(),1,true)) then
                     table.insert(filtered, item)
                 end
             end
@@ -97,8 +99,10 @@ pcall(function()
 end)
 
 -- GAME ITEMS
-dumpItems("ALL FISHING RODS", function() return IU:GetFishingRods() end)
-dumpItems("ALL BAITS", function() return IU:GetBaits() end)
+dumpItems("ALL FISHING RODS (no skins)", function() return IU:GetFishingRods() end, nil, false)
+dumpItems("ALL ROD SKINS", function() return IU:GetFishingRods() end, nil, true)
+dumpItems("ALL BAITS (no skins)", function() return IU:GetBaits() end, nil, false)
+dumpItems("ALL BAIT SKINS", function() return IU:GetBaits() end, nil, true)
 dumpItems("ALL HALOS", function() return IU:GetHalos() end)
 dumpItems("ALL LANTERNS", function() return IU:GetLanterns() end)
 dumpItems("ALL CHARMS", function() return IU:GetCharms() end)
