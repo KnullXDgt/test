@@ -1407,6 +1407,9 @@ end
 
 local function findEventPosition(eventName)
     -- 1. EventSpawnLocations (exact, works for Thunderzilla too)
+    if not EventsReplion then
+        pcall(function() EventsReplion = Replion.Client:WaitReplion("Events") end)
+    end
     local pos = nil
     pcall(function()
         if EventsReplion then
