@@ -31,7 +31,6 @@ save()
 
 local function getItemId(item)
     if not item then return "?" end
-    -- Try various ID fields
     if item.Id then return tostring(item.Id) end
     if item.Identifier then return tostring(item.Identifier) end
     if item.RodId then return tostring(item.RodId) end
@@ -153,7 +152,7 @@ pcall(function()
 end)
 save()
 
--- ALL QUESTS DUMP
+-- ACTIVE QUESTS
 log("=== ACTIVE QUESTS (full) ===")
 pcall(function()
     local q = PlayerData:Get("Quests") or {}
@@ -181,6 +180,7 @@ pcall(function()
     end
 end)
 
+-- COMPLETED QUESTS
 log("=== COMPLETED QUESTS ===")
 pcall(function()
     local cq = PlayerData:Get("CompletedQuests") or {}
@@ -190,21 +190,7 @@ pcall(function()
     end
 end)
 
-log("=== ALL GAME QUESTS (from module) ===")
-for _, path in ipairs({"Quests","QuestData","QuestDatabase","MainlineQuests","SideQuests"}) do
-    pcall(function()
-        local m = require(RS.Shared[path])
-        if type(m)=="table" then
-            local count = 0; for _ in pairs(m) do count=count+1 end
-            log("  RS.Shared."..path.." = "..count.." entries")
-            for name,data in pairs(m) do
-                log("    "..tostring(name))
-            end
-        end
-    end)
-end
-
--- Try ExpiredQuests
+-- EXPIRED QUESTS
 log("=== EXPIRED QUESTS ===")
 pcall(function()
     local eq = PlayerData:Get("ExpiredQuests") or {}
@@ -212,6 +198,54 @@ pcall(function()
         for _,qname in pairs(eq) do log("  "..tostring(qname)) end
     end
 end)
+
+-- ALL GAME QUESTS (from module)
+log("=== ALL GAME QUESTS (from module) ===")
+pcall(function()
+    local QM = require(RS.Modules.Quests)
+    if type(QM) ~= "table" then log("  QM load fail") return end
+    for _, qtype in ipairs({"Mainline","Event","Side"}) do
+        local section = QM[qtype]
+        if type(section)=="table" then
+            local count=0; for _ in pairs(section) do count=count+1 end
+            log("-- "..qtype.." ("..count..") --")
+            for qname, qdata in pairs(section) do
+                if type(qdata)=="table" then
+                    log("  ["..qname.."]")
+                    log("    Desc: "..tostring(qdata.Description or "?"))
+                    if qdata.AssociatedTier then log("    Tier: "..tostring(qdata.AssociatedTier)) end
+                    if qdata.Ordered then log("    Ordered: true") end
+                    -- Objectives
+                    if type(qdata.Objectives)=="table" then
+                        for i, obj in ipairs(qdata.Objectives) do
+                            local parts = {}
+                            for k,v in pairs(obj) do
+                                if type(v)~="table" then table.insert(parts, k.."="..tostring(v)) end
+                            end
+                            log("    Obj"..i..": "..table.concat(parts,", "))
+                        end
+                    end
+                    -- Reward
+                    if type(qdata.Reward)=="table" then
+                        local rewards = (type(qdata.Reward[1])=="table") and qdata.Reward or {qdata.Reward}
+                        for _, r in ipairs(rewards) do
+                            if type(r)=="table" then
+                                local rparts={}
+                                for k,v in pairs(r) do
+                                    if type(v)~="table" then table.insert(rparts, k.."="..tostring(v)) end
+                                end
+                                log("    Reward: "..table.concat(rparts,", "))
+                            end
+                        end
+                    end
+                end
+            end
+        else
+            log("  "..qtype.." = nil")
+        end
+    end
+end)
+save()
 
 -- STATS
 log("=== STATS ===")
