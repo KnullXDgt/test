@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hub UI — Raycast Style Reference</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #030405;
+    font-family: 'Inter', system-ui, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    color: #f9f9f9;
+  }
+
+  /* ─── Window ─────────────────────────────────── */
+  .window {
+    width: 560px;
+    background: #07080a;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.04) inset,
+      0 32px 80px rgba(0,0,0,0.8),
+      0 8px 24px rgba(0,0,0,0.5);
+    overflow: hidden;
+  }
+
+  /* ─── Titlebar ────────────────────────────────── */
+  .titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    background: #07080a;
+  }
+  .titlebar-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .dot-group { display: flex; gap: 6px; }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+  }
+  .dot.red    { background: #FF5F57; }
+  .dot.yellow { background: #FEBC2E; }
+  .dot.green  { background: #28C840; }
+  .title-text {
+    font-size: 13px;
+    font-weight: 500;
+    color: #9c9c9d;
+    letter-spacing: 0.2px;
+  }
+  .badge {
+    background: #FF6363;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.3px;
+  }
+
+  /* ─── Tab Bar ─────────────────────────────────── */
+  .tabbar {
+    display: flex;
+    padding: 0 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    gap: 2px;
+  }
+  .tab {
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #6a6b6c;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    letter-spacing: 0.2px;
+    transition: color 0.15s;
+    user-select: none;
+  }
+  .tab:hover { color: #cecece; }
+  .tab.active {
+    color: #f9f9f9;
+    border-bottom-color: #FF6363;
+  }
+
+  /* ─── Body ────────────────────────────────────── */
+  .body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+
+  /* ─── Section ─────────────────────────────────── */
+  .section {
+    background: #101111;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 0 0 1px #07080a inset;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: #6a6b6c;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .section-action {
+    font-size: 11px;
+    font-weight: 500;
+    color: #FF6363;
+    cursor: pointer;
+    letter-spacing: 0.2px;
+  }
+
+  /* ─── Row ─────────────────────────────────────── */
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .row:last-child { border-bottom: none; }
+  .row-left { display: flex; flex-direction: column; gap: 2px; }
+  .row-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: #f9f9f9;
+    letter-spacing: 0.2px;
+  }
+  .row-sub {
+    font-size: 11px;
+    font-weight: 400;
+    color: #6a6b6c;
+    letter-spacing: 0.2px;
+  }
+
+  /* ─── Toggle ──────────────────────────────────── */
+  .toggle {
+    width: 36px; height: 20px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.1);
+    cursor: pointer;
+    position: relative;
+    transition: background 0.2s;
+    box-shadow: 0 1px 0 0 rgba(255,255,255,0.05) inset;
+  }
+  .toggle.on {
+    background: #FF6363;
+    border-color: #FF6363;
+    box-shadow: 0 0 8px rgba(255,99,99,0.3);
+  }
+  .toggle::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.5);
+    transition: left 0.2s, background 0.2s;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+  }
+  .toggle.on::after {
+    left: 18px;
+    background: #fff;
+  }
+
+  /* ─── Button group ────────────────────────────── */
+  .btn-row {
+    display: flex;
+    gap: 8px;
+    padding: 12px 14px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+  }
+  .btn {
+    flex: 1;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    border: none;
+    transition: opacity 0.15s;
+  }
+  .btn:hover { opacity: 0.7; }
+  .btn.primary {
+    background: #FF6363;
+    color: #fff;
+    box-shadow:
+      0 1px 0 0 rgba(255,255,255,0.15) inset,
+      0 -1px 0 0 rgba(0,0,0,0.2) inset,
+      0 4px 12px rgba(255,99,99,0.25);
+  }
+  .btn.secondary {
+    background: rgba(255,255,255,0.05);
+    color: #cecece;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 1px 0 0 rgba(255,255,255,0.04) inset;
+  }
+  .btn.ghost {
+    background: transparent;
+    color: #6a6b6c;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+
+  /* ─── Select / Dropdown ───────────────────────── */
+  .select-wrap { position: relative; }
+  .select-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #cecece;
+    cursor: pointer;
+    letter-spacing: 0.2px;
+    box-shadow: 0 1px 0 0 rgba(255,255,255,0.03) inset;
+  }
+  .select-arrow {
+    font-size: 9px;
+    color: #6a6b6c;
+  }
+
+  /* ─── Progress bar ────────────────────────────── */
+  .progress-wrap {
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .progress-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: #cecece;
+    letter-spacing: 0.2px;
+  }
+  .progress-val {
+    font-size: 11px;
+    font-weight: 500;
+    color: #6a6b6c;
+  }
+  .progress-track {
+    height: 4px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: #FF6363;
+    border-radius: 2px;
+    box-shadow: 0 0 6px rgba(255,99,99,0.4);
+  }
+
+  /* ─── Stat row ────────────────────────────────── */
+  .stat-row {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px;
+  }
+  .stat {
+    flex: 1;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .stat-val {
+    font-size: 16px;
+    font-weight: 600;
+    color: #f9f9f9;
+    letter-spacing: -0.2px;
+  }
+  .stat-key {
+    font-size: 10px;
+    font-weight: 500;
+    color: #6a6b6c;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+  }
+
+  /* ─── Status bar ──────────────────────────────── */
+  .statusbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    background: #07080a;
+  }
+  .status-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #5fc992;
+    box-shadow: 0 0 6px rgba(95,201,146,0.5);
+    display: inline-block;
+    margin-right: 6px;
+  }
+  .status-text {
+    font-size: 11px;
+    font-weight: 500;
+    color: #6a6b6c;
+    letter-spacing: 0.2px;
+  }
+  .version {
+    font-size: 10px;
+    font-weight: 400;
+    color: #434345;
+    letter-spacing: 0.3px;
+  }
+
+  /* ─── Tag/chip ────────────────────────────────── */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    background: rgba(255,99,99,0.12);
+    border: 1px solid rgba(255,99,99,0.2);
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #FF6363;
+    letter-spacing: 0.3px;
+  }
+  .chip.blue {
+    background: rgba(85,179,255,0.1);
+    border-color: rgba(85,179,255,0.2);
+    color: #55b3ff;
+  }
+  .chip.green {
+    background: rgba(95,201,146,0.1);
+    border-color: rgba(95,201,146,0.2);
+    color: #5fc992;
+  }
+</style>
+</head>
+<body>
+
+<div class="window">
+
+  <!-- Titlebar -->
+  <div class="titlebar">
+    <div class="titlebar-left">
+      <div class="dot-group">
+        <div class="dot red"></div>
+        <div class="dot yellow"></div>
+        <div class="dot green"></div>
+      </div>
+      <span class="title-text">Orvion Hub</span>
+      <span class="badge">v2.1</span>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <span class="chip green">CONNECTED</span>
+      <span class="chip blue">Fish It</span>
+    </div>
+  </div>
+
+  <!-- Tab Bar -->
+  <div class="tabbar">
+    <div class="tab active">Fishing</div>
+    <div class="tab">Enchant</div>
+    <div class="tab">Quest</div>
+    <div class="tab">Player</div>
+    <div class="tab">Settings</div>
+  </div>
+
+  <!-- Body -->
+  <div class="body">
+
+    <!-- Stats -->
+    <div class="section">
+      <div class="stat-row">
+        <div class="stat">
+          <span class="stat-val">42,221</span>
+          <span class="stat-key">Fish Caught</span>
+        </div>
+        <div class="stat">
+          <span class="stat-val">2.88M</span>
+          <span class="stat-key">Coins</span>
+        </div>
+        <div class="stat">
+          <span class="stat-val">389</span>
+          <span class="stat-key">Level</span>
+        </div>
+        <div class="stat">
+          <span class="stat-val">5</span>
+          <span class="stat-key">Secrets</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Auto Fishing -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Auto Fishing</span>
+        <span class="section-action">Configure</span>
+      </div>
+      <div class="row">
+        <div class="row-left">
+          <span class="row-label">Auto Fish</span>
+          <span class="row-sub">Charge → wait → catch loop</span>
+        </div>
+        <div class="toggle on"></div>
+      </div>
+      <div class="row">
+        <div class="row-left">
+          <span class="row-label">Perfect Cast</span>
+          <span class="row-sub">Force perfect throw timing</span>
+        </div>
+        <div class="toggle on"></div>
+      </div>
+      <div class="row">
+        <div class="row-left">
+          <span class="row-label">Auto Sell</span>
+          <span class="row-sub">Sell when inventory full</span>
+        </div>
+        <div class="toggle"></div>
+      </div>
+      <div class="row">
+        <div class="row-left">
+          <span class="row-label">Rod</span>
+          <span class="row-sub">Current equipped</span>
+        </div>
+        <div class="select-btn">
+          <span>Ghostfinn Rod</span>
+          <span class="select-arrow">▾</span>
+        </div>
+      </div>
+      <div class="row">
+        <div class="row-left">
+          <span class="row-label">Bait Filter</span>
+          <span class="row-sub">Target fish tier</span>
+        </div>
+        <div class="select-btn">
+          <span>T7 Secret</span>
+          <span class="select-arrow">▾</span>
+        </div>
+      </div>
+
+      <!-- Session progress -->
+      <div class="progress-wrap" style="border-top:1px solid rgba(255,255,255,0.05);">
+        <div class="progress-header">
+          <span class="progress-label">Session — Element Quest Obj3</span>
+          <span class="progress-val">0 / 1</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" style="width:5%"></div>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn primary">Start</button>
+        <button class="btn secondary">Teleport</button>
+        <button class="btn ghost">Reset</button>
+      </div>
+    </div>
+
+    <!-- Enchant -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Enchant — Ghostfinn Rod</span>
+        <span class="section-action">Refresh</span>
+      </div>
+      <div class="row">
+        <div class="row-left">
+          <span class="row-label">E1 · Stormhunter II</span>
+          <span class="row-sub">id=19</span>
+        </div>
+        <span class="chip">ACTIVE</span>
+      </div>
+      <div class="row">
+        <div class="row-left">
+          <span class="row-label">E2 · Glistening I</span>
+          <span class="row-sub">id=1</span>
+        </div>
+        <span class="chip">ACTIVE</span>
+      </div>
+      <div class="row">
+        <div class="row-left">
+          <span class="row-label">Stone Type</span>
+          <span class="row-sub">Pool for target enchant</span>
+        </div>
+        <div class="select-btn">
+          <span>Evolved Stone</span>
+          <span class="select-arrow">▾</span>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary">Go to Altar</button>
+        <button class="btn secondary">Create T-Stone</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Status bar -->
+  <div class="statusbar">
+    <div>
+      <span class="status-dot"></span>
+      <span class="status-text">Idle — Sacred Temple</span>
+    </div>
+    <span class="version">Orvion · Delta 1.1.733</span>
+  </div>
+
+</div>
+
+</body>
+</html>
