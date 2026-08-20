@@ -257,4 +257,92 @@ pcall(function()
     for k,v in pairs(s) do if type(v)~="table" then log("  Stat."..k.."="..tostring(v)) end end
 end)
 
+-- RS.Modules children list
+log("=== RS.Modules CHILDREN ===")
+pcall(function()
+    for _, child in ipairs(RS.Modules:GetChildren()) do
+        log("  "..child.Name.." ["..child.ClassName.."]")
+    end
+end)
+save()
+
+-- RS.Shared children list
+log("=== RS.Shared CHILDREN ===")
+pcall(function()
+    for _, child in ipairs(RS.Shared:GetChildren()) do
+        log("  "..child.Name.." ["..child.ClassName.."]")
+    end
+end)
+save()
+
+-- Scan RS.Modules for Ruin/Gate/Passage/Ancient/Sacrifice/Crystal
+log("=== RUIN/GATE/PASSAGE MODULES SCAN ===")
+local keywords = {"Ruin","Gate","Passage","Ancient","Sacrifice","Crystal","Map","Area","Zone","Unlock","World"}
+local function matchesKeyword(name)
+    local low = name:lower()
+    for _, kw in ipairs(keywords) do
+        if low:find(kw:lower(), 1, true) then return kw end
+    end
+    return nil
+end
+pcall(function()
+    for _, child in ipairs(RS:GetDescendants()) do
+        local kw = matchesKeyword(child.Name)
+        if kw then
+            log("  ["..kw.."] "..child:GetFullName().." ["..child.ClassName.."]")
+        end
+    end
+end)
+save()
+
+-- CollectionService tags dump
+log("=== COLLECTION SERVICE TAGS ===")
+pcall(function()
+    local CS = game:GetService("CollectionService")
+    local tags = CS:GetAllTags()
+    log("  Total tags: "..tostring(#tags))
+    for _, tag in ipairs(tags) do
+        local tagged = CS:GetTagged(tag)
+        log("  ["..tag.."] ("..#tagged.." objects)")
+    end
+end)
+save()
+
+-- Workspace scan for Ruin/Gate/Passage
+log("=== WORKSPACE RUIN/GATE SCAN ===")
+pcall(function()
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        local kw = matchesKeyword(obj.Name)
+        if kw and (obj:IsA("Model") or obj:IsA("Part") or obj:IsA("Folder") or obj:IsA("Script") or obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) then
+            log("  ["..kw.."] "..obj:GetFullName().." ["..obj.ClassName.."]")
+        end
+    end
+end)
+save()
+
+-- PlayerData keys full dump
+log("=== PLAYERDATA ALL KEYS ===")
+pcall(function()
+    local data = PlayerData:Get() or {}
+    for k, v in pairs(data) do
+        local t = type(v)
+        if t ~= "table" then
+            log("  "..tostring(k).." = "..tostring(v))
+        else
+            local count = 0; for _ in pairs(v) do count=count+1 end
+            log("  "..tostring(k).." = table("..count.." keys)")
+        end
+    end
+end)
+save()
+
+-- RS.Controllers children
+log("=== RS.Controllers CHILDREN ===")
+pcall(function()
+    for _, child in ipairs(RS.Controllers:GetChildren()) do
+        log("  "..child.Name.." ["..child.ClassName.."]")
+    end
+end)
+save()
+
 save(); log("DONE"); save()
