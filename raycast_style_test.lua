@@ -114,54 +114,123 @@ do
     end)
 end
 
+-- ─── Accent top stripe ────────────────────────────────────────────────────────
+local topStripe = new("Frame", {
+    Size             = UDim2.new(1, 0, 0, 2),
+    BackgroundColor3 = C.ACCENT,
+    BorderSizePixel  = 0,
+    ZIndex           = 2,
+}, win)
+new("UIGradient", {
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 140, 140)),
+        ColorSequenceKeypoint.new(0.5, C.ACCENT),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(180, 40, 40)),
+    }),
+    Rotation = 0,
+}, topStripe)
+
 -- ─── Titlebar ─────────────────────────────────────────────────────────────────
 local titlebar = new("Frame", {
     Name             = "Titlebar",
-    Size             = UDim2.new(1, 0, 0, 40),
-    BackgroundColor3 = C.BG,
+    Size             = UDim2.new(1, 0, 0, 52),
+    BackgroundColor3 = Color3.fromRGB(10, 11, 14),
     BorderSizePixel  = 0,
 }, win)
+-- subtle gradient bg
+new("UIGradient", {
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(18, 14, 14)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 11, 14)),
+    }),
+    Rotation = 90,
+}, titlebar)
 padding(0, 16, 0, 16, titlebar)
 
--- dots
-local dots = new("Frame", {
-    Size             = UDim2.fromOffset(0, 10),
-    AutomaticSize    = Enum.AutomaticSize.X,
-    Position         = UDim2.new(0, 0, 0.5, -5),
+-- subtle red glow under accent stripe (ImageLabel trick via Frame + gradient)
+local glowRow = new("Frame", {
+    Size             = UDim2.new(1, 0, 0, 18),
+    Position         = UDim2.new(0, 0, 0, 0),
     BackgroundTransparency = 1,
+    BorderSizePixel  = 0,
+    ZIndex           = 1,
 }, titlebar)
-listLayout(Enum.FillDirection.Horizontal, 6, dots)
-for _, col in ipairs({Color3.fromRGB(255, 95, 87), Color3.fromRGB(254, 188, 46), Color3.fromRGB(40, 200, 64)}) do
-    local d = new("Frame", {Size = UDim2.fromOffset(10,10), BackgroundColor3 = col, BorderSizePixel = 0}, dots)
-    corner(5, d)
-end
+new("UIGradient", {
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, C.ACCENT),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 11, 14)),
+    }),
+    Rotation = 90,
+    Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.82),
+        NumberSequenceKeypoint.new(1, 1),
+    }),
+}, glowRow)
 
--- title
-local titleLabel = new("TextLabel", {
-    Text             = "Orvion Hub",
+-- logo circle
+local logo = new("Frame", {
+    Size             = UDim2.fromOffset(26, 26),
+    Position         = UDim2.new(0, 0, 0.5, -13),
+    BackgroundColor3 = C.ACCENT,
+    BorderSizePixel  = 0,
+}, titlebar)
+corner(6, logo)
+new("UIGradient", {
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 140, 130)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(200, 50, 50)),
+    }),
+    Rotation = 135,
+}, logo)
+new("TextLabel", {
+    Text             = "O",
     TextSize         = 13,
-    FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Medium, Enum.FontStyle.Normal),
-    TextColor3       = C.TEXT3,
+    FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal),
+    TextColor3       = Color3.new(1,1,1),
     BackgroundTransparency = 1,
-    Position         = UDim2.new(0, 82, 0.5, -8),
-    Size             = UDim2.fromOffset(100, 16),
+    Size             = UDim2.fromScale(1,1),
+    TextXAlignment   = Enum.TextXAlignment.Center,
+    TextYAlignment   = Enum.TextYAlignment.Center,
+}, logo)
+
+-- title + subtitle stack
+new("TextLabel", {
+    Text             = "Orvion Hub",
+    TextSize         = 14,
+    FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal),
+    TextColor3       = C.TEXT,
+    BackgroundTransparency = 1,
+    Position         = UDim2.new(0, 34, 0, 10),
+    Size             = UDim2.fromOffset(120, 16),
+    TextXAlignment   = Enum.TextXAlignment.Left,
+}, titlebar)
+new("TextLabel", {
+    Text             = "Fish It · Sacred Temple",
+    TextSize         = 10,
+    FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Regular, Enum.FontStyle.Normal),
+    TextColor3       = C.MUTED,
+    BackgroundTransparency = 1,
+    Position         = UDim2.new(0, 34, 0, 28),
+    Size             = UDim2.fromOffset(160, 12),
+    TextXAlignment   = Enum.TextXAlignment.Left,
 }, titlebar)
 
 -- version badge
 local vbadge = new("Frame", {
     Size             = UDim2.fromOffset(0, 16),
     AutomaticSize    = Enum.AutomaticSize.X,
-    Position         = UDim2.new(0, 182, 0.5, -8),
-    BackgroundColor3 = C.ACCENT,
+    Position         = UDim2.new(0, 200, 0.5, -8),
+    BackgroundColor3 = Color3.fromRGB(40, 18, 18),
     BorderSizePixel  = 0,
 }, titlebar)
 corner(4, vbadge)
-padding(0, 6, 0, 6, vbadge)
-local vt = new("TextLabel", {
+stroke(1, Color3.fromRGB(80, 30, 30), vbadge)
+padding(0, 7, 0, 7, vbadge)
+new("TextLabel", {
     Text             = "v2.1",
     TextSize         = 10,
     FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal),
-    TextColor3       = Color3.new(1,1,1),
+    TextColor3       = C.ACCENT,
     BackgroundTransparency = 1,
     Size             = UDim2.fromOffset(0, 16),
     AutomaticSize    = Enum.AutomaticSize.X,
@@ -170,14 +239,24 @@ local vt = new("TextLabel", {
 -- close btn
 local closeBtn = new("TextButton", {
     Text             = "✕",
-    TextSize         = 12,
+    TextSize         = 11,
     FontFace         = Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal),
     TextColor3       = C.MUTED,
-    BackgroundTransparency = 1,
-    Position         = UDim2.new(1, -28, 0.5, -10),
-    Size             = UDim2.fromOffset(20, 20),
+    BackgroundColor3 = Color3.fromRGB(30, 20, 20),
+    Position         = UDim2.new(1, -30, 0.5, -11),
+    Size             = UDim2.fromOffset(22, 22),
     BorderSizePixel  = 0,
 }, titlebar)
+corner(6, closeBtn)
+stroke(1, Color3.fromRGB(55, 25, 25), closeBtn)
+closeBtn.MouseEnter:Connect(function()
+    closeBtn.BackgroundColor3 = C.ACCENT
+    closeBtn.TextColor3 = Color3.new(1,1,1)
+end)
+closeBtn.MouseLeave:Connect(function()
+    closeBtn.BackgroundColor3 = Color3.fromRGB(30, 20, 20)
+    closeBtn.TextColor3 = C.MUTED
+end)
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
 -- titlebar divider
