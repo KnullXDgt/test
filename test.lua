@@ -1236,7 +1236,7 @@ local Window = Orvion:CreateWindow({
 -- ====== FISHING TAB ======
 -- ====== INFO TAB ======
 local InfoTab = Window:CreateTab("Info")
-local InfoSection = Window:AddCollapsible(InfoTab, "What is Orvion?", true)
+local InfoSection = Window:AddCollapsible(InfoTab, "Information", true)
 Window:AddParagraph(InfoSection, "What is Orvion Hub?", "Orvion Hub is a reflection of my coding journey  built through trial, error, and a lot of iteration. It shows how much I have grown as a developer, and how much I still have left to learn.\nLowkey started this just for myself, no cap. Somewhere along the way it turned into something worth sharing.")
 
 local FishingTab = Window:CreateTab("Main")
