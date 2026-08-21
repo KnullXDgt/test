@@ -1222,8 +1222,10 @@ pcall(function() _execName = getexecutorname() end)
 
 local Window = Orvion:CreateWindow({
     Title          = "Orvion Hub",
+    Icon           = "rbxassetid://95126399202412",
+    TitleImage     = "rbxassetid://138517423977481",
     Subtitle       = "  |  |   Built to Last",
-    Badges         = {"Fish It v0.1", "Executor: " .. _execName},
+    Badges         = {"v0.1", "Executor: " .. _execName},
     Center       = true,
     Draggable    = true,
     Resizable    = true,
