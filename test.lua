@@ -1485,7 +1485,7 @@ local function findEventPosition(eventName)
 end
 
 
-local TpTab = Window:CreateTab("Teleport", "rbxassetid://6723742959")
+local TpTab = Window:CreateTab("Teleport", "rbxassetid://6723742952")
 local TpSection = Window:AddCollapsible(TpTab, "Teleport to Island", false)
 
 Window:AddDropdown(TpSection, "Select Island", "", LOCATION_NAMES, false, "Ancient Jungle", function(value)
@@ -1822,7 +1822,7 @@ local function startWeatherWatcher()
     end)
 end
 
-local AutomationTab = Window:CreateTab("Automation", "rbxassetid://104195103286648")
+local AutomationTab = Window:CreateTab("Automation", "rbxassetid://95329801274970")
 
 local WeatherSection = Window:AddCollapsible(AutomationTab, "Weather Features", false)
 
