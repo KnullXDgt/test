@@ -1822,7 +1822,7 @@ local function startWeatherWatcher()
     end)
 end
 
-local AutomationTab = Window:CreateTab("Automation", "rbxassetid://95329801274970")
+local AutomationTab = Window:CreateTab("Automation", "rbxassetid://102105242487044")
 
 local WeatherSection = Window:AddCollapsible(AutomationTab, "Weather Features", false)
 
