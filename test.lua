@@ -1485,7 +1485,7 @@ local function findEventPosition(eventName)
 end
 
 
-local TpTab = Window:CreateTab("Teleport", "rbxassetid://92952105276942")
+local TpTab = Window:CreateTab("Teleport", "rbxassetid://127242665382390")
 local TpSection = Window:AddCollapsible(TpTab, "Teleport to Island", false)
 
 Window:AddDropdown(TpSection, "Select Island", "", LOCATION_NAMES, false, "Ancient Jungle", function(value)
@@ -1822,7 +1822,7 @@ local function startWeatherWatcher()
     end)
 end
 
-local AutomationTab = Window:CreateTab("Automation", "rbxassetid://89625301483410")
+local AutomationTab = Window:CreateTab("Automation", "rbxassetid://92919014193893")
 
 local WeatherSection = Window:AddCollapsible(AutomationTab, "Weather Features", false)
 
@@ -2082,7 +2082,7 @@ Window:AddButton(TranscendedSection, "Refresh Fish List", "", "rbxassetid://1693
     end, "Toggle_Enable Auto Create")
 end
 
-local ShopTab = Window:CreateTab("Shop", "rbxassetid://138472043527451")
+local ShopTab = Window:CreateTab("Shop", "rbxassetid://87353934937155")
 
 -- ==========================================
 -- ROD FEATURES
