@@ -246,10 +246,7 @@ do
 
     do
         local EnchantSection = Window:AddCollapsible(AutomationTab, "Enchant Features", false)
-        Window:AddParagraph(EnchantSection, "Enchant Status", "Current Rod: None
-Enchant 1: None
-Enchant 2: None
-Enchant Stones Left: 0")
+        Window:AddParagraph(EnchantSection, "Enchant Status", "Current Rod: None")
         Window:AddDropdown(EnchantSection, "Enchant Type", "", {"Normal Enchant Stone","Runic Enchant Stone","Evolved Enchant Stone"}, false, "Normal Enchant Stone", function(v) Config.EnchantType = v end, "Dropdown_EnchantType")
         Window:AddDropdown(EnchantSection, "Target Enchant", "", {}, false, "Select Option", function(v) Config.TargetEnchant = v end, "Dropdown_TargetEnchant")
         Window:AddToggle(EnchantSection, "Auto Enchant Reroll", "", false, function(v) Config.AutoEnchantReroll = v end, "Toggle_AutoEnchantReroll")
