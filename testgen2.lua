@@ -1,79 +1,14 @@
 -- ====================================================================
---                 ORVION HUB Gen2 - SKELETON
---          Horizontal Pill Tabs | Overlay Search
+--                 ORVION HUB Gen2 - SKELETON (UI TEST)
+--          No game-specific logic - works in any game
 -- ====================================================================
 
 -- ====== SERVICES ======
-local Players          = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local HttpService      = game:GetService("HttpService")
-local LocalPlayer      = Players.LocalPlayer
-
--- ====== HEURISTIC DISCOVERY ======
-local net = ReplicatedStorage.Packages._Index["sleitnick_net@0.2.0"].net
-
-local function GetServerRemote(targetName)
-    local allRemotes = net:GetChildren()
-    for i, remote in ipairs(allRemotes) do
-        if remote.Name == targetName then
-            return allRemotes[i + 1]
-        end
-    end
-    return nil
-end
-
-local function GetServerRemoteReverse(targetName)
-    local allRemotes = net:GetChildren()
-    for i, remote in ipairs(allRemotes) do
-        if remote.Name == targetName then
-            return allRemotes[i - 1]
-        end
-    end
-    return nil
-end
-
--- ====== REMOTES ======
-local Events = {
-    charge   = GetServerRemote("RF/ChargeFishingRod"),
-    minigame = GetServerRemote("RF/RequestFishingMinigameStarted"),
-    fishing  = GetServerRemote("RE/CatchFishCompleted"),
-    cancel   = GetServerRemote("RF/CancelFishingInputs"),
-    sell     = GetServerRemote("RF/SellAllItems"),
-}
-
-local updateAutoFishingRemote = GetServerRemote("RF/UpdateAutoFishingState")
-local markAutoFishingRemote   = GetServerRemote("RF/MarkAutoFishingUsed")
-local textNotificationRemote  = GetServerRemote("RE/TextNotification")
-local fishCaughtRemote        = GetServerRemote("RE/FishCaught")
-local bigPopupRemote          = GetServerRemote("RE/ObtainedNewFishNotification")
-local equipToolRemote         = GetServerRemote("RE/EquipToolFromHotbar")
-local cutsceneRemote          = net:WaitForChild("RE/ReplicateCutscene", 10)
-local abilityVFXRemote        = net:WaitForChild("RE/PlayAbilityVFX", 10)
-local changeSettingRemote     = net:WaitForChild("RE/ChangeSetting", 10)
-local fishingRadarRemote      = GetServerRemote("RF/UpdateFishingRadar")
-local equipOxygenRemote       = GetServerRemote("RF/EquipOxygenTank")
-local unequipOxygenRemote     = GetServerRemote("RF/UnequipOxygenTank")
-local weatherPurchaseRF       = GetServerRemote("RF/PurchaseWeatherEvent")
-local purchaseBaitRF          = GetServerRemote("RF/PurchaseBait")
-local equipBaitRE             = GetServerRemote("RE/EquipBait")
-local purchaseRodRF           = GetServerRemote("RF/PurchaseFishingRod")
-local equipItemRE             = GetServerRemote("RE/EquipItem")
-local purchaseBMRF            = GetServerRemote("RF/PurchaseBlackMarketItem")
-local bpPurchaseRE            = GetServerRemote("RE/BPPurchaseRequest")
-local purchaseMerchantRF      = GetServerRemote("RF/PurchaseMarketItem")
-local enchantAltarRE          = GetServerRemote("RE/ActivateEnchantingAltar")
-local enchantAltar2RE         = GetServerRemote("RE/ActivateSecondEnchantingAltar")
-local transcendedStoneRF      = GetServerRemote("RF/CreateTranscendedStone")
-
--- ====== REPLION + MODULES ======
-local Replion     = require(ReplicatedStorage.Packages.Replion)
-local IU          = require(ReplicatedStorage.Shared.ItemUtility)
-local PlayerData  = Replion.Client:WaitReplion("Data")
-local EventsReplion = nil -- lazy-loaded
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 
 -- ====== CONFIG ======
 local Config = {
-    -- Fishing
     AutoFish          = false,
     AutoSell          = false,
     AutoSellMode      = "Tier",
@@ -84,32 +19,24 @@ local Config = {
     PerfectCast       = false,
     BlatantActive     = false,
     BlatantDelay      = 0,
-    -- Events
     PriorityEvent         = "Select Option",
     SelectEvent           = "Select Option",
     SelectedWeatherEvents = {},
     BuyWeatherActive      = false,
-    -- Totem
     SelectedTotem         = "Luck Totem",
     AutoSpawnTotem        = false,
-    -- Enchant
     EnchantType           = "Normal Enchant Stone",
     TargetEnchant         = "Select Option",
     AutoEnchantReroll     = false,
-    -- Transcended Stone
     SelectedSecretFish    = "Select Option",
     TranscendedAmount     = 1,
     AutoCreateTranscended = false,
-    -- Rod / Bait
     SelectedRod           = "Starter Rod",
     SelectedBait          = "Topwater Bait",
-    -- Black Market
     SelectedBMItems       = {},
     AutoBuyBM             = false,
-    -- Battlepass
     SelectedBPSlots       = {},
     AutoBuyBP             = false,
-    -- Merchant
     SelectedMerchantItem  = "Select Option",
     MerchantQty           = 1,
     AutoBuyMerchant       = false,
@@ -119,26 +46,22 @@ local Config = {
 local LOCATION_NAMES = {
     "Ancient Jungle", "Ancient Ruin", "Aquarium",
     "Copper Canyon [SPOT 1]", "Copper Canyon [SPOT 2]", "Copper Canyon Mines",
-    "Coral Reefs", "Crater Island", "Crater Island [TOP]", "Crystal Depths",
+    "Coral Reefs", "Crater Island", "Crystal Depths",
     "Esoteric Depths", "Fisherman Island", "Gloomcap Grotto",
     "Kohana", "Kohana Lab", "Kohana Volcano",
     "Lava Basin", "Leviathan Den", "Lucky Abyss", "Lucky Volcano",
     "Mariana Trench", "Mutation Vents",
-    "Pirate Cove", "Pirate Treasure Room", "Planetary Observatory",
-    "Rushing Current", "Sacred Temple", "Sewers",
-    "Shiny Abyss", "Silent Reach", "Sisyphus Statue",
-    "Starfall Gardens", "Stingrays Shores",
+    "Pirate Cove", "Planetary Observatory",
+    "Sacred Temple", "Sewers", "Shiny Abyss", "Silent Reach",
+    "Sisyphus Statue", "Starfall Gardens",
     "The Celestarium", "Titan Pressure", "Treasure Room", "Tropical Grove",
     "Underground Cellar", "Underwater City",
     "Volcanic Cavern", "Weather Machine"
 }
 
 local EVENT_LIST = {
-    "Admin - 1x1x1 Rage", "Admin - 2025 Anniversary", "Admin - 2025 Christmas",
-    "Admin - 2026 Valentines", "Admin - 3RR0R 3V3NT", "Admin - Bermuda Triangle",
     "Admin - Black Hole", "Admin - Bloodmoon", "Admin - Frostmoon",
     "Admin - Ghost Worm", "Admin - Leviathan Awakening", "Admin - Meteor Rain",
-    "Admin - Purple Bloodmoon", "Admin - Volcano Eruption",
     "Dark Megalodon Hunt", "Glacial Serpent Hunt", "Megalodon Hunt", "Thunderzilla Hunt",
 }
 
@@ -149,29 +72,13 @@ local TOTEM_LIST = {
 }
 
 -- ====== STATE ======
-local isFishing    = false
-local autoThread   = nil
-local sellThread   = nil
+local isFishing = false
 
 -- ====== UTILITIES ======
 local function teleportTo(name) end
-local function findEventPosition(eventName) end
-local function getRodInfo() end
-local function getSecretFish() end
-local function getEnchantStonesLeft() end
-
--- ====== FEATURE LOGIC STUBS ======
--- (fill in per session)
-local function startAutoFish() end
-local function stopAutoFish() end
-local function startWeatherWatcher() end
-local function stopWeatherWatcher() end
-local function startAutoSpawnTotem() end
-local function stopAutoSpawnTotem() end
-local function startAutoEnchant() end
-local function stopAutoEnchant() end
-local function startAutoTranscended() end
-local function stopAutoTranscended() end
+local function findEventPosition(eventName) return nil end
+local function getRodInfo() return "None", "None", "None" end
+local function getSecretFish() return {} end
 
 -- ====== ORVION GEN2 UI LOAD ======
 local _execName = (identifyexecutor and identifyexecutor()) or "Unknown"
@@ -208,10 +115,10 @@ local ShopTab       = Window:CreateTab("Shop",          "rbxassetid://8735393493
 do
     local InfoSection = Window:AddCollapsible(InfoTab, "Information", true)
     Window:AddParagraph(InfoSection, "What is Orvion Hub?",
-        "Orvion Hub is a reflection of my coding journey — built through trial, error, and a lot of iteration.")
+        "Orvion Hub is a reflection of my coding journey, built through trial, error, and a lot of iteration.")
 end
 
--- ====== MAIN TAB (Fishing) ======
+-- ====== MAIN TAB ======
 do
     local FishSection = Window:AddCollapsible(FishingTab, "Auto Fishing", false)
     Window:AddToggle(FishSection, "Auto Fish", "", false, function(v) Config.AutoFish = v end, "Toggle_AutoFish")
