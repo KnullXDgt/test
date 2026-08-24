@@ -493,8 +493,10 @@ local function startBlatant()
             isFishing = true
             task.spawn(function() pcall(function() Events.charge:InvokeServer(tick()) end) end)
             task.spawn(function() pcall(function() Events.charge:InvokeServer(tick()) end) end)
+            task.spawn(function() pcall(function() Events.charge:InvokeServer(tick()) end) end)
             pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
+            task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
             task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
             task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
             task.wait(0.05)
