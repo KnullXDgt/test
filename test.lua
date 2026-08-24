@@ -491,20 +491,20 @@ local function startBlatant()
     blatantThread = task.spawn(function()
         while Config.BlatantActive do
             isFishing = true
+            -- V2 order: charge → minigame (blocking, capture fishData) → fishing
             pcall(function() Events.charge:InvokeServer(tick()) end)
-            -- minigame non-blocking: fire fishing immediately, capture fish data async
-            task.spawn(function()
-                local ok, success, fishData = pcall(function()
-                    return Events.minigame:InvokeServer(1.2854545116425, 1)
-                end)
-                if ok and success and fishData and bigPopupRemote then
-                    pcall(function() firesignal(bigPopupRemote.OnClientEvent, fishData, {}, false) end)
-                end
+            local _bFishData = nil
+            local _ok, _v1, _v2 = pcall(function()
+                return Events.minigame:InvokeServer(1.2854545116425, 1)
             end)
+            if _ok and _v1 then _bFishData = _v2 end
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
             for i = 1, 4 do
                 pcall(function() Events.fishing:FireServer() end)
                 task.wait(0.01)
+            end
+            if _bFishData and bigPopupRemote then
+                pcall(function() firesignal(bigPopupRemote.OnClientEvent, _bFishData, {}, false) end)
             end
             if Config.LastBlatantFish and fishCaughtRemote then
                 pcall(function() firesignal(fishCaughtRemote.OnClientEvent, Config.LastBlatantFish) end)
