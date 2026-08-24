@@ -662,9 +662,20 @@ PlayerData:OnChange("AutoFishing", function(value)
         end)
     end
 end)
+local _snDisplay = nil
 local function updateBigPopup()
-    local sn = LocalPlayer.PlayerGui:FindFirstChild("Small Notification")
-    if sn then sn.Enabled = not Config.DisableFishNotif end
+    if not _snDisplay then
+        local sn = LocalPlayer.PlayerGui:FindFirstChild("Small Notification")
+        _snDisplay = sn and sn:FindFirstChild("Display")
+    end
+    if _snDisplay then
+        if Config.DisableFishNotif then
+            _snDisplay.Parent = nil
+        else
+            local sn = LocalPlayer.PlayerGui:FindFirstChild("Small Notification")
+            if sn then _snDisplay.Parent = sn end
+        end
+    end
 end
 
 -- ====== SUPPORT FEATURES FUNCTIONS ======
