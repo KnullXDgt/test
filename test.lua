@@ -616,6 +616,12 @@ do
         fishCaughtRemote.OnClientEvent:Connect(function(fishName)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
+            if Config.BlatantActive and fishCaughtRemote then
+                local bDelay = math.max(Config.BlatantDelay > 0 and Config.BlatantDelay or 0.4, 0.35)
+                task.delay(bDelay, function()
+                    pcall(function() firesignal(fishCaughtRemote.OnClientEvent, fishName) end)
+                end)
+            end
 
             task.spawn(function()
                 local now = workspace.DistributedGameTime
