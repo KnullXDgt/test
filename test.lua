@@ -617,11 +617,19 @@ if fishCaughtRemote and textNotificationRemote then
         local fishItemId = fishNameToId[fishName]
         if not fishItemId then return end
         pcall(function()
-            for _, lb in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
-                if lb:IsA("TextLabel") and lb.Text:find(fishName, 1, true) then
-                    local tile = lb.Parent and lb.Parent.Parent
-                    if tile and tile:IsA("Frame") then tile.Parent = nil end
-                    break
+            local pg = LocalPlayer.PlayerGui
+            local notifGui = pg:FindFirstChild("Text Notifications")
+            local frame = notifGui and notifGui:FindFirstChild("Frame")
+            if frame then
+                for _, tile in ipairs(frame:GetChildren()) do
+                    if tile:IsA("Frame") then
+                        local tf = tile:FindFirstChild("TextFrame")
+                        local lbl = tf and tf:FindFirstChild("Label")
+                        if lbl and lbl.Text:find(fishName, 1, true) then
+                            tile.Parent = nil
+                            break
+                        end
+                    end
                 end
             end
         end)
