@@ -492,18 +492,22 @@ local function startBlatant()
         while Config.BlatantActive do
             isFishing = true
             pcall(function() Events.charge:InvokeServer(tick()) end)
-            pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
+            -- minigame non-blocking: fire fishing immediately, capture fish data async
+            task.spawn(function()
+                local ok, success, fishData = pcall(function()
+                    return Events.minigame:InvokeServer(1.2854545116425, 1)
+                end)
+                if ok and success and fishData and bigPopupRemote then
+                    pcall(function() firesignal(bigPopupRemote.OnClientEvent, fishData, {}, false) end)
+                end
+            end)
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
             for i = 1, 4 do
                 pcall(function() Events.fishing:FireServer() end)
                 task.wait(0.01)
             end
-            if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
             if Config.LastBlatantFish and fishCaughtRemote then
                 pcall(function() firesignal(fishCaughtRemote.OnClientEvent, Config.LastBlatantFish) end)
-                if bigPopupRemote then
-                    pcall(function() firesignal(bigPopupRemote.OnClientEvent, Config.LastBlatantFish, {}, false) end)
-                end
             end
             task.wait(0.05)
             isFishing = false
