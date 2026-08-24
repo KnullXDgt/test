@@ -46,6 +46,7 @@ local markAutoFishingRemote  = GetServerRemote("RF/MarkAutoFishingUsed")
 local textNotificationRemote = GetServerRemote("RE/TextNotification")
 local fishCaughtRemote       = GetServerRemote("RE/FishCaught")
 local bigPopupRemote         = GetServerRemote("RE/ObtainedNewFishNotification")
+local caughtFishVisualRemote  = net:FindFirstChild("RE/CaughtFishVisual")
 
 -- Support Features remotes
 local equipToolRemote        = GetServerRemote("RE/EquipToolFromHotbar")
@@ -609,10 +610,24 @@ end
 
 do
     local _nextFireTime = {}
+    local _blatantGuard = false
     if fishCaughtRemote and textNotificationRemote then
         fishCaughtRemote.OnClientEvent:Connect(function(fishName)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
+            if Config.BlatantActive and not _blatantGuard then
+                _blatantGuard = true
+                local char = LocalPlayer.Character
+                local origin = char and char:FindFirstChild("HumanoidRootPart") and char.HumanoidRootPart.CFrame or CFrame.new()
+                pcall(function() firesignal(fishCaughtRemote.OnClientEvent, fishName) end)
+                if bigPopupRemote then
+                    pcall(function() firesignal(bigPopupRemote.OnClientEvent, fishName, {}, false) end)
+                end
+                if caughtFishVisualRemote then
+                    pcall(function() firesignal(caughtFishVisualRemote.OnClientEvent, char, origin, fishName, {}) end)
+                end
+                _blatantGuard = false
+            end
             task.spawn(function()
                 local now = workspace.DistributedGameTime
                 local next = math.max(now, (_nextFireTime[fishItemId] or 0) + 0.35)
