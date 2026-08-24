@@ -636,7 +636,6 @@ if fishCaughtRemote and textNotificationRemote then
         pcall(function()
             firesignal(textNotificationRemote.OnClientEvent, {
                 Type = "Item",
-                ItemType = "Fish",
                 ItemId = fishItemId,
                 Text = "",
                 CustomDuration = 5
