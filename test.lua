@@ -610,11 +610,17 @@ for itemId = 1, 1000 do
     end
 end
 
+local _notifCache = {}
 if fishCaughtRemote and textNotificationRemote then
     fishCaughtRemote.OnClientEvent:Connect(function(fishName)
         local fishItemId = fishNameToId[fishName]
         if fishItemId then
             pcall(function()
+                local now = workspace.DistributedGameTime
+                local last = _notifCache[fishItemId] or 0
+                local gap = now - last
+                if gap < 0.6 then task.wait(0.6 - gap + 0.05) end
+                _notifCache[fishItemId] = workspace.DistributedGameTime
                 firesignal(textNotificationRemote.OnClientEvent, {
                     Type = "Item",
                     ItemType = "Fish",
