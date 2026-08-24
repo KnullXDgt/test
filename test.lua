@@ -612,19 +612,28 @@ end
 
 
 
-if fishCaughtRemote and textNotificationRemote then
-    fishCaughtRemote.OnClientEvent:Connect(function(fishName)
-        local fishItemId = fishNameToId[fishName]
-        if fishItemId then
-            pcall(function()
-                firesignal(textNotificationRemote.OnClientEvent, {
-                    Type = "Item",
-                    Text = fishName,
-                    CustomDuration = 5
-                })
+do
+    local _notifActive = {}
+    if fishCaughtRemote and textNotificationRemote then
+        fishCaughtRemote.OnClientEvent:Connect(function(fishName)
+            local fishItemId = fishNameToId[fishName]
+            if not fishItemId or _notifActive[fishItemId] then return end
+            task.spawn(function()
+                _notifActive[fishItemId] = true
+                pcall(function()
+                    firesignal(textNotificationRemote.OnClientEvent, {
+                        Type = "Item",
+                        ItemType = "Fish",
+                        ItemId = fishItemId,
+                        Text = "",
+                        CustomDuration = 5
+                    })
+                end)
+                task.wait(5.1)
+                _notifActive[fishItemId] = false
             end)
-        end
-    end)
+        end)
+    end
 end
 
 -- ====== BIG POPUP TOGGLE ======
