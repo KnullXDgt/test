@@ -612,19 +612,29 @@ end
 
 
 
-if fishCaughtRemote and textNotificationRemote then
-    fishCaughtRemote.OnClientEvent:Connect(function(fishName)
-        local fishItemId = fishNameToId[fishName]
-        if not fishItemId then return end
-        pcall(function()
-            firesignal(textNotificationRemote.OnClientEvent, {
-                Type = "Item",
-                ItemId = fishItemId,
-                Text = "",
-                CustomDuration = 5
-            })
+do
+    local _nextFireTime = {}
+    if fishCaughtRemote and textNotificationRemote then
+        fishCaughtRemote.OnClientEvent:Connect(function(fishName)
+            local fishItemId = fishNameToId[fishName]
+            if not fishItemId then return end
+            task.spawn(function()
+                local now = workspace.DistributedGameTime
+                local next = math.max(now, (_nextFireTime[fishItemId] or 0) + 0.35)
+                _nextFireTime[fishItemId] = next
+                local delay = next - now
+                if delay > 0.01 then task.wait(delay) end
+                pcall(function()
+                    firesignal(textNotificationRemote.OnClientEvent, {
+                        Type = "Item",
+                        ItemId = fishItemId,
+                        Text = "",
+                        CustomDuration = 5
+                    })
+                end)
+            end)
         end)
-    end)
+    end
 end
 
 -- ====== BIG POPUP TOGGLE ======
