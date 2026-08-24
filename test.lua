@@ -491,7 +491,7 @@ local function startBlatant()
     blatantThread = task.spawn(function()
         while Config.BlatantActive do
             isFishing = true
-            pcall(function() Events.charge:InvokeServer(tick()) end)
+            task.spawn(function() pcall(function() Events.charge:InvokeServer(tick()) end) end)
             pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
             pcall(function() Events.fishing:FireServer() end)
