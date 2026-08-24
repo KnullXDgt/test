@@ -612,14 +612,17 @@ end
 
 do
     local _nextFireTime = {}
+    local _blatantFiring = false
     if fishCaughtRemote and textNotificationRemote then
         fishCaughtRemote.OnClientEvent:Connect(function(fishName)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
-            if Config.BlatantActive and fishCaughtRemote then
+            if Config.BlatantActive and fishCaughtRemote and not _blatantFiring then
                 local bDelay = math.max(Config.BlatantDelay > 0 and Config.BlatantDelay or 0.4, 0.35)
                 task.delay(bDelay, function()
+                    _blatantFiring = true
                     pcall(function() firesignal(fishCaughtRemote.OnClientEvent, fishName) end)
+                    _blatantFiring = false
                 end)
             end
 
