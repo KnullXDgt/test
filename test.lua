@@ -46,7 +46,6 @@ local markAutoFishingRemote  = GetServerRemote("RF/MarkAutoFishingUsed")
 local textNotificationRemote = GetServerRemote("RE/TextNotification")
 local fishCaughtRemote       = GetServerRemote("RE/FishCaught")
 local bigPopupRemote         = GetServerRemote("RE/ObtainedNewFishNotification")
-local caughtFishVisualRemote  = net:FindFirstChild("RE/CaughtFishVisual")
 
 -- Support Features remotes
 local equipToolRemote        = GetServerRemote("RE/EquipToolFromHotbar")
@@ -623,8 +622,9 @@ do
                 if bigPopupRemote then
                     pcall(function() firesignal(bigPopupRemote.OnClientEvent, fishName, {}, false) end)
                 end
-                if caughtFishVisualRemote then
-                    pcall(function() firesignal(caughtFishVisualRemote.OnClientEvent, char, origin, fishName, {}) end)
+                local _cfvr = net:FindFirstChild("RE/CaughtFishVisual")
+                if _cfvr then
+                    pcall(function() firesignal(_cfvr.OnClientEvent, char, origin, fishName, {}) end)
                 end
                 _blatantGuard = false
             end
