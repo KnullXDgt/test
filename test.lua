@@ -622,7 +622,7 @@ do
             -- Blatant visual: fire big popup per catch
             if Config.BlatantActive and not Config.DisableFishNotif and bigPopupRemote then
                 pcall(function()
-                    firesignal(bigPopupRemote.OnClientEvent, fishItemId, {}, {}, false)
+                    firesignal(bigPopupRemote.OnClientEvent, fishName, {}, false)
                 end)
             end
             task.spawn(function()
