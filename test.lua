@@ -610,6 +610,7 @@ for itemId = 1, 1000 do
     end
 end
 
+do
 local _notifCache = {}
 if fishCaughtRemote and textNotificationRemote then
     fishCaughtRemote.OnClientEvent:Connect(function(fishName)
@@ -641,6 +642,7 @@ if fishCaughtRemote and textNotificationRemote then
             end)
         end
     end)
+end
 end
 
 -- ====== BIG POPUP TOGGLE ======
