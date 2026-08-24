@@ -622,7 +622,13 @@ if fishCaughtRemote and textNotificationRemote then
                     ItemType = "Fish",
                     ItemId = fishItemId,
                     Text = "",
-                    CustomDuration = 5
+                    CustomDuration = 5,
+                    InventoryItem = {
+                        Id = fishItemId,
+                        UUID = HttpService:GenerateGUID(false),
+                        Favorited = false,
+                        Metadata = {}
+                    }
                 })
             end)
         end
