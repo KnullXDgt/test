@@ -613,13 +613,28 @@ end
 
 
 do
-    local _notifActive = {}
+    local _ctrlConns = {}
+    local _recentNotif = {}
+    pcall(function()
+        for _, c in ipairs(getconnections(textNotificationRemote.OnClientEvent)) do
+            table.insert(_ctrlConns, c)
+        end
+    end)
     if fishCaughtRemote and textNotificationRemote then
         fishCaughtRemote.OnClientEvent:Connect(function(fishName)
             local fishItemId = fishNameToId[fishName]
-            if not fishItemId or _notifActive[fishItemId] then return end
+            if not fishItemId then return end
             task.spawn(function()
-                _notifActive[fishItemId] = true
+                if _recentNotif[fishItemId] then
+                    pcall(function()
+                        for _, c in ipairs(_ctrlConns) do pcall(function() c:Disable() end) end
+                    end)
+                    task.wait(0.05)
+                    pcall(function()
+                        for _, c in ipairs(_ctrlConns) do pcall(function() c:Enable() end) end
+                    end)
+                end
+                _recentNotif[fishItemId] = true
                 pcall(function()
                     firesignal(textNotificationRemote.OnClientEvent, {
                         Type = "Item",
@@ -630,7 +645,7 @@ do
                     })
                 end)
                 task.wait(5.1)
-                _notifActive[fishItemId] = false
+                _recentNotif[fishItemId] = false
             end)
         end)
     end
