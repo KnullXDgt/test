@@ -662,20 +662,9 @@ PlayerData:OnChange("AutoFishing", function(value)
         end)
     end
 end)
-local bigPopupConnections = {}
-
 local function updateBigPopup()
-    if Config.DisableFishNotif then
-        for _, conn in pairs(getconnections(bigPopupRemote.OnClientEvent)) do
-            conn:Disable()
-            table.insert(bigPopupConnections, conn)
-        end
-    else
-        for _, conn in pairs(bigPopupConnections) do
-            conn:Enable()
-        end
-        bigPopupConnections = {}
-    end
+    local sn = LocalPlayer.PlayerGui:FindFirstChild("Small Notification")
+    if sn then sn.Enabled = not Config.DisableFishNotif end
 end
 
 -- ====== SUPPORT FEATURES FUNCTIONS ======
