@@ -620,7 +620,7 @@ if fishCaughtRemote and textNotificationRemote then
             for _, lb in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
                 if lb:IsA("TextLabel") and lb.Text:find(fishName, 1, true) then
                     local tile = lb.Parent and lb.Parent.Parent
-                    if tile and tile:IsA("Frame") then tile:Destroy() end
+                    if tile and tile:IsA("Frame") then tile.Parent = nil end
                     break
                 end
             end
