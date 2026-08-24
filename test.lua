@@ -612,43 +612,29 @@ end
 
 
 
-do
-    local _ctrlConns = {}
-    local _recentNotif = {}
-    pcall(function()
-        for _, c in ipairs(getconnections(textNotificationRemote.OnClientEvent)) do
-            table.insert(_ctrlConns, c)
-        end
-    end)
-    if fishCaughtRemote and textNotificationRemote then
-        fishCaughtRemote.OnClientEvent:Connect(function(fishName)
-            local fishItemId = fishNameToId[fishName]
-            if not fishItemId then return end
-            task.spawn(function()
-                if _recentNotif[fishItemId] then
-                    pcall(function()
-                        for _, c in ipairs(_ctrlConns) do pcall(function() c:Disable() end) end
-                    end)
-                    task.wait(0.05)
-                    pcall(function()
-                        for _, c in ipairs(_ctrlConns) do pcall(function() c:Enable() end) end
-                    end)
+if fishCaughtRemote and textNotificationRemote then
+    fishCaughtRemote.OnClientEvent:Connect(function(fishName)
+        local fishItemId = fishNameToId[fishName]
+        if not fishItemId then return end
+        pcall(function()
+            for _, lb in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
+                if lb:IsA("TextLabel") and lb.Text:find(fishName, 1, true) then
+                    local tile = lb.Parent and lb.Parent.Parent
+                    if tile and tile:IsA("Frame") then tile:Destroy() end
+                    break
                 end
-                _recentNotif[fishItemId] = true
-                pcall(function()
-                    firesignal(textNotificationRemote.OnClientEvent, {
-                        Type = "Item",
-                        ItemType = "Fish",
-                        ItemId = fishItemId,
-                        Text = "",
-                        CustomDuration = 5
-                    })
-                end)
-                task.wait(5.1)
-                _recentNotif[fishItemId] = false
-            end)
+            end
         end)
-    end
+        pcall(function()
+            firesignal(textNotificationRemote.OnClientEvent, {
+                Type = "Item",
+                ItemType = "Fish",
+                ItemId = fishItemId,
+                Text = "",
+                CustomDuration = 5
+            })
+        end)
+    end)
 end
 
 -- ====== BIG POPUP TOGGLE ======
