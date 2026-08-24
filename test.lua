@@ -492,12 +492,14 @@ local function startBlatant()
         while Config.BlatantActive do
             isFishing = true
             for i = 1, 4 do
-                if Events.cancel then pcall(function() Events.cancel:InvokeServer(true) end) end
                 pcall(function() Events.charge:InvokeServer() end)
             end
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
             pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
             pcall(function() Events.fishing:FireServer() end)
+            for i = 1, 4 do
+                if Events.cancel then pcall(function() Events.cancel:InvokeServer(true) end) end
+            end
             task.wait(0.05)
             isFishing = false
         end
