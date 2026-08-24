@@ -491,15 +491,12 @@ local function startBlatant()
     blatantThread = task.spawn(function()
         while Config.BlatantActive do
             isFishing = true
-            if Config.PerfectCast then
-                pcall(function() Events.charge:InvokeServer(tick()) end)
-                task.wait(0.277)
-                pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
-            else
-                pcall(function() Events.charge:InvokeServer(tick()) end)
-                pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
+            for i = 1, 4 do
+                if Events.cancel then pcall(function() Events.cancel:InvokeServer(true) end) end
+                pcall(function() Events.charge:InvokeServer() end)
             end
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
+            pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
             pcall(function() Events.fishing:FireServer() end)
             task.wait(0.05)
             isFishing = false
@@ -619,12 +616,7 @@ do
         fishCaughtRemote.OnClientEvent:Connect(function(fishName)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
-            -- Blatant visual: fire big popup per catch
-            if Config.BlatantActive and not Config.DisableFishNotif and bigPopupRemote then
-                pcall(function()
-                    firesignal(bigPopupRemote.OnClientEvent, fishName, {}, false)
-                end)
-            end
+
             task.spawn(function()
                 local now = workspace.DistributedGameTime
                 local next = math.max(now, (_nextFireTime[fishItemId] or 0) + 0.35)
