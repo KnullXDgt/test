@@ -501,6 +501,9 @@ local function startBlatant()
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
             if Config.LastBlatantFish and fishCaughtRemote then
                 pcall(function() firesignal(fishCaughtRemote.OnClientEvent, Config.LastBlatantFish) end)
+                if bigPopupRemote then
+                    pcall(function() firesignal(bigPopupRemote.OnClientEvent, Config.LastBlatantFish, {}, false) end)
+                end
             end
             task.wait(0.05)
             isFishing = false
