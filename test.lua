@@ -487,7 +487,7 @@ end
 local function startBlatant()
     stopBlatant()
     Config.BlatantActive = true
-    updateBigPopup()
+    pcall(updateBigPopup)
     blatantThread = task.spawn(function()
         while Config.BlatantActive do
             isFishing = true
