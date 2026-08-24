@@ -499,8 +499,8 @@ local function startBlatant()
                 task.wait(0.01)
             end
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
-            if lastBlatantFish and fishCaughtRemote then
-                pcall(function() firesignal(fishCaughtRemote.OnClientEvent, lastBlatantFish) end)
+            if Config.LastBlatantFish and fishCaughtRemote then
+                pcall(function() firesignal(fishCaughtRemote.OnClientEvent, Config.LastBlatantFish) end)
             end
             task.wait(0.05)
             isFishing = false
@@ -614,14 +614,13 @@ end
 
 
 
-local lastBlatantFish = nil
 do
     local _nextFireTime = {}
     if fishCaughtRemote and textNotificationRemote then
         fishCaughtRemote.OnClientEvent:Connect(function(fishName)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
-            lastBlatantFish = fishName
+            Config.LastBlatantFish = fishName
             task.spawn(function()
                 local now = workspace.DistributedGameTime
                 local next = math.max(now, (_nextFireTime[fishItemId] or 0) + 0.35)
