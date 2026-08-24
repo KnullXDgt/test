@@ -610,43 +610,7 @@ for itemId = 1, 1000 do
     end
 end
 
-do
-local _notifLock = {}
-if fishCaughtRemote and textNotificationRemote then
-    fishCaughtRemote.OnClientEvent:Connect(function(fishName)
-        local fishItemId = fishNameToId[fishName]
-        if not fishItemId then return end
-        task.spawn(function()
-            local waited = 0
-            while _notifLock[fishItemId] and waited < 40 do
-                task.wait(0.05); waited = waited + 1
-            end
-            _notifLock[fishItemId] = true
-            pcall(function()
-                firesignal(textNotificationRemote.OnClientEvent, {
-                    Type = "Item",
-                    ItemType = "Fish",
-                    ItemId = fishItemId,
-                    Text = "",
-                    CustomDuration = 5
-                })
-                if Config.BlatantActive then
-                    firesignal(textNotificationRemote.OnClientEvent, {
-                        Type = "Item",
-                        ItemType = "Fish",
-                        ItemId = fishItemId,
-                        Text = "",
-                        Quantity = 1,
-                        CustomDuration = 5
-                    })
-                end
-            end)
-            task.wait(0.65)
-            _notifLock[fishItemId] = false
-        end)
-    end)
-end
-end
+
 
 -- ====== BIG POPUP TOGGLE ======
 local FishingController = require(ReplicatedStorage.Controllers.FishingController)
