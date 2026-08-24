@@ -487,6 +487,7 @@ end
 local function startBlatant()
     stopBlatant()
     Config.BlatantActive = true
+    updateBigPopup()
     blatantThread = task.spawn(function()
         while Config.BlatantActive do
             isFishing = true
@@ -618,6 +619,12 @@ do
         fishCaughtRemote.OnClientEvent:Connect(function(fishName)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
+            -- Blatant visual: fire big popup per catch
+            if Config.BlatantActive and not Config.DisableFishNotif and bigPopupRemote then
+                pcall(function()
+                    firesignal(bigPopupRemote.OnClientEvent, fishItemId, {}, {}, false)
+                end)
+            end
             task.spawn(function()
                 local now = workspace.DistributedGameTime
                 local next = math.max(now, (_nextFireTime[fishItemId] or 0) + 0.35)
