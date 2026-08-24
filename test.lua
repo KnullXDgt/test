@@ -491,24 +491,16 @@ local function startBlatant()
     blatantThread = task.spawn(function()
         while Config.BlatantActive do
             isFishing = true
-            -- V2 order: charge → minigame (blocking, capture fishData) → fishing
-            pcall(function() Events.charge:InvokeServer(tick()) end)
-            local _bFishData = nil
-            local _ok, _v1, _v2 = pcall(function()
-                return Events.minigame:InvokeServer(1.2854545116425, 1)
-            end)
-            if _ok and _v1 then _bFishData = _v2 end
+            if Config.PerfectCast then
+                pcall(function() Events.charge:InvokeServer(tick()) end)
+                task.wait(0.277)
+                pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
+            else
+                pcall(function() Events.charge:InvokeServer(tick()) end)
+                pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
+            end
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
-            for i = 1, 4 do
-                pcall(function() Events.fishing:FireServer() end)
-                task.wait(0.01)
-            end
-            if _bFishData and bigPopupRemote then
-                pcall(function() firesignal(bigPopupRemote.OnClientEvent, _bFishData, {}, false) end)
-            end
-            if Config.LastBlatantFish and fishCaughtRemote then
-                pcall(function() firesignal(fishCaughtRemote.OnClientEvent, Config.LastBlatantFish) end)
-            end
+            pcall(function() Events.fishing:FireServer() end)
             task.wait(0.05)
             isFishing = false
         end
@@ -627,7 +619,6 @@ do
         fishCaughtRemote.OnClientEvent:Connect(function(fishName)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
-            Config.LastBlatantFish = fishName
             task.spawn(function()
                 local now = workspace.DistributedGameTime
                 local next = math.max(now, (_nextFireTime[fishItemId] or 0) + 0.35)
