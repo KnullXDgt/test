@@ -612,6 +612,23 @@ end
 
 
 
+if fishCaughtRemote and textNotificationRemote then
+    fishCaughtRemote.OnClientEvent:Connect(function(fishName)
+        local fishItemId = fishNameToId[fishName]
+        if fishItemId then
+            pcall(function()
+                firesignal(textNotificationRemote.OnClientEvent, {
+                    Type = "Item",
+                    ItemType = "Fish",
+                    ItemId = fishItemId,
+                    Text = "",
+                    CustomDuration = 5
+                })
+            end)
+        end
+    end)
+end
+
 -- ====== BIG POPUP TOGGLE ======
 local FishingController = require(ReplicatedStorage.Controllers.FishingController)
 local origRequestCharge = FishingController.RequestChargeFishingRod
