@@ -1214,7 +1214,7 @@ local TOTEM_LIST = {
 }
 
 local Orvion = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/KnullXDgt/Orvion-UI-Library/main/source.luau?t=" .. os.time()
+    "https://raw.githubusercontent.com/KnullXDgt/Orvion-UI-Library-Gen2/main/source.luau?t=" .. os.time()
 ))()
 
 local _execName = "Unknown"
