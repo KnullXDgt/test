@@ -489,28 +489,19 @@ local function startBlatant()
     Config.BlatantActive = true
     pcall(updateBigPopup)
     blatantThread = task.spawn(function()
-        -- Background: cancel+charge bangun pending states saat tidak fishing
-        task.spawn(function()
-            while Config.BlatantActive do
-                if not isFishing then
-                    if Events.cancel then pcall(function() Events.cancel:InvokeServer(true) end) end
-                    pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end)
-                else
-                    task.wait(0.05)
-                end
-            end
-        end)
-        -- Main loop: minigame → fishing → visual
         while Config.BlatantActive do
             isFishing = true
+            task.spawn(function() pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end) end)
+            task.spawn(function() pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end) end)
             pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
-            pcall(function() Events.fishing:FireServer() end)
-            task.wait(0.1)
+            task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
+            task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
             if Config.LastBlatantFish and bigPopupRemote and fishCaughtRemote then
                 pcall(function() firesignal(bigPopupRemote.OnClientEvent, Config.LastBlatantFish, {}, false) end)
                 pcall(function() firesignal(fishCaughtRemote.OnClientEvent, Config.LastBlatantFish) end)
             end
+            task.wait(0.05)
             isFishing = false
         end
         isFishing = false
