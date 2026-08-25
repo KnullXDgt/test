@@ -496,9 +496,6 @@ local function startBlatant()
                 return Events.minigame:InvokeServer(1.2854545116425, 1)
             end)
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
-            for i = 1, 5 do
-                pcall(function() Events.fishing:FireServer() end)
-            end
             if _bOk and _bSuccess and _bFish then
                 if bigPopupRemote then
                     pcall(function() firesignal(bigPopupRemote.OnClientEvent, _bFish, {}, false) end)
