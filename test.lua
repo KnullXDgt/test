@@ -489,11 +489,15 @@ local function startBlatant()
     Config.BlatantActive = true
     pcall(updateBigPopup)
     blatantThread = task.spawn(function()
-        -- Background: cancel+charge terus bangun pending states
+        -- Background: cancel+charge bangun pending states saat tidak fishing
         task.spawn(function()
             while Config.BlatantActive do
-                if Events.cancel then pcall(function() Events.cancel:InvokeServer(true) end) end
-                pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end)
+                if not isFishing then
+                    if Events.cancel then pcall(function() Events.cancel:InvokeServer(true) end) end
+                    pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end)
+                else
+                    task.wait(0.05)
+                end
             end
         end)
         -- Main loop: minigame → fishing → visual
