@@ -501,6 +501,12 @@ local function startBlatant()
                 pcall(function() Events.fishing:FireServer() end)
             end
             _blatantN = _blatantN == 2 and 3 or 2
+            if fishCaughtRemote then
+                pcall(function() fishCaughtRemote:FireServer() end)
+            end
+            if bigPopupRemote then
+                pcall(function() bigPopupRemote:FireServer() end)
+            end
             task.wait(0.05)
             isFishing = false
         end
