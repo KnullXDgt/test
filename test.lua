@@ -497,6 +497,7 @@ local function startBlatant()
             isFishing = true
             -- CatchFish dari setup sebelumnya
             pcall(function() Events.fishing:FireServer() end)
+            task.wait(0.1)
             -- Cancel+Charge × 4 (setup cycle berikutnya)
             for i = 1, 4 do
                 if Events.cancel then pcall(function() Events.cancel:InvokeServer(true) end) end
