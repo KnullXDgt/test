@@ -501,7 +501,6 @@ local function startBlatant()
                 pcall(function() firesignal(bigPopupRemote.OnClientEvent, Config.LastBlatantFish, {}, false) end)
                 pcall(function() firesignal(fishCaughtRemote.OnClientEvent, Config.LastBlatantFish) end)
                 pcall(function() firesignal(fishCaughtRemote.OnClientEvent, Config.LastBlatantFish) end)
-                pcall(function() firesignal(fishCaughtRemote.OnClientEvent, Config.LastBlatantFish) end)
             end
             task.wait(0.05)
             isFishing = false
