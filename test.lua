@@ -501,10 +501,6 @@ local function startBlatant()
                 pcall(function() Events.fishing:FireServer() end)
             end
             _blatantN = _blatantN == 2 and 3 or 2
-            if Config.LastBlatantFish and bigPopupRemote and fishCaughtRemote then
-                pcall(function() firesignal(bigPopupRemote.OnClientEvent, Config.LastBlatantFish, {}, false) end)
-                pcall(function() firesignal(fishCaughtRemote.OnClientEvent, Config.LastBlatantFish) end)
-            end
             task.wait(0.05)
             isFishing = false
         end
@@ -623,8 +619,6 @@ do
         fishCaughtRemote.OnClientEvent:Connect(function(fishName)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
-            Config.LastBlatantFish = fishName
-            Config.LastBlatantFish = fishName
             task.spawn(function()
                 local now = workspace.DistributedGameTime
                 local next = math.max(now, (_nextFireTime[fishItemId] or 0) + 0.35)
