@@ -491,22 +491,14 @@ local function startBlatant()
     blatantThread = task.spawn(function()
         while Config.BlatantActive do
             isFishing = true
-            -- Path 1: charge → minigame (parallel)
-            task.spawn(function()
-                pcall(function() Events.charge:InvokeServer(tick()) end)
-                pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
-            end)
-            -- Path 2: charge → minigame (slight offset, parallel)
-            task.spawn(function()
-                task.wait(0.01)
-                pcall(function() Events.charge:InvokeServer(tick()) end)
-                pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
-            end)
-            -- BlatantDelay → 5x fishing spam
+            task.spawn(function() pcall(function() Events.charge:InvokeServer(tick()) end) end)
+            task.wait(0.01)
+            task.spawn(function() pcall(function() Events.charge:InvokeServer(tick()) end) end)
+            pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
-            for i = 1, 5 do
-                task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
-            end
+            task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
+            task.wait(0.01)
+            task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
             task.wait(0.05)
             isFishing = false
         end
