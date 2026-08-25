@@ -491,15 +491,21 @@ local function startBlatant()
     blatantThread = task.spawn(function()
         while Config.BlatantActive do
             isFishing = true
-            task.spawn(function() pcall(function() Events.charge:InvokeServer(tick()) end) end)
-            task.spawn(function() pcall(function() Events.charge:InvokeServer(tick()) end) end)
-            task.wait(0.001)
-            pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
-            task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
-            task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
-            if Config.LastBlatantFish and bigPopupRemote and fishCaughtRemote then
-                pcall(function() firesignal(bigPopupRemote.OnClientEvent, Config.LastBlatantFish, {}, false) end)
-                pcall(function() firesignal(fishCaughtRemote.OnClientEvent, Config.LastBlatantFish) end)
+            pcall(function() Events.charge:InvokeServer() end)
+            local _bOk, _bSuccess, _bFish = pcall(function()
+                return Events.minigame:InvokeServer(1.2854545116425, 1)
+            end)
+            if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
+            for i = 1, 5 do
+                pcall(function() Events.fishing:FireServer() end)
+            end
+            if _bOk and _bSuccess and _bFish then
+                if bigPopupRemote then
+                    pcall(function() firesignal(bigPopupRemote.OnClientEvent, _bFish, {}, false) end)
+                end
+                if fishCaughtRemote then
+                    pcall(function() firesignal(fishCaughtRemote.OnClientEvent, _bFish) end)
+                end
             end
             task.wait(0.05)
             isFishing = false
@@ -619,7 +625,6 @@ do
         fishCaughtRemote.OnClientEvent:Connect(function(fishName)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
-            Config.LastBlatantFish = fishName
             task.spawn(function()
                 local now = workspace.DistributedGameTime
                 local next = math.max(now, (_nextFireTime[fishItemId] or 0) + 0.35)
