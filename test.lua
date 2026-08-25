@@ -492,17 +492,12 @@ local function startBlatant()
         while Config.BlatantActive do
             isFishing = true
             pcall(function() Events.charge:InvokeServer() end)
-            local _bOk, _bSuccess, _bFish = pcall(function()
-                return Events.minigame:InvokeServer(1.2854545116425, 1)
-            end)
+            pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
             if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
-            if _bOk and _bSuccess and _bFish then
-                if bigPopupRemote then
-                    pcall(function() firesignal(bigPopupRemote.OnClientEvent, _bFish, {}, false) end)
-                end
-                if fishCaughtRemote then
-                    pcall(function() firesignal(fishCaughtRemote.OnClientEvent, _bFish) end)
-                end
+            pcall(function() Events.fishing:FireServer() end)
+            if Config.LastBlatantFish and bigPopupRemote then
+                pcall(function() firesignal(bigPopupRemote.OnClientEvent, Config.LastBlatantFish, {}, false) end)
+                pcall(function() firesignal(bigPopupRemote.OnClientEvent, Config.LastBlatantFish, {}, false) end)
             end
             task.wait(0.05)
             isFishing = false
@@ -622,6 +617,7 @@ do
         fishCaughtRemote.OnClientEvent:Connect(function(fishName)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
+            Config.LastBlatantFish = fishName
             Config.LastBlatantFish = fishName
             task.spawn(function()
                 local now = workspace.DistributedGameTime
