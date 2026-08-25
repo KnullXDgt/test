@@ -489,25 +489,11 @@ local function startBlatant()
     Config.BlatantActive = true
     pcall(updateBigPopup)
     blatantThread = task.spawn(function()
-        local _blatantN = 2
         while Config.BlatantActive do
             isFishing = true
-            for i = 1, _blatantN do
-                pcall(function() Events.charge:InvokeServer(tick()) end)
-            end
+            pcall(function() Events.charge:InvokeServer() end)
             pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
-            if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
-            for i = 1, _blatantN do
-                pcall(function() Events.fishing:FireServer() end)
-            end
-            _blatantN = _blatantN == 2 and 3 or 2
-            if fishCaughtRemote then
-                pcall(function() fishCaughtRemote:FireServer() end)
-            end
-            if bigPopupRemote then
-                pcall(function() bigPopupRemote:FireServer() end)
-            end
-            task.wait(0.05)
+            pcall(function() Events.fishing:FireServer() end)
             isFishing = false
         end
         isFishing = false
