@@ -493,7 +493,7 @@ local function startBlatant()
             isFishing = true
             task.spawn(function() pcall(function() Events.charge:InvokeServer(tick()) end) end)
             task.spawn(function() pcall(function() Events.charge:InvokeServer(tick()) end) end)
-            task.wait()
+            task.wait(0.001)
             pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
             task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
             task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
