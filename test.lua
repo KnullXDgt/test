@@ -42,26 +42,28 @@ local Events = {
     sell     = GetServerRemote("RF/SellAllItems"),
 }
 
-local updateAutoFishingRemote = GetServerRemote("RF/UpdateAutoFishingState")
-local markAutoFishingRemote  = GetServerRemote("RF/MarkAutoFishingUsed")
-local fishCaughtRemote       = GetServerRemote("RE/FishCaught")
-
--- Support Features remotes
-local equipToolRemote        = GetServerRemote("RE/EquipToolFromHotbar")
-local cutsceneRemote         = net:WaitForChild("RE/ReplicateCutscene", 10)
-local abilityVFXRemote       = net:WaitForChild("RE/PlayAbilityVFX", 10)
-local changeSettingRemote    = net:WaitForChild("RE/ChangeSetting", 10)
-local fishingRadarRemote     = GetServerRemote("RF/UpdateFishingRadar")
-local equipOxygenRemote      = GetServerRemote("RF/EquipOxygenTank")
-local unequipOxygenRemote    = GetServerRemote("RF/UnequipOxygenTank")
-local weatherPurchaseRF      = GetServerRemote("RF/PurchaseWeatherEvent")
-local purchaseBaitRF         = GetServerRemote("RF/PurchaseBait")
-local equipBaitRE            = GetServerRemote("RE/EquipBait")
-local purchaseRodRF          = GetServerRemote("RF/PurchaseFishingRod")
-local equipItemRE            = GetServerRemote("RE/EquipItem")
-local purchaseBMRF           = GetServerRemote("RF/PurchaseBlackMarketItem")
-local bpPurchaseRE           = GetServerRemote("RE/BPPurchaseRequest")
-local purchaseMerchantRF     = GetServerRemote("RF/PurchaseMarketItem")
+local R = {
+    updateAutoFishing = GetServerRemote("RF/UpdateAutoFishingState"),
+    markAutoFishing = GetServerRemote("RF/MarkAutoFishingUsed"),
+    fishCaught = GetServerRemote("RE/FishCaught"),
+    equipTool = GetServerRemote("RE/EquipToolFromHotbar"),
+    cutscene = net:WaitForChild("RE/ReplicateCutscene", 10),
+    abilityVFX = net:WaitForChild("RE/PlayAbilityVFX", 10),
+    changeSetting = net:WaitForChild("RE/ChangeSetting", 10),
+    fishingRadar = GetServerRemote("RF/UpdateFishingRadar"),
+    equipOxygen = GetServerRemote("RF/EquipOxygenTank"),
+    unequipOxygen = GetServerRemote("RF/UnequipOxygenTank"),
+    weatherPurchase = GetServerRemote("RF/PurchaseWeatherEvent"),
+    purchaseBait = GetServerRemote("RF/PurchaseBait"),
+    equipBait = GetServerRemote("RE/EquipBait"),
+    purchaseRod = GetServerRemote("RF/PurchaseFishingRod"),
+    equipItem = GetServerRemote("RE/EquipItem"),
+    purchaseBM = GetServerRemote("RF/PurchaseBlackMarketItem"),
+    bpPurchase = GetServerRemote("RE/BPPurchaseRequest"),
+    purchaseMerchant = GetServerRemote("RF/PurchaseMarketItem"),
+    baitCast         = net:FindFirstChild("RE/BaitCastVisual"),
+    stopCutscene     = net:FindFirstChild("RE/StopCutscene"),
+}
 
 -- Support Features state
 local cutsceneConns = {}
@@ -338,17 +340,9 @@ local function getCastWaterY(power)
 end
 
 local function requestOkCast()
-    -- This is the same immediate sequence already verified by Blatant to
-    -- produce the game's lowest "OK" cast tier.
-    local chargeCallOk, chargeAccepted = pcall(function()
-        return Events.charge:InvokeServer(workspace:GetServerTimeNow())
-    end)
-    if not chargeCallOk or chargeAccepted == false then return false end
-
-    local minigameCallOk, started = pcall(function()
-        return Events.minigame:InvokeServer(1.2854545116425, 1)
-    end)
-    return minigameCallOk and started ~= false
+    pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end)
+    pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
+    return true
 end
 
 local function requestPerfectCast()
@@ -466,12 +460,11 @@ local function enableBaitVisual() end
 local function disableBaitVisual() end
 
 -- hide bait via ChildAdded, duration exact dari BaitCastVisual
-local baitCastRemote = net:FindFirstChild("RE/BaitCastVisual")
 local cosmeticFolder = workspace:WaitForChild("CosmeticFolder", 10)
 local pendingDuration = nil
 
-if baitCastRemote then
-    baitCastRemote.OnClientEvent:Connect(function(player, baitData)
+if R.baitCast then
+    R.baitCast.OnClientEvent:Connect(function(player, baitData)
         if not snapReelActive then return end
         if player ~= LocalPlayer then return end
         if not (baitData and baitData.CastPosition and baitData.Origin) then return end
@@ -923,8 +916,8 @@ do
         TextNotificationController:DeliverNotification(payload)
     end
 
-    if fishCaughtRemote then
-        fishCaughtRemote.OnClientEvent:Connect(function(fishName, fishMetadata, _, _, visualData)
+    if R.fishCaught then
+        R.fishCaught.OnClientEvent:Connect(function(fishName, fishMetadata, _, _, visualData)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
 
@@ -984,7 +977,7 @@ PlayerData:OnChange("AutoFishing", function(value)
     if stableResultActive and not value then
         task.wait(0.1)
         pcall(function()
-            updateAutoFishingRemote:InvokeServer(true)
+            R.updateAutoFishing:InvokeServer(true)
         end)
     end
 end)
@@ -1014,20 +1007,19 @@ local function setAutoEquipRod(state)
         local ok, equipped = pcall(function() return PlayerData:Get("EquippedId") end)
         if not (ok and equipped and equipped ~= "") then
             task.wait(0.2)
-            pcall(function() equipToolRemote:FireServer(1) end)
+            pcall(function() R.equipTool:FireServer(1) end)
         end
         -- event driven untuk unequip berikutnya
         autoEquipRodConn = PlayerData:OnChange("EquippedId", function(value)
             if not value or value == "" then
                 task.wait(0.2)
-                pcall(function() equipToolRemote:FireServer(1) end)
+                pcall(function() R.equipTool:FireServer(1) end)
             end
         end)
     end
 end
 
 -- Disable Cutscenes - hook module Play + block connection + InCutscene watcher
-local stopCutsceneRemote = net:FindFirstChild("RE/StopCutscene")
 local disableCutsceneActive = false
 local cutsceneHookDone = false
 
@@ -1052,8 +1044,8 @@ local function setDisableCutscenes(state)
         ensureCutsceneHook()
 
         -- block connection yang sudah ada
-        if cutsceneRemote then
-            local conns = getconnections(cutsceneRemote.OnClientEvent)
+        if R.cutscene then
+            local conns = getconnections(R.cutscene.OnClientEvent)
             for _, conn in pairs(conns) do
                 conn:Disable()
                 table.insert(cutsceneConns, conn)
@@ -1065,8 +1057,8 @@ local function setDisableCutscenes(state)
             for i = 1, 3 do
                 task.wait(1)
                 if not disableCutsceneActive then return end
-                if cutsceneRemote then
-                    local conns = getconnections(cutsceneRemote.OnClientEvent)
+                if R.cutscene then
+                    local conns = getconnections(R.cutscene.OnClientEvent)
                     for _, conn in pairs(conns) do
                         if not table.find(cutsceneConns, conn) then
                             conn:Disable()
@@ -1081,8 +1073,8 @@ local function setDisableCutscenes(state)
         if not cutsceneConns.AttrWatcher then
             cutsceneConns.AttrWatcher = LocalPlayer:GetAttributeChangedSignal("InCutscene"):Connect(function()
                 if disableCutsceneActive and LocalPlayer:GetAttribute("InCutscene") then
-                    if stopCutsceneRemote then
-                        pcall(function() stopCutsceneRemote:FireServer() end)
+                    if R.stopCutscene then
+                        pcall(function() R.stopCutscene:FireServer() end)
                     end
                     LocalPlayer:SetAttribute("InCutscene", false)
                     pcall(function() LocalPlayer:SetAttribute("IgnoreFOV", false) end)
@@ -1109,8 +1101,8 @@ local function setDisableAbilityVFX(state)
             abilityVFXConns.Active = true
 
             -- block RE/PlayAbilityVFX connection + re-check 3x
-            if abilityVFXRemote then
-                for _, conn in pairs(getconnections(abilityVFXRemote.OnClientEvent)) do
+            if R.abilityVFX then
+                for _, conn in pairs(getconnections(R.abilityVFX.OnClientEvent)) do
                     conn:Disable()
                     table.insert(abilityVFXConns.Blocked, conn)
                 end
@@ -1118,7 +1110,7 @@ local function setDisableAbilityVFX(state)
                     for i = 1, 3 do
                         task.wait(1)
                         if not abilityVFXConns.Active then return end
-                        local conns = getconnections(abilityVFXRemote.OnClientEvent)
+                        local conns = getconnections(R.abilityVFX.OnClientEvent)
                         for _, conn in pairs(conns) do
                             if not table.find(abilityVFXConns.Blocked, conn) then
                                 conn:Disable()
@@ -1438,8 +1430,8 @@ end
 
 -- Bypass Radar
 local function setBypassRadar(state)
-    if fishingRadarRemote then
-        pcall(function() fishingRadarRemote:InvokeServer(state) end)
+    if R.fishingRadar then
+        pcall(function() R.fishingRadar:InvokeServer(state) end)
     end
 end
 
@@ -1453,11 +1445,11 @@ local function setAutoEquipDivingGear(state)
     local currentEquipped = PlayerData:Get("EquippedOxygenTankId")
     if state then
         if currentEquipped ~= itemId then
-            pcall(function() equipOxygenRemote:InvokeServer(itemId) end)
+            pcall(function() R.equipOxygen:InvokeServer(itemId) end)
         end
     else
         if currentEquipped == itemId then
-            pcall(function() unequipOxygenRemote:InvokeServer() end)
+            pcall(function() R.unequipOxygen:InvokeServer() end)
         end
     end
 end
@@ -1659,17 +1651,17 @@ end, "Toggle_Blatant Visual")
 local StableSection = Window:AddCollapsible(FishingTab, "Stable Results", false)
 
 Window:AddToggle(StableSection, "Stable Result", "", false, function(state)
-    if updateAutoFishingRemote then
+    if R.updateAutoFishing then
         pcall(function()
             if state then
                 stableResultActive = true
-                updateAutoFishingRemote:InvokeServer(true)
-                if markAutoFishingRemote then
-                    pcall(function() markAutoFishingRemote:InvokeServer() end)
+                R.updateAutoFishing:InvokeServer(true)
+                if R.markAutoFishing then
+                    pcall(function() R.markAutoFishing:InvokeServer() end)
                 end
             else
                 stableResultActive = false
-                updateAutoFishingRemote:InvokeServer(false)
+                R.updateAutoFishing:InvokeServer(false)
             end
         end)
     end
@@ -2083,21 +2075,23 @@ Window:AddToggle(SavedLocSection, "Auto Teleport on Spawn", "", false, function(
 end, "Toggle_Auto Teleport on Spawn")
 
 
+local S = {}
+
 -- ====== SHOP: AUTO BUY WEATHER ======
-local WEATHER_LIST = {"Fog", "Radiant", "Storm", "Treasure Hunt", "Wind"}
-local weatherWatchConn = nil
+S.WEATHER_LIST = {"Fog", "Radiant", "Storm", "Treasure Hunt", "Wind"}
+S.weatherWatchConn = nil
 
 local function stopWeatherWatcher()
-    if weatherWatchConn then
-        pcall(function() weatherWatchConn:Disconnect() end)
-        weatherWatchConn = nil
+    if S.weatherWatchConn then
+        pcall(function() S.weatherWatchConn:Disconnect() end)
+        S.weatherWatchConn = nil
     end
     Config.BuyWeatherActive = false
 end
 
 local function buyWeatherEvent(eventName, silent)
     local ok, result = pcall(function()
-        return weatherPurchaseRF:InvokeServer(eventName)
+        return R.weatherPurchase:InvokeServer(eventName)
     end)
     if ok and result == true then
         if not silent then
@@ -2117,7 +2111,7 @@ local function startWeatherWatcher()
     end
     if not EventsReplion then return end
     -- Connect watcher langsung (jangan terlambat detect event selesai)
-    weatherWatchConn = EventsReplion:OnArrayRemove("WeatherMachine", function(_, removedEvent)
+    S.weatherWatchConn = EventsReplion:OnArrayRemove("WeatherMachine", function(_, removedEvent)
         if not Config.BuyWeatherActive then return end
         if not table.find(Config.SelectedWeatherEvents, removedEvent) then return end
         task.spawn(function()
@@ -2151,13 +2145,13 @@ end
 
 local AutomationTab = Window:CreateTab("Automation", "rbxassetid://102105242487044")
 
-local WeatherSection = Window:AddCollapsible(AutomationTab, "Weather Features", false)
+S.WeatherSection = Window:AddCollapsible(AutomationTab, "Weather Features", false)
 
-Window:AddDropdown(WeatherSection, "Select Weather", "", WEATHER_LIST, 3, {}, function(selected)
+Window:AddDropdown(S.WeatherSection, "Select Weather", "", S.WEATHER_LIST, 3, {}, function(selected)
     Config.SelectedWeatherEvents = (type(selected) == "table") and selected or {}
 end, "Dropdown_Select Weather")
 
-Window:AddToggle(WeatherSection, "Buy Weather", "", false, function(state)
+Window:AddToggle(S.WeatherSection, "Buy Weather", "", false, function(state)
     Config.BuyWeatherActive = state
     if state then
         startWeatherWatcher()
@@ -2166,7 +2160,7 @@ Window:AddToggle(WeatherSection, "Buy Weather", "", false, function(state)
     end
 end, "Toggle_Buy Weather")
 
-local TotemSection = Window:AddCollapsible(AutomationTab, "Totem Features", false)
+S.TotemSection = Window:AddCollapsible(AutomationTab, "Totem Features", false)
 
 
 
@@ -2181,24 +2175,24 @@ local TotemSection = Window:AddCollapsible(AutomationTab, "Totem Features", fals
 
 
 
-local autoSpawnThread = nil
-local totemWatchConn = nil
-local totemCreatedConn = nil
-local totemDistMonitor = nil
-local totemWorldPos = nil  -- posisi totem aktif di world
+S.autoSpawnThread = nil
+S.totemWatchConn = nil
+S.totemCreatedConn = nil
+S.totemDistMonitor = nil
+S.totemWorldPos = nil  -- posisi totem aktif di world
 
-local spawnTotemRemote   = GetServerRemote("RE/SpawnTotem")
-local totemCreatedRemote = GetServerRemote("RE/TotemCreated")
-local totemSpawnedRemote = GetServerRemote("RE/TotemSpawned")
+S.spawnTotemRemote = GetServerRemote("RE/SpawnTotem")
+S.totemCreatedRemote = GetServerRemote("RE/TotemCreated")
+S.totemSpawnedRemote = GetServerRemote("RE/TotemSpawned")
 
 -- listen RE/TotemSpawned untuk dapat posisi totem
-if totemSpawnedRemote then
-    totemSpawnedRemote.OnClientEvent:Connect(function(pos)
-        totemWorldPos = pos
+if S.totemSpawnedRemote then
+    S.totemSpawnedRemote.OnClientEvent:Connect(function(pos)
+        S.totemWorldPos = pos
     end)
 end
 
-local function findTotemUUID(totemName)
+S.findTotemUUID = function(totemName)
     local uuid = nil
     pcall(function()
         local inv = PlayerData:GetExpect("Inventory")
@@ -2222,17 +2216,17 @@ local function findTotemUUID(totemName)
     return uuid
 end
 
-local spawnTotem -- forward declare
-local lastSpawnedUUID = nil  -- track UUID milik kita
+S.spawnTotem = nil -- forward declare
+S.lastSpawnedUUID = nil  -- track UUID milik kita
 
-local function scheduleRespawn()
+S.scheduleRespawn = function()
     if not Config.AutoSpawnTotem then return end
-    if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
-    if totemCreatedConn then totemCreatedConn:Disconnect(); totemCreatedConn = nil end
-    if autoSpawnThread then pcall(task.cancel, autoSpawnThread); autoSpawnThread = nil end
+    if S.totemWatchConn then S.totemWatchConn:Disconnect(); S.totemWatchConn = nil end
+    if S.totemCreatedConn then S.totemCreatedConn:Disconnect(); S.totemCreatedConn = nil end
+    if S.autoSpawnThread then pcall(task.cancel, S.autoSpawnThread); S.autoSpawnThread = nil end
 
-    if totemCreatedRemote then
-        totemCreatedConn = totemCreatedRemote.OnClientEvent:Connect(function(model, totemId)
+    if S.totemCreatedRemote then
+        S.totemCreatedConn = S.totemCreatedRemote.OnClientEvent:Connect(function(model, totemId)
             -- filter: hanya model yang di-spawn oleh kita (cek posisi dekat player)
             if not model then return end
             local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -2243,33 +2237,33 @@ local function scheduleRespawn()
                     if dist > 50 then return end  -- bukan totem kita
                 end
             end
-            if totemCreatedConn then totemCreatedConn:Disconnect(); totemCreatedConn = nil end
-            if autoSpawnThread then pcall(task.cancel, autoSpawnThread); autoSpawnThread = nil end
-            totemWatchConn = model.AncestryChanged:Connect(function()
+            if S.totemCreatedConn then S.totemCreatedConn:Disconnect(); S.totemCreatedConn = nil end
+            if S.autoSpawnThread then pcall(task.cancel, S.autoSpawnThread); S.autoSpawnThread = nil end
+            S.totemWatchConn = model.AncestryChanged:Connect(function()
                 if model.Parent ~= nil then return end
-                if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
+                if S.totemWatchConn then S.totemWatchConn:Disconnect(); S.totemWatchConn = nil end
                 if Config.AutoSpawnTotem then
                     task.wait(2)
-                    spawnTotem()
+                    S.spawnTotem()
                 end
             end)
 
             -- monitor jarak: jika player jauh > 100 studs dari totem -> re-spawn
-            if totemDistMonitor then pcall(task.cancel, totemDistMonitor); totemDistMonitor = nil end
-            totemDistMonitor = task.spawn(function()
+            if S.totemDistMonitor then pcall(task.cancel, S.totemDistMonitor); S.totemDistMonitor = nil end
+            S.totemDistMonitor = task.spawn(function()
                 while Config.AutoSpawnTotem and model.Parent ~= nil do
                     task.wait(10)
                     if not Config.AutoSpawnTotem or model.Parent == nil then break end
-                    if totemWorldPos then
+                    if S.totemWorldPos then
                         local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
                         if root then
-                            local dist = (totemWorldPos - root.Position).Magnitude
+                            local dist = (S.totemWorldPos - root.Position).Magnitude
                             if dist > 100 then
                                 -- player jauh -> disconnect watcher lama, re-spawn
-                                if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
-                                totemDistMonitor = nil
+                                if S.totemWatchConn then S.totemWatchConn:Disconnect(); S.totemWatchConn = nil end
+                                S.totemDistMonitor = nil
                                 task.wait(1)
-                                spawnTotem()
+                                S.spawnTotem()
                                 break
                             end
                         end
@@ -2280,45 +2274,45 @@ local function scheduleRespawn()
     end
 end
 
-spawnTotem = function(isManual)
+S.spawnTotem = function(isManual)
     local totemName = Config.SelectedTotem
     if not totemName or totemName == "" then return false end
-    local uuid = findTotemUUID(totemName)
+    local uuid = S.findTotemUUID(totemName)
     if not uuid then
         Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not found in inventory", Color=Color3.fromRGB(150,150,170), Delay=3 })
         return false
     end
-    local rf = spawnTotemRemote
+    local rf = S.spawnTotemRemote
     if not rf then return false end
     local ok = pcall(function() rf:FireServer(uuid) end)
     if ok then
         if isManual then
             Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=totemName .. " spawned", Color=Color3.fromRGB(150,150,170), Delay=3 })
         end
-        if Config.AutoSpawnTotem then scheduleRespawn() end
+        if Config.AutoSpawnTotem then S.scheduleRespawn() end
         return true
     end
     return false
 end
 
-local function stopAutoSpawn()
-    if autoSpawnThread then pcall(task.cancel, autoSpawnThread); autoSpawnThread = nil end
-    if totemWatchConn then totemWatchConn:Disconnect(); totemWatchConn = nil end
-    if totemCreatedConn then totemCreatedConn:Disconnect(); totemCreatedConn = nil end
+S.stopAutoSpawn = function()
+    if S.autoSpawnThread then pcall(task.cancel, S.autoSpawnThread); S.autoSpawnThread = nil end
+    if S.totemWatchConn then S.totemWatchConn:Disconnect(); S.totemWatchConn = nil end
+    if S.totemCreatedConn then S.totemCreatedConn:Disconnect(); S.totemCreatedConn = nil end
     Config.AutoSpawnTotem = false
 end
 
-local function startAutoSpawn()
-    stopAutoSpawn()
+S.startAutoSpawn = function()
+    S.stopAutoSpawn()
     Config.AutoSpawnTotem = true
-    task.spawn(spawnTotem)
+    task.spawn(S.spawnTotem)
 end
 
-Window:AddDropdown(TotemSection, "Select Totem", "", TOTEM_LIST, false, Config.SelectedTotem, function(value)
+Window:AddDropdown(S.TotemSection, "Select Totem", "", TOTEM_LIST, false, Config.SelectedTotem, function(value)
     Config.SelectedTotem = value or "Luck Totem"
 end, "Dropdown_Select Totem")
 
-Window:AddButton(TotemSection, "Refresh Totem List", "", "rbxassetid://16932740082", function()
+Window:AddButton(S.TotemSection, "Refresh Totem List", "", "rbxassetid://16932740082", function()
     local inv = nil
     pcall(function() inv = PlayerData:Get("Inventory") end)
     if not inv or not inv.Totems then
@@ -2342,13 +2336,13 @@ Window:AddButton(TotemSection, "Refresh Totem List", "", "rbxassetid://169327400
     Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=content, Color=Color3.fromRGB(150,150,170), Delay=4 })
 end)
 
-Window:AddToggle(TotemSection, "Auto Spawn Totem", "", false, function(state)
+Window:AddToggle(S.TotemSection, "Auto Spawn Totem", "", false, function(state)
     Config.AutoSpawnTotem = state
-    if state then startAutoSpawn() else stopAutoSpawn() end
+    if state then S.startAutoSpawn() else S.stopAutoSpawn() end
 end, "Toggle_Auto Spawn Totem")
 
-Window:AddButton(TotemSection, "Spawn Now", "", "rbxassetid://16932740082", function()
-    spawnTotem(true)
+Window:AddButton(S.TotemSection, "Spawn Now", "", "rbxassetid://16932740082", function()
+    S.spawnTotem(true)
 end)
 
 -- Helper: update paragraph text, support both old (Frame) dan new (table:Set) library
@@ -2409,38 +2403,38 @@ Window:AddButton(TranscendedSection, "Refresh Fish List", "", "rbxassetid://1693
     end, "Toggle_Enable Auto Create")
 end
 
-local ShopTab = Window:CreateTab("Shop", "rbxassetid://87353934937155")
+S.ShopTab = Window:CreateTab("Shop", "rbxassetid://87353934937155")
 
 -- ==========================================
 -- ROD FEATURES
 -- ==========================================
-local ROD_MAP = {
+S.ROD_MAP = {
     ["Starter Rod"]=1, ["Luck Rod"]=79, ["Carbon Rod"]=76, ["Grass Rod"]=85,
     ["Demascus Rod"]=77, ["Ice Rod"]=78, ["Lucky Rod"]=4, ["Midnight Rod"]=80,
     ["Seabreeze Rod"]=657, ["Eclipse Rod"]=656, ["Steampunk Rod"]=6, ["Chrome Rod"]=7,
     ["Fluorescent Rod"]=255, ["Magma Rod"]=3, ["Astral Rod"]=5, ["Ares Rod"]=126,
     ["Angler Rod"]=168, ["Bamboo Rod"]=258,
 }
-local ROD_LIST = {"Starter Rod","Luck Rod","Carbon Rod","Grass Rod","Demascus Rod","Ice Rod",
+S.ROD_LIST = {"Starter Rod","Luck Rod","Carbon Rod","Grass Rod","Demascus Rod","Ice Rod",
     "Lucky Rod","Midnight Rod","Seabreeze Rod","Eclipse Rod","Steampunk Rod","Chrome Rod",
     "Fluorescent Rod","Magma Rod","Astral Rod","Ares Rod","Angler Rod","Bamboo Rod"}
 
-local RodSection = Window:AddCollapsible(ShopTab, "Rod Features", false)
+S.RodSection = Window:AddCollapsible(S.ShopTab, "Rod Features", false)
 
-Window:AddDropdown(RodSection, "Select Rod", "", ROD_LIST, false, Config.SelectedRod, function(v)
+Window:AddDropdown(S.RodSection, "Select Rod", "", S.ROD_LIST, false, Config.SelectedRod, function(v)
     Config.SelectedRod = v or "Starter Rod"
 end, "Dropdown_Select Rod")
 
-Window:AddButton(RodSection, "Buy Rod", "", "rbxassetid://16932740082", function()
-    local rodId = ROD_MAP[Config.SelectedRod]
-    if not rodId or not purchaseRodRF then
+Window:AddButton(S.RodSection, "Buy Rod", "", "rbxassetid://16932740082", function()
+    local rodId = S.ROD_MAP[Config.SelectedRod]
+    if not rodId or not R.purchaseRod then
         Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
-    local ok, success, uuid = pcall(function() return purchaseRodRF:InvokeServer(rodId) end)
+    local ok, success, uuid = pcall(function() return R.purchaseRod:InvokeServer(rodId) end)
     if ok then
-        if success and uuid and equipItemRE then
-            pcall(function() equipItemRE:FireServer(uuid, "Fishing Rods") end)
+        if success and uuid and R.equipItem then
+            pcall(function() R.equipItem:FireServer(uuid, "Fishing Rods") end)
         end
         Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=Config.SelectedRod .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
     else
@@ -2451,30 +2445,30 @@ end)
 -- ==========================================
 -- BAIT FEATURES
 -- ==========================================
-local BAIT_MAP = {
+S.BAIT_MAP = {
     ["Topwater Bait"]=10, ["Luck Bait"]=2, ["Midnight Bait"]=3, ["Nature Bait"]=17,
     ["Chroma Bait"]=6, ["Dark Matter Bait"]=8, ["Corrupt Bait"]=15, ["Aether Bait"]=16,
     ["Singularity Bait"]=18,
 }
-local BAIT_LIST = {"Topwater Bait","Luck Bait","Midnight Bait","Nature Bait",
+S.BAIT_LIST = {"Topwater Bait","Luck Bait","Midnight Bait","Nature Bait",
     "Chroma Bait","Dark Matter Bait","Corrupt Bait","Aether Bait","Singularity Bait"}
 
-local BaitSection = Window:AddCollapsible(ShopTab, "Bait Features", false)
+S.BaitSection = Window:AddCollapsible(S.ShopTab, "Bait Features", false)
 
-Window:AddDropdown(BaitSection, "Select Bait", "", BAIT_LIST, false, Config.SelectedBait, function(v)
+Window:AddDropdown(S.BaitSection, "Select Bait", "", S.BAIT_LIST, false, Config.SelectedBait, function(v)
     Config.SelectedBait = v or "Topwater Bait"
 end, "Dropdown_Select Bait")
 
-Window:AddButton(BaitSection, "Buy Bait", "", "rbxassetid://16932740082", function()
-    local baitId = BAIT_MAP[Config.SelectedBait]
-    if not baitId or not purchaseBaitRF then
+Window:AddButton(S.BaitSection, "Buy Bait", "", "rbxassetid://16932740082", function()
+    local baitId = S.BAIT_MAP[Config.SelectedBait]
+    if not baitId or not R.purchaseBait then
         Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
-    local ok, success, shouldEquip = pcall(function() return purchaseBaitRF:InvokeServer(baitId) end)
+    local ok, success, shouldEquip = pcall(function() return R.purchaseBait:InvokeServer(baitId) end)
     if ok then
-        if shouldEquip and equipBaitRE then
-            pcall(function() equipBaitRE:FireServer(baitId) end)
+        if shouldEquip and R.equipBait then
+            pcall(function() R.equipBait:FireServer(baitId) end)
         end
         Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=Config.SelectedBait .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
     else
@@ -2485,7 +2479,7 @@ end)
 -- ==========================================
 -- BLACK MARKET FEATURES
 -- ==========================================
-local BM_MAP = {
+S.BM_MAP = {
     ["Undersea Racer"]="undersea_racer", ["Venombone"]="venombone_skin",
     ["Phantom Tide"]="phantom_skin", ["Raging Hadalith"]="hadalith_skin",
     ["Mecha Nautical Trinket"]="trinket_skin", ["Basic Flippers"]="basic_flippers",
@@ -2497,46 +2491,46 @@ local BM_MAP = {
     ["Glacial Serpent Hunt Potion"]="wet_5_potion", ["Coin Toss Emote"]="coin_toss",
     ["Minor Fortune Ability"]="minor_fort_ability",
 }
-local BM_LIST = {"Undersea Racer","Venombone","Phantom Tide","Raging Hadalith",
+S.BM_LIST = {"Undersea Racer","Venombone","Phantom Tide","Raging Hadalith",
     "Mecha Nautical Trinket","Basic Flippers","Gilded Boots","Winged Boots M","Winged Boots F",
     "Luck III Potion","Mutation III Potion","Mutation IV Potion","Dark Megalodon Hunt Potion",
     "Megalodon Hunt Potion","Meteor Shower Potion","Aurora Borealis Potion",
     "Glacial Serpent Hunt Potion","Coin Toss Emote","Minor Fortune Ability"}
 
-local BM_CF = CFrame.new(-8610.20312, -66.52478, -451.74463, -0.2025885880, -0.0000000350,
+S.BM_CF = CFrame.new(-8610.20312, -66.52478, -451.74463, -0.2025885880, -0.0000000350,
     -0.9792639613, -0.0000000417, 1.0000000000, -0.0000000271, 0.9792639613, 0.0000000354, -0.2025885880)
 
-local autoBuyBMThread = nil
+S.autoBuyBMThread = nil
 
-local function buyBMItem(itemName)
-    local itemId = BM_MAP[itemName]
-    if not itemId or not purchaseBMRF then return false end
-    local ok, result = pcall(function() return purchaseBMRF:InvokeServer(itemId) end)
+S.buyBMItem = function(itemName)
+    local itemId = S.BM_MAP[itemName]
+    if not itemId or not R.purchaseBM then return false end
+    local ok, result = pcall(function() return R.purchaseBM:InvokeServer(itemId) end)
     return ok and result and (type(result) == "table" and result.Success or result == true)
 end
 
 
 
-local function startAutoBuyBM()
-    if autoBuyBMThread then pcall(task.cancel, autoBuyBMThread); autoBuyBMThread = nil end
+S.startAutoBuyBM = function()
+    if S.autoBuyBMThread then pcall(task.cancel, S.autoBuyBMThread); S.autoBuyBMThread = nil end
     Config.AutoBuyBM = true
-    autoBuyBMThread = task.spawn(function()
+    S.autoBuyBMThread = task.spawn(function()
         local root = game:GetService("Players").LocalPlayer.Character
             and game:GetService("Players").LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         local preBMCF = root and root.CFrame
-        teleportToBM(BM_CF)
+        teleportToBM(S.BM_CF)
         task.wait(1.5)
         local bought = {}
         for _, name in ipairs(Config.SelectedBMItems) do
-            if buyBMItem(name) then
+            if S.buyBMItem(name) then
                 table.insert(bought, name)
             end
         end
         task.wait(0.5)
         if preBMCF and root then root.CFrame = preBMCF end
         Config.AutoBuyBM = false
-        autoBuyBMThread = nil
-        if bmToggleFunc then task.defer(function() pcall(function() bmToggleFunc:Set(false) end) end) end
+        S.autoBuyBMThread = nil
+        if S.bmToggleFunc then task.defer(function() pcall(function() S.bmToggleFunc:Set(false) end) end) end
         if #bought > 0 then
             Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Bought: " .. table.concat(bought, ", "), Color=Color3.fromRGB(150,150,170), Delay=4 })
         else
@@ -2545,13 +2539,13 @@ local function startAutoBuyBM()
     end)
 end
 
-local BMSection = Window:AddCollapsible(ShopTab, "Black Market Features", false)
+S.BMSection = Window:AddCollapsible(S.ShopTab, "Black Market Features", false)
 
-Window:AddDropdown(BMSection, "Select Item", "", BM_LIST, 999, {}, function(selected)
+Window:AddDropdown(S.BMSection, "Select Item", "", S.BM_LIST, 999, {}, function(selected)
     Config.SelectedBMItems = type(selected) == "table" and selected or {}
 end, "Dropdown_Select BM Item")
 
-Window:AddButton(BMSection, "Refresh List", "", "rbxassetid://16932740082", function()
+Window:AddButton(S.BMSection, "Refresh List", "", "rbxassetid://16932740082", function()
     local ok, BMC = pcall(function() return require(game:GetService("ReplicatedStorage").Shared.BlackMarketConfig) end)
     if ok and BMC then
         local ok2, items = pcall(function() return BMC.GetItems() end)
@@ -2561,13 +2555,13 @@ Window:AddButton(BMSection, "Refresh List", "", "rbxassetid://16932740082", func
     end
 end)
 
-local bmToggleFunc = nil
-bmToggleFunc = Window:AddToggle(BMSection, "Buy Black Market Item", "", false, function(state)
+S.bmToggleFunc = nil
+S.bmToggleFunc = Window:AddToggle(S.BMSection, "Buy Black Market Item", "", false, function(state)
     Config.AutoBuyBM = state
     if state then
-        startAutoBuyBM()
+        S.startAutoBuyBM()
     else
-        if autoBuyBMThread then pcall(task.cancel, autoBuyBMThread); autoBuyBMThread = nil end
+        if S.autoBuyBMThread then pcall(task.cancel, S.autoBuyBMThread); S.autoBuyBMThread = nil end
         Config.AutoBuyBM = false
     end
 end, "Toggle_Buy Black Market Item")
@@ -2575,7 +2569,7 @@ end, "Toggle_Buy Black Market Item")
 -- ==========================================
 -- BATTLEPASS SHOP FEATURES
 -- ==========================================
-local BP_LIST = {
+S.BP_LIST = {
     "Slot 1 -- Star Charm [2000]", "Slot 2 -- Seven Rings [4000]",
     "Slot 3 -- Luck I Potion [5000]", "Slot 4 -- Galactic Containment [11000]",
     "Slot 5 -- Tyrian Constellation [15000]", "Slot 6 -- Stargazing [18000]",
@@ -2587,24 +2581,24 @@ local BP_LIST = {
     "Slot 17 -- TreasureCrate [58000]", "Slot 18 -- Low Gravity [60000]",
 }
 
-local bpStatusLabel = nil
-local autoBuyBPThread = nil
-local bpToggleFunc = nil
+S.bpStatusLabel = nil
+S.autoBuyBPThread = nil
+S.bpToggleFunc = nil
 
-local function updateBPStatus(text)
-    if bpStatusLabel then
-        setParagraphText(bpStatusLabel, text)
+S.updateBPStatus = function(text)
+    if S.bpStatusLabel then
+        setParagraphText(S.bpStatusLabel, text)
     end
 end
 
-local function buyBPSlots()
-    if not bpPurchaseRE then
+S.buyBPSlots = function()
+    if not R.bpPurchase then
         Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
     local slots = Config.SelectedBPSlots
     if not slots or #slots == 0 then
-        updateBPStatus("No slots selected")
+        S.updateBPStatus("No slots selected")
         return
     end
     local total = #slots
@@ -2619,77 +2613,77 @@ local function buyBPSlots()
                 if bp and bp[tostring(index)] then owned = true end
             end)
             if not owned then
-                updateBPStatus("Buy " .. i .. "/" .. total .. " (Slot " .. index .. ")")
-                pcall(function() bpPurchaseRE:FireServer(index) end)
+                S.updateBPStatus("Buy " .. i .. "/" .. total .. " (Slot " .. index .. ")")
+                pcall(function() R.bpPurchase:FireServer(index) end)
                 bought = bought + 1
                 task.wait(0.8)
             else
-                updateBPStatus("Slot " .. index .. " already owned, skip")
+                S.updateBPStatus("Slot " .. index .. " already owned, skip")
             end
         end
     end
-    updateBPStatus("Done  bought " .. bought .. "/" .. total)
+    S.updateBPStatus("Done  bought " .. bought .. "/" .. total)
     if bought == 0 and total > 0 then
         Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="No Galaxy Points or all slots owned", Color=Color3.fromRGB(150,150,170), Delay=4 })
     end
     Config.AutoBuyBP = false
-    if bpToggleFunc then task.defer(function() pcall(function() bpToggleFunc:Set(false) end) end) end
+    if S.bpToggleFunc then task.defer(function() pcall(function() S.bpToggleFunc:Set(false) end) end) end
 end
 
-local BPSection = Window:AddCollapsible(ShopTab, "Battlepass Shop Features", false)
+S.BPSection = Window:AddCollapsible(S.ShopTab, "Battlepass Shop Features", false)
 
-bpStatusLabel = Window:AddParagraph(BPSection, "Status", "Waiting")
+S.bpStatusLabel = Window:AddParagraph(S.BPSection, "Status", "Waiting")
 
-Window:AddDropdown(BPSection, "Buy Item", "", BP_LIST, 999, {}, function(selected)
+Window:AddDropdown(S.BPSection, "Buy Item", "", S.BP_LIST, 999, {}, function(selected)
     Config.SelectedBPSlots = type(selected) == "table" and selected or {}
 end, "Dropdown_Select BP Slots")
 
-bpToggleFunc = Window:AddToggle(BPSection, "Buy Battlepass Item", "", false, function(state)
+S.bpToggleFunc = Window:AddToggle(S.BPSection, "Buy Battlepass Item", "", false, function(state)
     Config.AutoBuyBP = state
     if state then
-        updateBPStatus("Starting...")
-        autoBuyBPThread = task.spawn(function()
-            buyBPSlots()
+        S.updateBPStatus("Starting...")
+        S.autoBuyBPThread = task.spawn(function()
+            S.buyBPSlots()
         end)
     else
-        if autoBuyBPThread then pcall(task.cancel, autoBuyBPThread); autoBuyBPThread = nil end
+        if S.autoBuyBPThread then pcall(task.cancel, S.autoBuyBPThread); S.autoBuyBPThread = nil end
         Config.AutoBuyBP = false
-        updateBPStatus("Waiting")
+        S.updateBPStatus("Waiting")
     end
 end, "Toggle_Buy Battlepass Item")
 
 -- ==========================================
 -- MERCHANT FEATURES
 -- ==========================================
-local merchantItems = {}
-local merchantStatusParagraph = nil
+S.merchantItems = {}
+S.merchantStatusParagraph = nil
 
-local function updateMerchantStatus(bought, total)
+S.updateMerchantStatus = function(bought, total)
     local itemName = Config.SelectedMerchantItem
     local price = "?"
-    if merchantItems[itemName] then price = tostring(merchantItems[itemName].price or "?") end
+    if S.merchantItems[itemName] then price = tostring(S.merchantItems[itemName].price or "?") end
     local buyStr = bought and (bought .. "/" .. total) or "0/1"
     local content = "Item: " .. (itemName ~= "Select Option" and itemName or "-") ..
         "\nPrice: " .. price .. " Coins" ..
         "\nBuy: " .. buyStr
-    setParagraphText(merchantStatusParagraph, content)
+    setParagraphText(S.merchantStatusParagraph, content)
 end
 
-local MerchantSection = Window:AddCollapsible(ShopTab, "Merchant Features", false)
+S.MerchantSection = Window:AddCollapsible(S.ShopTab, "Merchant Features", false)
 
-merchantStatusParagraph = Window:AddParagraph(MerchantSection, "Status", "Item: -\nPrice: ? Coins\nBuy: 0/1")
+S.merchantStatusParagraph = Window:AddParagraph(S.MerchantSection, "Status", "Item: -\nPrice: ? Coins\nBuy: 0/1")
 
-local merchantDropdownItems = {}
-local merchantDropdown = Window:AddDropdown(MerchantSection, "Select Item", "", merchantDropdownItems, false, nil, function(v)
+S.merchantDropdownItems = {}
+S.merchantDropdown = Window:AddDropdown(S.MerchantSection, "Select Item", "", S.merchantDropdownItems, false, nil, function(v)
     Config.SelectedMerchantItem = v or "Select Option"
-    updateMerchantStatus()
+    S.updateMerchantStatus()
 end, "Dropdown_Select Merchant Item")
 
-Window:AddInput(MerchantSection, "Quantity", "", "Enter quantity...", function(v)
+Window:AddInput(S.MerchantSection, "Quantity", "", "Enter quantity...", function(v)
     Config.MerchantQty = tonumber(v) or 1
 end, "Input_Merchant Qty")
 
-Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://16932740082", function()
+Window:AddButton(S.MerchantSection, "Refresh Item Merchant", "", "rbxassetid://16932740082", function()
     local mr = nil
     pcall(function() mr = Replion.Client:WaitReplion("Merchant") end)
     if not mr then
@@ -2705,7 +2699,7 @@ Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://169
     end
     local itemIds = {}
     pcall(function() itemIds = mr:GetExpect("Items") or {} end)
-    merchantItems = {}
+    S.merchantItems = {}
     local newList = {}
     for _, itemId in ipairs(itemIds) do
         local md = midMap[itemId]
@@ -2720,42 +2714,42 @@ Window:AddButton(MerchantSection, "Refresh Item Merchant", "", "rbxassetid://169
                 end
             end)
         end
-        merchantItems[name] = { id = itemId, price = price }
+        S.merchantItems[name] = { id = itemId, price = price }
         table.insert(newList, name)
     end
     local defaultItem = newList[1] or "Select Option"
     Config.SelectedMerchantItem = defaultItem
-    if merchantDropdown then
-        pcall(function() merchantDropdown:Refresh(newList, defaultItem) end)
+    if S.merchantDropdown then
+        pcall(function() S.merchantDropdown:Refresh(newList, defaultItem) end)
     end
-    updateMerchantStatus()
+    S.updateMerchantStatus()
     Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=tostring(#newList) .. " items found", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 
-local merchantBuying = false
-Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", function()
-    if merchantBuying then return end
-    merchantBuying = true
+S.merchantBuying = false
+Window:AddButton(S.MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", function()
+    if S.merchantBuying then return end
+    S.merchantBuying = true
     local name = Config.SelectedMerchantItem
-    if name == "Select Option" or not merchantItems[name] then
+    if name == "Select Option" or not S.merchantItems[name] then
         Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select item first", Color=Color3.fromRGB(150,150,170), Delay=2 })
-        merchantBuying = false
+        S.merchantBuying = false
         return
     end
-    local itemId = merchantItems[name].id
-    local price = tonumber(merchantItems[name].price) or 0
+    local itemId = S.merchantItems[name].id
+    local price = tonumber(S.merchantItems[name].price) or 0
     local coins = 0
     pcall(function() coins = PlayerData:GetExpect("Coins") or 0 end)
     if price > 0 and coins < price then
         Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not enough coins", Color=Color3.fromRGB(150,150,170), Delay=3 })
-        merchantBuying = false
+        S.merchantBuying = false
         return
     end
     local qty = 1
     local bought = 0
     for i = 1, qty do
-        updateMerchantStatus(bought, qty)
-        local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
+        S.updateMerchantStatus(bought, qty)
+        local ok, result = pcall(function() return R.purchaseMerchant:InvokeServer(itemId) end)
         if ok and result then
             bought = bought + 1
         else
@@ -2766,27 +2760,27 @@ Window:AddButton(MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", 
                 break
             end
         end
-        updateMerchantStatus(bought, qty)
+        S.updateMerchantStatus(bought, qty)
         if i < qty then task.wait(0.5) end
     end
-    updateMerchantStatus(bought, qty)
+    S.updateMerchantStatus(bought, qty)
     Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
-    merchantBuying = false
+    S.merchantBuying = false
 end)
 
-local autoBuyMerchantThread = nil
-local merchantToggleFunc = nil
-merchantToggleFunc = Window:AddToggle(MerchantSection, "Buy Merchant Item", "", false, function(state)
+S.autoBuyMerchantThread = nil
+S.merchantToggleFunc = nil
+S.merchantToggleFunc = Window:AddToggle(S.MerchantSection, "Buy Merchant Item", "", false, function(state)
     Config.AutoBuyMerchant = state
     if state then
-        autoBuyMerchantThread = task.spawn(function()
+        S.autoBuyMerchantThread = task.spawn(function()
             local name = Config.SelectedMerchantItem
-            if name == "Select Option" or not merchantItems[name] or not purchaseMerchantRF then
+            if name == "Select Option" or not S.merchantItems[name] or not R.purchaseMerchant then
                 Config.AutoBuyMerchant = false
                 return
             end
-            local itemId = merchantItems[name].id
-            local price = tonumber(merchantItems[name].price) or 0
+            local itemId = S.merchantItems[name].id
+            local price = tonumber(S.merchantItems[name].price) or 0
             local qty = math.max(1, Config.MerchantQty)
             local bought = 0
             for i = 1, qty do
@@ -2797,18 +2791,18 @@ merchantToggleFunc = Window:AddToggle(MerchantSection, "Buy Merchant Item", "", 
                     Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not enough coins", Color=Color3.fromRGB(150,150,170), Delay=3 })
                     break
                 end
-                updateMerchantStatus(bought, qty)
-                local ok, result = pcall(function() return purchaseMerchantRF:InvokeServer(itemId) end)
+                S.updateMerchantStatus(bought, qty)
+                local ok, result = pcall(function() return R.purchaseMerchant:InvokeServer(itemId) end)
                 if ok and result then bought = bought + 1 end
-                updateMerchantStatus(bought, qty)
+                S.updateMerchantStatus(bought, qty)
                 if i < qty then task.wait(0.5) end
             end
             Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
             Config.AutoBuyMerchant = false
-            if merchantToggleFunc then task.defer(function() pcall(function() merchantToggleFunc:Set(false) end) end) end
+            if S.merchantToggleFunc then task.defer(function() pcall(function() S.merchantToggleFunc:Set(false) end) end) end
         end)
     else
-        if autoBuyMerchantThread then pcall(task.cancel, autoBuyMerchantThread); autoBuyMerchantThread = nil end
+        if S.autoBuyMerchantThread then pcall(task.cancel, S.autoBuyMerchantThread); S.autoBuyMerchantThread = nil end
         Config.AutoBuyMerchant = false
     end
 end, "Toggle_Buy Merchant Item")
