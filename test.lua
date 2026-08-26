@@ -615,7 +615,22 @@ do
         fishCaughtRemote.OnClientEvent:Connect(function(fishName)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
-            Config.LastBlatantFish = fishName
+            if Config.BlatantActive and fishItemId and bigPopupRemote then
+                local w = math.random(30, 300) / 100
+                task.delay(0.35, function()
+                    pcall(function()
+                        firesignal(bigPopupRemote.OnClientEvent,
+                            fishItemId,
+                            { Weight = w },
+                            { CustomDuration = 5, Type = "Item", ItemType = "Fishes",
+                              _newlyIndexed = false,
+                              InventoryItem = { Favorited = false, Id = fishItemId,
+                                UUID = HttpService:GenerateGUID(false),
+                                Metadata = { Weight = w } }, ItemId = fishItemId },
+                            false)
+                    end)
+                end)
+            end
             task.spawn(function()
                 local now = workspace.DistributedGameTime
                 local next = math.max(now, (_nextFireTime[fishItemId] or 0) + 0.35)
