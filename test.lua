@@ -7,6 +7,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
 -- ====== HEURISTIC DISCOVERY ======
@@ -43,9 +44,7 @@ local Events = {
 
 local updateAutoFishingRemote = GetServerRemote("RF/UpdateAutoFishingState")
 local markAutoFishingRemote  = GetServerRemote("RF/MarkAutoFishingUsed")
-local textNotificationRemote = GetServerRemote("RE/TextNotification")
 local fishCaughtRemote       = GetServerRemote("RE/FishCaught")
-local bigPopupRemote         = GetServerRemote("RE/ObtainedNewFishNotification")
 
 -- Support Features remotes
 local equipToolRemote        = GetServerRemote("RE/EquipToolFromHotbar")
@@ -85,6 +84,7 @@ local Replion    = require(ReplicatedStorage.Packages.Replion)
 local PlayerData  = Replion.Client:WaitReplion("Data")
 local EventsReplion = nil  -- lazy-loaded saat weather feature dipakai
 local ItemUtility = require(ReplicatedStorage.Shared.ItemUtility)
+local FishingConstants = require(ReplicatedStorage.Shared.Constants)
 
 local function getFishCount()
     local ok, count = pcall(function()
@@ -109,7 +109,7 @@ end
 -- ====== CONFIG ======
 local Config = {
     InstantFishing  = false,
-    CastWait        = 0,
+    CastWait        = 0.5,
     AutoSell        = false,
     AutoSellMode    = "Delay",
     SellDelay       = 10,
@@ -311,10 +311,14 @@ local function teleportToBM(cf)
     if root then root.CFrame = cf end
 end
 
--- ====== PERFECT CAST HELPER ======
-local function waitForPerfectCast()
-    local power = 0.7
-    local waterY = -1.0
+-- ====== CAST QUALITY HELPER ======
+-- Built-in auto fishing uses power 0.5 for its stable Good cast. V1/V2 use
+-- the two explicit modes below instead: immediate OK or sampled Perfect.
+local PERFECT_POWER_TARGET = 0.99
+local PERFECT_POWER_TIMEOUT = 2
+
+local function getCastWaterY(power)
+    local waterY = 1.2854545116425
     pcall(function()
         local char = LocalPlayer.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -323,12 +327,73 @@ local function waitForPerfectCast()
         local castPos = root.CFrame.Position + root.CFrame.LookVector * castDist
         local rp = RaycastParams.new()
         rp.IgnoreWater = false
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        rp.FilterDescendantsInstances = { char }
         local result = workspace:Raycast(
             Vector3.new(castPos.X, castPos.Y + 20, castPos.Z),
             Vector3.new(0, -40, 0), rp)
         if result then waterY = result.Position.Y end
     end)
-    return waterY, power
+    return waterY
+end
+
+local function requestOkCast()
+    -- This is the same immediate sequence already verified by Blatant to
+    -- produce the game's lowest "OK" cast tier.
+    local chargeCallOk, chargeAccepted = pcall(function()
+        return Events.charge:InvokeServer(workspace:GetServerTimeNow())
+    end)
+    if not chargeCallOk or chargeAccepted == false then return false end
+
+    local minigameCallOk, started = pcall(function()
+        return Events.minigame:InvokeServer(1.2854545116425, 1)
+    end)
+    return minigameCallOk and started ~= false
+end
+
+local function requestPerfectCast()
+    -- Native ChargeFishingRod returns (accepted, authoritative start time).
+    local chargeCallOk, chargeAccepted, serverChargeStart = pcall(function()
+        return Events.charge:InvokeServer()
+    end)
+    if not chargeCallOk or not chargeAccepted
+        or type(serverChargeStart) ~= "number"
+    then
+        return false
+    end
+
+    local deadline = workspace:GetServerTimeNow() + PERFECT_POWER_TIMEOUT
+    while workspace:GetServerTimeNow() < deadline do
+        local powerOk, currentPower = pcall(function()
+            return FishingConstants:GetPower(serverChargeStart)
+        end)
+        if powerOk and type(currentPower) == "number"
+            and currentPower >= PERFECT_POWER_TARGET
+        then
+            currentPower = math.clamp(currentPower, 0, 1)
+            local requestTime = workspace:GetServerTimeNow()
+            local waterY = getCastWaterY(currentPower)
+            local minigameCallOk, started = pcall(function()
+                return Events.minigame:InvokeServer(
+                    waterY,
+                    currentPower,
+                    requestTime
+                )
+            end)
+            return minigameCallOk and started ~= false
+        end
+        RunService.Heartbeat:Wait()
+    end
+
+    -- Never submit a lower tier when Perfect was requested.
+    return false
+end
+
+local function requestConfiguredCast()
+    if Config.PerfectCast then
+        return requestPerfectCast()
+    end
+    return requestOkCast()
 end
 
 -- ====== FISHING SYSTEM V1 ======
@@ -337,15 +402,7 @@ local fishThread = nil
 local isFishing = false
 
 local function castRod()
-    if Config.PerfectCast then
-        pcall(function() Events.charge:InvokeServer(tick()) end)
-        task.wait(0.277)
-        pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
-    else
-        pcall(function() Events.charge:InvokeServer(tick()) end)
-        task.wait(0.02)
-        pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
-    end
+    return requestConfiguredCast()
 end
 
 local function stopFishing()
@@ -362,10 +419,17 @@ local function startFishing()
         while Config.InstantFishing do
             isFishing = true
             local ok, err = pcall(function()
-                castRod()
-                if Config.CastWait > 0 then task.wait(Config.CastWait) end
-                pcall(function() Events.fishing:FireServer() end)
+                if not castRod() then error("V1 cast request rejected") end
+                -- Give the server one short frame to enter the fishing state
+                -- before completing the catch. The configurable pacing still
+                -- remains after the catch, before the next charge.
                 task.wait(0.05)
+                local completed = pcall(function() Events.fishing:FireServer() end)
+                if not completed then error("V1 catch completion failed") end
+
+                -- V1 pacing belongs after CatchFishCompleted, before the next
+                -- charge. Holding charge longer would change the cast tier.
+                task.wait(math.max(Config.CastWait or 0, 0.05))
             end)
             if not ok and Config.InstantFishing then
                 pcall(function() Events.cancel:InvokeServer(true) end)
@@ -461,37 +525,33 @@ if cosmeticFolder then
 end
 
 local function castRodV2()
-    if Config.PerfectCast then
-        pcall(function() Events.charge:InvokeServer(tick()) end)
-        task.wait(0.277)
-        pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
-    else
-        pcall(function() Events.charge:InvokeServer(tick()) end)
-        pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
-    end
+    return requestConfiguredCast()
 end
 
 
 -- ====== BLATANT VISUAL ======
-local blatantN = 1
+local blatantGeneration = 0
 local blatantThread = nil
+local clearBlatantInventoryVisuals = function() end
 
 local function stopBlatant()
     if blatantThread then task.cancel(blatantThread); blatantThread = nil end
-    blatantN = 1
+    blatantGeneration = blatantGeneration + 1
     isFishing = false
     Config.BlatantActive = false
+    pcall(clearBlatantInventoryVisuals)
     if Events.cancel then pcall(function() Events.cancel:InvokeServer(true) end) end
 end
 
 local function startBlatant()
     stopBlatant()
     Config.BlatantActive = true
-    pcall(updateBigPopup)
+    blatantGeneration = blatantGeneration + 1
     blatantThread = task.spawn(function()
         while Config.BlatantActive do
             isFishing = true
             pcall(function()
+                -- Deliberately omit the minigame timestamp to force a fast bad cast.
                 pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end)
                 pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
                 if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
@@ -522,9 +582,10 @@ local function startFishingV2()
         while Config2.Active do
             isFishing = true
             local ok = pcall(function()
-                castRodV2()
+                if not castRodV2() then error("V2 cast request rejected") end
                 if Config2.Delay > 0 then task.wait(Config2.Delay) end
-                pcall(function() Events.fishing:FireServer() end)
+                local completed = pcall(function() Events.fishing:FireServer() end)
+                if not completed then error("V2 catch completion failed") end
                 task.wait(0.05)
             end)
             if not ok then task.wait(1) end
@@ -610,26 +671,294 @@ end
 
 
 do
-    local _nextFireTime = {}
-    if fishCaughtRemote and textNotificationRemote then
-        fishCaughtRemote.OnClientEvent:Connect(function(fishName)
+    local okTextController, TextNotificationController = pcall(
+        require,
+        ReplicatedStorage.Controllers.TextNotificationController
+    )
+    local okVisualController, FishCaughtVisual = pcall(
+        require,
+        ReplicatedStorage.Controllers.FishingController:WaitForChild("FishCaughtVisual")
+    )
+
+    -- The real inventory is server-owned. These structures only mirror one
+    -- extra caught fish in the local inventory grid and HUD badge.
+    local visualInventoryCopies = {}
+    local visualCopySerial = 0
+    local visualBadgeCount = 0
+    local inventoryGrid = nil
+    local inventoryGui = nil
+    local badgeObject = nil
+    local badgeText = nil
+    local applyingBadge = false
+    local blatantBadgeOverrideActive = false
+
+    local function resolveInventoryGrid()
+        if inventoryGrid and inventoryGrid.Parent then return inventoryGrid end
+        pcall(function()
+            inventoryGui = LocalPlayer.PlayerGui:FindFirstChild("Inventory")
+            local main = inventoryGui and inventoryGui:FindFirstChild("Main")
+            local content = main and main:FindFirstChild("Content")
+            local pages = content and content:FindFirstChild("Pages")
+            local inventoryPage = pages and pages:FindFirstChild("Inventory2")
+            local pageMain = inventoryPage and inventoryPage:FindFirstChild("Main")
+            inventoryGrid = pageMain and pageMain:FindFirstChild("Inventory")
+        end)
+        return inventoryGrid
+    end
+
+    local function resolveInventoryBadge()
+        if badgeObject and badgeObject.Parent then return badgeObject, badgeText end
+        pcall(function()
+            local backpack = LocalPlayer.PlayerGui:FindFirstChild("Backpack")
+            local display = backpack and backpack:FindFirstChild("Display")
+            local inventoryButton = display and display:FindFirstChild("Inventory")
+            badgeObject = inventoryButton and inventoryButton:FindFirstChild("Notification")
+            if badgeObject then
+                if badgeObject:IsA("TextLabel") or badgeObject:IsA("TextButton") then
+                    badgeText = badgeObject
+                else
+                    badgeText = badgeObject:FindFirstChildWhichIsA("TextLabel", true)
+                        or badgeObject:FindFirstChildWhichIsA("TextButton", true)
+                end
+            end
+        end)
+        return badgeObject, badgeText
+    end
+
+    local function refreshInventoryBadge()
+        local notification, textObject = resolveInventoryBadge()
+        if not notification then return end
+        -- Do not read InventoryNotifications here. Its values are cumulative
+        -- server state, not the unread number currently shown by the HUD.
+        local count = visualBadgeCount
+        applyingBadge = true
+        pcall(function()
+            if notification:IsA("GuiObject") then notification.Visible = count > 0 end
+            if textObject then
+                textObject.Text = tostring(count)
+                textObject.Visible = count > 0
+            end
+        end)
+        applyingBadge = false
+    end
+
+    local function removeVisualInventoryTiles()
+        local grid = resolveInventoryGrid()
+        if not grid then return end
+        for _, child in ipairs(grid:GetChildren()) do
+            if child:GetAttribute("OrvionVisualDuplicate") then
+                pcall(function() child:Destroy() end)
+            end
+        end
+    end
+
+    local function getTileIdentity(tile)
+        if not tile:IsA("GuiObject") or tile:GetAttribute("OrvionVisualDuplicate") then
+            return nil, nil
+        end
+        local vector = tile:FindFirstChild("Vector", true)
+        local itemName = tile:FindFirstChild("ItemName", true)
+        local icon = vector and (vector:IsA("ImageLabel") or vector:IsA("ImageButton"))
+            and vector.Image or nil
+        local name = itemName and (itemName:IsA("TextLabel") or itemName:IsA("TextButton"))
+            and itemName.Text or nil
+        return icon, name
+    end
+
+    local function findSourceInventoryTile(descriptor)
+        local grid = resolveInventoryGrid()
+        if not grid then return nil end
+        local fallback = nil
+        for _, child in ipairs(grid:GetChildren()) do
+            local icon, name = getTileIdentity(child)
+            if (icon or name) and not fallback then fallback = child end
+            if descriptor.Icon ~= "" and icon == descriptor.Icon then return child end
+            if descriptor.Name ~= "" and type(name) == "string"
+                and string.find(name, descriptor.Name, 1, true)
+            then
+                return child
+            end
+        end
+        return fallback
+    end
+
+    local function makeVisualTileInert(tile)
+        local objects = { tile }
+        for _, object in ipairs(tile:GetDescendants()) do
+            table.insert(objects, object)
+        end
+        for _, object in ipairs(objects) do
+            if object:IsA("GuiButton") then
+                object.Active = false
+                object.Selectable = false
+                object.AutoButtonColor = false
+            elseif object:IsA("LocalScript") or object:IsA("Script") then
+                object:Destroy()
+            end
+        end
+    end
+
+    local function refreshVisualInventoryTiles()
+        local grid = resolveInventoryGrid()
+        if not grid then return end
+        removeVisualInventoryTiles()
+        for serial, descriptor in pairs(visualInventoryCopies) do
+            local source = findSourceInventoryTile(descriptor)
+            if source then
+                local clone = source:Clone()
+                clone.Name = source.Name .. "_OrvionVisual_" .. tostring(serial)
+                clone:SetAttribute("OrvionVisualDuplicate", true)
+                clone.LayoutOrder = source.LayoutOrder + 1
+                clone.Visible = true
+
+                local vector = clone:FindFirstChild("Vector", true)
+                if vector and (vector:IsA("ImageLabel") or vector:IsA("ImageButton")) then
+                    vector.Image = descriptor.Icon
+                end
+                local itemName = clone:FindFirstChild("ItemName", true)
+                if itemName and (itemName:IsA("TextLabel") or itemName:IsA("TextButton")) then
+                    itemName.RichText = false
+                    itemName.Text = descriptor.Name
+                end
+                makeVisualTileInert(clone)
+                clone.Parent = grid
+            end
+        end
+    end
+
+    local function scheduleInventoryVisualRefresh()
+        for _, delayTime in ipairs({ 0, 0.05, 0.2, 0.6 }) do
+            task.delay(delayTime, function()
+                if Config.BlatantActive then
+                    refreshVisualInventoryTiles()
+                    if blatantBadgeOverrideActive then
+                        refreshInventoryBadge()
+                    end
+                end
+            end)
+        end
+    end
+
+    local function beginBlatantBadgeOverride()
+        if blatantBadgeOverrideActive then return end
+        -- Preserve any unread count already produced by manual, V1, V2, or
+        -- native auto fishing. Blatant only adds its own two-count visual.
+        local notification, textObject = resolveInventoryBadge()
+        local nativeCount = 0
+        if notification and notification:IsA("GuiObject") and notification.Visible
+            and textObject
+        then
+            nativeCount = tonumber(textObject.Text) or 0
+        end
+        visualBadgeCount = nativeCount
+        blatantBadgeOverrideActive = true
+    end
+
+    local function registerVisualInventoryCopy(fishItemId, fishName)
+        local itemData = nil
+        pcall(function()
+            itemData = ItemUtility.GetItemDataFromItemType("Fish", fishItemId)
+        end)
+        visualCopySerial = visualCopySerial + 1
+        visualInventoryCopies[visualCopySerial] = {
+            Icon = itemData and itemData.Data and itemData.Data.Icon or "",
+            Name = fishName or (itemData and itemData.Data and itemData.Data.Name) or "Fish",
+        }
+        beginBlatantBadgeOverride()
+        -- Blatant exposes one real catch plus one local visual copy.
+        visualBadgeCount = visualBadgeCount + 2
+        scheduleInventoryVisualRefresh()
+    end
+
+    clearBlatantInventoryVisuals = function()
+        visualInventoryCopies = {}
+        removeVisualInventoryTiles()
+    end
+
+    task.defer(function()
+        resolveInventoryGrid()
+        local notification, textObject = resolveInventoryBadge()
+        if textObject then
+            textObject:GetPropertyChangedSignal("Text"):Connect(function()
+                if Config.BlatantActive and blatantBadgeOverrideActive
+                    and visualBadgeCount > 0 and not applyingBadge
+                then
+                    task.defer(refreshInventoryBadge)
+                end
+            end)
+        end
+        if notification and notification:IsA("GuiObject") then
+            notification:GetPropertyChangedSignal("Visible"):Connect(function()
+                if Config.BlatantActive and blatantBadgeOverrideActive
+                    and visualBadgeCount > 0 and not applyingBadge
+                then
+                    task.defer(refreshInventoryBadge)
+                end
+            end)
+        end
+        if inventoryGui then
+            inventoryGui:GetPropertyChangedSignal("Enabled"):Connect(function()
+                if inventoryGui.Enabled and blatantBadgeOverrideActive then
+                    -- Match the native claim flow: opening inventory is the
+                    -- only action that resets the local unread badge.
+                    visualBadgeCount = 0
+                    refreshInventoryBadge()
+                    blatantBadgeOverrideActive = false
+                    if Config.BlatantActive then
+                        scheduleInventoryVisualRefresh()
+                    end
+                end
+            end)
+        end
+    end)
+
+    local function deliverFishNotification(fishItemId)
+        local payload = {
+            Type = "Item",
+            ItemId = fishItemId,
+            Text = "",
+            CustomDuration = 5
+        }
+        if not (okTextController and TextNotificationController) then return end
+        TextNotificationController:DeliverNotification(payload)
+    end
+
+    if fishCaughtRemote then
+        fishCaughtRemote.OnClientEvent:Connect(function(fishName, fishMetadata, _, _, visualData)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
-            task.spawn(function()
-                local now = workspace.DistributedGameTime
-                local next = math.max(now, (_nextFireTime[fishItemId] or 0) + 0.35)
-                _nextFireTime[fishItemId] = next
-                local delay = next - now
-                if delay > 0.01 then task.wait(delay) end
-                pcall(function()
-                    firesignal(textNotificationRemote.OnClientEvent, {
-                        Type = "Item",
-                        ItemId = fishItemId,
-                        Text = "",
-                        CustomDuration = 5
-                    })
+
+            local notificationCount = Config.BlatantActive and 2 or 1
+            -- Text notifications are globally auto-on. Only Blatant duplicates
+            -- the tile; manual, V1, V2, and native auto fishing receive one.
+            for _ = 1, notificationCount do
+                pcall(deliverFishNotification, fishItemId)
+            end
+
+            if Config.BlatantActive then
+                registerVisualInventoryCopy(fishItemId, fishName)
+            end
+
+            if Config.BlatantActive
+                and okVisualController
+                and FishCaughtVisual
+                and visualData
+                and visualData.origin
+            then
+                local generation = blatantGeneration
+                local nativeDelay = tonumber(visualData.delayTime) or 0
+                local extraDelay = math.max(nativeDelay, 0)
+                task.delay(extraDelay, function()
+                    if not Config.BlatantActive or generation ~= blatantGeneration then return end
+                    pcall(
+                        FishCaughtVisual.playCaughtFishVisual,
+                        LocalPlayer,
+                        visualData.origin,
+                        fishName,
+                        fishMetadata
+                    )
                 end)
-            end)
+            end
         end)
     end
 end
@@ -2488,4 +2817,3 @@ end, "Toggle_Buy Merchant Item")
 updateBigPopup()
 Window:SetActiveTab("Info")
 Window:Show()
-
