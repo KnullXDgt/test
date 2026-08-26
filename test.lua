@@ -491,15 +491,12 @@ local function startBlatant()
     blatantThread = task.spawn(function()
         while Config.BlatantActive do
             isFishing = true
-            -- Path 1 & 2: masing-masing siklus lengkap sendiri (charge->minigame->fishing)
-            for i = 1, 2 do
-                task.spawn(function()
-                    pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end)
-                    pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
-                    if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
-                    pcall(function() Events.fishing:FireServer() end)
-                end)
-            end
+            pcall(function()
+                pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end)
+                pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
+                if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
+                pcall(function() Events.fishing:FireServer() end)
+            end)
             task.wait(0.1)
             isFishing = false
         end
