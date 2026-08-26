@@ -491,17 +491,20 @@ local function startBlatant()
     blatantThread = task.spawn(function()
         while Config.BlatantActive do
             isFishing = true
-            task.spawn(function() pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end) end)
-            task.spawn(function() pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end) end)
-            pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
-            if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
-            task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
-            task.spawn(function() pcall(function() Events.fishing:FireServer() end) end)
+            -- Path 1 & 2: masing-masing siklus lengkap sendiri (charge->minigame->fishing)
+            for i = 1, 2 do
+                task.spawn(function()
+                    pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end)
+                    pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
+                    if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
+                    pcall(function() Events.fishing:FireServer() end)
+                end)
+            end
             if Config.LastBlatantFish and bigPopupRemote and fishCaughtRemote then
                 pcall(function() firesignal(bigPopupRemote.OnClientEvent, Config.LastBlatantFish, {}, false) end)
                 pcall(function() firesignal(fishCaughtRemote.OnClientEvent, Config.LastBlatantFish) end)
             end
-            task.wait(0.05)
+            task.wait(0.4)
             isFishing = false
         end
         isFishing = false
