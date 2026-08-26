@@ -500,6 +500,7 @@ local function startBlatant()
                     pcall(function() Events.fishing:FireServer() end)
                 end)
             end
+            task.wait(0.1)
             isFishing = false
         end
         isFishing = false
