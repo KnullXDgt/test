@@ -611,26 +611,12 @@ end
 
 do
     local _nextFireTime = {}
+    local _replay = false
     if fishCaughtRemote and textNotificationRemote then
         fishCaughtRemote.OnClientEvent:Connect(function(fishName)
             local fishItemId = fishNameToId[fishName]
             if not fishItemId then return end
-            if Config.BlatantActive and fishItemId and bigPopupRemote then
-                local w = math.random(30, 300) / 100
-                task.delay(0.35, function()
-                    pcall(function()
-                        firesignal(bigPopupRemote.OnClientEvent,
-                            fishItemId,
-                            { Weight = w },
-                            { CustomDuration = 5, Type = "Item", ItemType = "Fishes",
-                              _newlyIndexed = false,
-                              InventoryItem = { Favorited = false, Id = fishItemId,
-                                UUID = HttpService:GenerateGUID(false),
-                                Metadata = { Weight = w } }, ItemId = fishItemId },
-                            false)
-                    end)
-                end)
-            end
+
             task.spawn(function()
                 local now = workspace.DistributedGameTime
                 local next = math.max(now, (_nextFireTime[fishItemId] or 0) + 0.35)
@@ -646,6 +632,21 @@ do
                     })
                 end)
             end)
+
+            if Config.BlatantActive and bigPopupRemote and not _replay then
+                _replay = true
+                pcall(function() firesignal(fishCaughtRemote.OnClientEvent, fishName) end)
+                _replay = false
+
+                local w = math.random(30, 300) / 100
+                pcall(function()
+                    local Notif = require(ReplicatedStorage.Controllers.NotificationController)
+                    Notif:AddObtainedItem("Small", fishItemId,
+                        { Weight = w },
+                        { Id = fishItemId, UUID = HttpService:GenerateGUID(false),
+                          Favorited = false, Metadata = { Weight = w } })
+                end)
+            end
         end)
     end
 end
