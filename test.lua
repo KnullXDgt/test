@@ -1948,6 +1948,7 @@ do
     pingGui.Name = "PingTimerUI"
     pingGui.ResetOnSpawn = false
     pingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    pingGui.Enabled = false
     pingGui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
     UI.pingGui = pingGui
 
