@@ -2035,7 +2035,7 @@ UI.FishingTab = UI.Window:CreateTab("Main", "rbxassetid://117906088481880")
 
 UI.SupportSection = UI.Window:AddCollapsible(UI.FishingTab, "Support Features", false)
 
-UI.Window:AddToggle(UI.SupportSection, "Show Real-Ping", "", true, function(state)
+UI.Window:AddToggle(UI.SupportSection, "Show Real-Ping", "", false, function(state)
     if UI.pingGui then
         UI.pingGui.Enabled = state
     end
