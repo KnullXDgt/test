@@ -4,17 +4,22 @@
 -- ====================================================================
 
 -- ====== SERVICES ======
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local HttpService = game:GetService("HttpService")
-local RunService = game:GetService("RunService")
-local LocalPlayer = Players.LocalPlayer
+local Service = {
+    Players = game:GetService("Players"),
+    ReplicatedStorage = game:GetService("ReplicatedStorage"),
+    HttpService = game:GetService("HttpService"),
+    RunService = game:GetService("RunService"),
+    Lighting = game:GetService("Lighting"),
+}
+Service.LocalPlayer = Service.Players.LocalPlayer
 
 -- ====== HEURISTIC DISCOVERY ======
-local net = ReplicatedStorage.Packages._Index["sleitnick_net@0.2.0"].net
+local Remote = {
+    Net = Service.ReplicatedStorage.Packages._Index["sleitnick_net@0.2.0"].net,
+}
 
-local function GetServerRemote(targetName)
-    local allRemotes = net:GetChildren()
+Remote.Resolve = function(targetName)
+    local allRemotes = Remote.Net:GetChildren()
     for i, remote in ipairs(allRemotes) do
         if remote.Name == targetName then
             return allRemotes[i + 1]
@@ -23,84 +28,80 @@ local function GetServerRemote(targetName)
     return nil
 end
 
-local function GetServerRemoteReverse(targetName)
-    local allRemotes = net:GetChildren()
-    for i, remote in ipairs(allRemotes) do
-        if remote.Name == targetName then
-            return allRemotes[i - 1]
-        end
-    end
-    return nil
-end
-
 -- ====== REMOTES ======
-local Events = {
-    charge   = GetServerRemote("RF/ChargeFishingRod"),
-    minigame = GetServerRemote("RF/RequestFishingMinigameStarted"),
-    fishing  = GetServerRemote("RE/CatchFishCompleted"),
-    cancel   = GetServerRemote("RF/CancelFishingInputs"),
-    sell     = GetServerRemote("RF/SellAllItems"),
-}
-
-local R = {
-    updateAutoFishing = GetServerRemote("RF/UpdateAutoFishingState"),
-    markAutoFishing = GetServerRemote("RF/MarkAutoFishingUsed"),
-    fishCaught = GetServerRemote("RE/FishCaught"),
-    equipTool = GetServerRemote("RE/EquipToolFromHotbar"),
-    cutscene = net:WaitForChild("RE/ReplicateCutscene", 10),
-    abilityVFX = net:WaitForChild("RE/PlayAbilityVFX", 10),
-    changeSetting = net:WaitForChild("RE/ChangeSetting", 10),
-    fishingRadar = GetServerRemote("RF/UpdateFishingRadar"),
-    equipOxygen = GetServerRemote("RF/EquipOxygenTank"),
-    unequipOxygen = GetServerRemote("RF/UnequipOxygenTank"),
-    weatherPurchase = GetServerRemote("RF/PurchaseWeatherEvent"),
-    purchaseBait = GetServerRemote("RF/PurchaseBait"),
-    equipBait = GetServerRemote("RE/EquipBait"),
-    purchaseRod = GetServerRemote("RF/PurchaseFishingRod"),
-    equipItem = GetServerRemote("RE/EquipItem"),
-    purchaseBM = GetServerRemote("RF/PurchaseBlackMarketItem"),
-    bpPurchase = GetServerRemote("RE/BPPurchaseRequest"),
-    purchaseMerchant = GetServerRemote("RF/PurchaseMarketItem"),
-    baitCast         = net:FindFirstChild("RE/BaitCastVisual"),
-    stopCutscene     = net:FindFirstChild("RE/StopCutscene"),
-}
+for key, remoteName in pairs({
+    charge = "RF/ChargeFishingRod",
+    minigame = "RF/RequestFishingMinigameStarted",
+    fishing = "RE/CatchFishCompleted",
+    cancel = "RF/CancelFishingInputs",
+    sell = "RF/SellAllItems",
+    updateAutoFishing = "RF/UpdateAutoFishingState",
+    markAutoFishing = "RF/MarkAutoFishingUsed",
+    fishCaught = "RE/FishCaught",
+    equipTool = "RE/EquipToolFromHotbar",
+    fishingRadar = "RF/UpdateFishingRadar",
+    equipOxygen = "RF/EquipOxygenTank",
+    unequipOxygen = "RF/UnequipOxygenTank",
+    weatherPurchase = "RF/PurchaseWeatherEvent",
+    purchaseBait = "RF/PurchaseBait",
+    equipBait = "RE/EquipBait",
+    purchaseRod = "RF/PurchaseFishingRod",
+    equipItem = "RE/EquipItem",
+    purchaseBM = "RF/PurchaseBlackMarketItem",
+    bpPurchase = "RE/BPPurchaseRequest",
+    purchaseMerchant = "RF/PurchaseMarketItem",
+    spawnTotem = "RE/SpawnTotem",
+    totemCreated = "RE/TotemCreated",
+    totemSpawned = "RE/TotemSpawned",
+}) do
+    Remote[key] = Remote.Resolve(remoteName)
+end
+Remote.cutscene = Remote.Net:WaitForChild("RE/ReplicateCutscene", 10)
+Remote.abilityVFX = Remote.Net:WaitForChild("RE/PlayAbilityVFX", 10)
+Remote.changeSetting = Remote.Net:WaitForChild("RE/ChangeSetting", 10)
+Remote.baitCast = Remote.Net:FindFirstChild("RE/BaitCastVisual")
+Remote.stopCutscene = Remote.Net:FindFirstChild("RE/StopCutscene")
 
 -- Support Features state
-local cutsceneConns = {}
-local abilityVFXConns = { Blocked = {} }
-local hidePlayersConns = {}
-local skinEffectConns = {}
-local weatherVFXConns = {}
-
--- Disable Fishing Animation
-local noFishAnimActive = false
-local origAnimController = nil
-
--- Walk on Water
-local walkOnWaterConn = nil
-local walkOnWaterCharConn = nil
-local walkOnWaterCharConn = nil
+local SupportState = {
+    cutsceneConns = {},
+    abilityVFXConns = { Blocked = {} },
+    hidePlayersConns = {},
+    skinEffectConns = { Active = false, Connections = {}, LocalEffectUntil = 0 },
+    weatherVFXConns = { Active = false, Connections = {} },
+    effectLocks = setmetatable({}, { __mode = "k" }),
+    noFishAnimActive = false,
+    autoEquipRodConn = nil,
+    disableCutsceneActive = false,
+    cutsceneHookDone = false,
+    walkPlatform = nil,
+    walkOnWaterConn = nil,
+    walkOnWaterCharConn = nil,
+    lockPosConn = nil,
+    lockedCFrame = nil,
+    animCtrlPatched = false,
+    snDisplay = nil,
+}
 
 -- ====== INVENTORY ======
-local Replion    = require(ReplicatedStorage.Packages.Replion)
-local PlayerData  = Replion.Client:WaitReplion("Data")
-local EventsReplion = nil  -- lazy-loaded saat weather feature dipakai
-local ItemUtility = require(ReplicatedStorage.Shared.ItemUtility)
-local FishingConstants = require(ReplicatedStorage.Shared.Constants)
+local Data = {
+    Replion = require(Service.ReplicatedStorage.Packages.Replion),
+    Events = nil, -- lazy-loaded saat weather feature dipakai
+}
+Data.Player = Data.Replion.Client:WaitReplion("Data")
+Data.ItemUtility = require(Service.ReplicatedStorage.Shared.ItemUtility)
+Data.FishingConstants = require(Service.ReplicatedStorage.Shared.Constants)
 
-local function getFishCount()
+Data.getFishCount = function()
     local ok, count = pcall(function()
-        local inventory = PlayerData:Get("Inventory") or PlayerData.Data.Inventory
-        if not inventory then return 0 end
+        local inventory = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+        if not inventory or type(inventory.Items) ~= "table" then return 0 end
         local c = 0
-        for categoryName, items in pairs(inventory) do
-            if type(items) == "table" then
-                for _, item in ipairs(items) do
-                    local itemData = ItemUtility.GetItemDataFromItemType(categoryName, item.Id)
-                    if itemData and itemData.Data and itemData.Data.Type == "Fish" then
-                        c = c + 1
-                    end
-                end
+        for _, item in ipairs(inventory.Items) do
+            if type(item) == "table" and item.Id then
+                local itemData = Data.ItemUtility.GetItemDataFromItemType("Fish", item.Id)
+                local data = itemData and itemData.Data
+                if data and data.Type == "Fish" then c = c + 1 end
             end
         end
         return c
@@ -150,8 +151,72 @@ local Config = {
     AutoBuyMerchant       = false,
 }
 
+-- Shared runtime state. Kept in one table to stay light on Luau locals.
+local Runtime = {
+    StableResult = false,
+    Fishing = {
+        Phase = "Idle",
+        Owner = nil,
+        CatchSerial = 0,
+        LastCatchAt = 0,
+        Failures = {},
+        WaitReady = function() return false end,
+        AwaitCatch = function() return false end,
+        Recover = function() end,
+        ResetServer = function() end,
+        HandleResult = function() end,
+    },
+    Sell = {
+        Busy = false,
+        Pending = false,
+        Phase = "Idle",
+        Reason = nil,
+        LastCall = 0,
+        CompletedAt = 0,
+        Revision = 0,
+        CountSeen = -1,
+        Ticket = 0,
+        Worker = nil,
+        Monitor = nil,
+        Thread = nil,
+        Finish = function() end,
+        Wait = function() return true end,
+        Flush = function() return false end,
+        Queue = function() return false end,
+        CheckCount = function() end,
+        Execute = function() return false end,
+        Start = function() end,
+        Stop = function() end,
+    },
+}
+
+-- Automation/shop state is declared once; feature logic fills its fields.
+local S = {}
+local UI = {}
+local FishingModes = {
+    Active = false,
+    V1 = { Thread = nil },
+    V2 = { Thread = nil, Active = false, Delay = 0, SnapReel = false },
+    Blatant = {
+        Thread = nil,
+        Generation = 0,
+        Visual = {
+            clearInventoryVisuals = function() end,
+            pending = {},
+            nextTicket = 0,
+            captureBadge = function() return 0 end,
+            copies = {},
+            copySerial = 0,
+            badgeCount = 0,
+            badgeOverride = false,
+            writingBadge = false,
+        },
+    },
+}
+
 -- ====== TELEPORT LOCATIONS ======
-local LOCATIONS = {
+local Catalog = {}
+Catalog.Locations = {
     ["Fisherman Island"]         = CFrame.new(-32.0142937, 9.53156853, 2714.27515, 0.363515794, -3.19144746e-08, 0.931588054, 4.9133412e-08, 1, 1.50857478e-08, -0.931588054, 4.02881888e-08, 0.363515794),
     ["Ancient Jungle"]           = CFrame.new(1467.427, 7.57433128, -327.696991, -0.300987154, 1.26613644e-08, -0.953628182, 1.90450802e-08, 1, 7.26597627e-09, 0.953628182, -1.597496e-08, -0.300987154),
     ["Ancient Ruin"]             = CFrame.new(6045.40186, -588.600952, 4608.93799, -0.995750964, 9.74889502e-09, -0.09208709, 1.08396971e-08, 1, -1.13451657e-08, 0.09208709, -1.2295156e-08, -0.995750964),
@@ -196,7 +261,18 @@ local LOCATIONS = {
     ["Weather Machine"]          = CFrame.new(-1528.40698, 2.87499928, 1915.32397, -0.994741976, -1.69911782e-08, -0.10241317, -1.71090466e-08, 1, 2.72504852e-10, 0.10241317, 2.02326378e-09, -0.994741976),
 }
 
-local function getNPCNames()
+local Navigation = {
+    autoTpSpawnConn = nil,
+    preEventCFrame = nil,
+    eventWaterPlatform = nil,
+    eventWaterConn = nil,
+    eventWaterCharConn = nil,
+    eventWatcherConn = nil,
+    eventTeleportActive = false,
+    npcInitList = nil,
+}
+
+Navigation.getNPCNames = function()
     local names = {}
     local npcFolder = workspace:FindFirstChild("NPC")
     if npcFolder then
@@ -211,25 +287,25 @@ local function getNPCNames()
 end
 
 
-local SAVED_LOCATION_FILE = "OrvionFishIt/SavedLocation.json"
+Catalog.SavedLocationFile = "OrvionFishIt/SavedLocation.json"
 
-local function getSavedLocation()
-    if not isfile(SAVED_LOCATION_FILE) then return nil end
+Navigation.getSavedLocation = function()
+    if not isfile(Catalog.SavedLocationFile) then return nil end
     local ok, data = pcall(function()
-        return HttpService:JSONDecode(readfile(SAVED_LOCATION_FILE))
+        return Service.HttpService:JSONDecode(readfile(Catalog.SavedLocationFile))
     end)
     if not ok or not data then return nil end
     return CFrame.new(table.unpack(data))
 end
 
-local function saveCurrentLocation()
-    local char = LocalPlayer.Character
+Navigation.saveCurrentLocation = function()
+    local char = Service.LocalPlayer.Character
     if not char then return false end
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return false end
     local x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22 = root.CFrame:GetComponents()
     local ok = pcall(function()
-        writefile(SAVED_LOCATION_FILE, HttpService:JSONEncode({
+        writefile(Catalog.SavedLocationFile, Service.HttpService:JSONEncode({
             x, y, z, r00, r01, r02, r10, r11, r12, r20, r21, r22
         }))
     end)
@@ -237,11 +313,11 @@ local function saveCurrentLocation()
 end
 
 -- ====== UTILITIES ======
-local function teleportToSaved()
-    local cf = getSavedLocation()
+Navigation.teleportToSaved = function()
+    local cf = Navigation.getSavedLocation()
     if not cf then return false end
     pcall(function()
-        local char = LocalPlayer.Character
+        local char = Service.LocalPlayer.Character
         if not char then return end
         local root = char:FindFirstChild("HumanoidRootPart")
         if not root then return end
@@ -250,27 +326,26 @@ local function teleportToSaved()
     return cf ~= nil
 end
 
-local autoTpSpawnConn = nil
-local function setAutoTeleportOnSpawn(state)
-    if autoTpSpawnConn then autoTpSpawnConn:Disconnect(); autoTpSpawnConn = nil end
+Navigation.setAutoTeleportOnSpawn = function(state)
+    if Navigation.autoTpSpawnConn then Navigation.autoTpSpawnConn:Disconnect(); Navigation.autoTpSpawnConn = nil end
     if state then
-        if LocalPlayer.Character then
+        if Service.LocalPlayer.Character then
             task.spawn(function()
                 task.wait(0.5)
-                pcall(teleportToSaved)
+                pcall(Navigation.teleportToSaved)
             end)
         end
-        autoTpSpawnConn = LocalPlayer.CharacterAdded:Connect(function()
+        Navigation.autoTpSpawnConn = Service.LocalPlayer.CharacterAdded:Connect(function()
             task.wait(1)
-            pcall(teleportToSaved)
+            pcall(Navigation.teleportToSaved)
         end)
     end
 end
 
-local function getPlayerList()
+Navigation.getPlayerList = function()
     local names = {}
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then
+    for _, p in ipairs(Service.Players:GetPlayers()) do
+        if p ~= Service.LocalPlayer then
             table.insert(names, p.Name)
         end
     end
@@ -278,7 +353,7 @@ local function getPlayerList()
     return names
 end
 
-local LOCATION_NAMES = {
+Catalog.LocationNames = {
     "Ancient Jungle", "Ancient Ruin", "Aquarium",
     "Copper Canyon [SPOT 1]", "Copper Canyon [SPOT 2]", "Copper Canyon Mines",
     "Coral Reefs", "Crater Island", "Crater Island [TOP]", "Crystal Depths",
@@ -295,11 +370,11 @@ local LOCATION_NAMES = {
     "Volcanic Cavern", "Weather Machine"
 }
 
-local function teleportTo(name)
-    local cf = LOCATIONS[name]
+Navigation.teleportTo = function(name)
+    local cf = Catalog.Locations[name]
     if not cf then return end
     pcall(function()
-        local char = LocalPlayer.Character
+        local char = Service.LocalPlayer.Character
         if not char then return end
         local root = char:FindFirstChild("HumanoidRootPart")
         if not root then return end
@@ -307,22 +382,20 @@ local function teleportTo(name)
     end)
 end
 
-local function teleportToBM(cf)
-    local root = game:GetService("Players").LocalPlayer.Character
-        and game:GetService("Players").LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+Navigation.teleportToBM = function(cf)
+    local root = Service.LocalPlayer.Character
+        and Service.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if root then root.CFrame = cf end
 end
 
 -- ====== CAST QUALITY HELPER ======
--- Built-in auto fishing uses power 0.5 for its stable Good cast. V1/V2 use
--- the two explicit modes below instead: immediate OK or sampled Perfect.
-local PERFECT_POWER_TARGET = 0.99
-local PERFECT_POWER_TIMEOUT = 2
+-- Built-in auto fishing keeps its native stable result. The manual instant
+-- modes share one official charge flow: fast OK or sampled Perfect.
 
-local function getCastWaterY(power)
+Runtime.getCastWaterY = function(power)
     local waterY = 1.2854545116425
     pcall(function()
-        local char = LocalPlayer.Character
+        local char = Service.LocalPlayer.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if not root then return end
         local castDist = power * 15 + 10
@@ -339,116 +412,192 @@ local function getCastWaterY(power)
     return waterY
 end
 
-local function requestOkCast()
-    pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end)
-    pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
+Runtime.Fishing.IsModeActive = function(mode)
+    if mode == "V1" then return Config.InstantFishing end
+    if mode == "V2" then return FishingModes.V2.Active end
+    if mode == "Blatant" then return Config.BlatantActive end
     return true
 end
 
-local function requestPerfectCast()
+Runtime.Fishing.IsBlocked = function()
+    local character = Service.LocalPlayer.Character
+    return character and character:GetAttribute("IsTrading") == true or false
+end
+
+Runtime.Fishing.WaitReady = function(mode)
+    while Runtime.Fishing.IsModeActive(mode) do
+        if Runtime.Fishing.Owner and Runtime.Fishing.Owner ~= mode then
+            task.wait(0.05)
+        else
+            local character = Service.LocalPlayer.Character
+            if character and character:GetAttribute("SellAll") == true then
+                Runtime.Sell.Wait(Runtime.Sell.Ticket)
+            end
+            if not Runtime.Fishing.IsBlocked() then
+                Runtime.Fishing.Owner = mode
+                return true
+            else
+                task.wait(0.05)
+            end
+        end
+    end
+    return false
+end
+
+Runtime.Fishing.Recover = function(mode)
+    if Runtime.Fishing.Owner == mode then
+        Runtime.Fishing.Owner = nil
+        Runtime.Fishing.Phase = "Idle"
+    end
+end
+
+Runtime.Fishing.ResetServer = function(mode)
+    Runtime.Fishing.Failures[mode] = 0
+    Runtime.Fishing.Owner = nil
+    Runtime.Fishing.Phase = "Idle"
+    if Remote.cancel then
+        pcall(function() Remote.cancel:InvokeServer(true) end)
+    end
+end
+
+Runtime.Fishing.HandleResult = function(mode, ok)
+    if ok then
+        Runtime.Fishing.Failures[mode] = 0
+        return
+    end
+    Runtime.Fishing.Failures[mode] = (Runtime.Fishing.Failures[mode] or 0) + 1
+    if Runtime.Fishing.Failures[mode] >= 2 then
+        Runtime.Fishing.ResetServer(mode)
+        task.wait(0.15)
+    else
+        Runtime.Fishing.Recover(mode)
+    end
+    task.wait(0.35)
+end
+
+Runtime.Fishing.AwaitCatch = function(mode, catchSerial)
+    Runtime.Fishing.Phase = "AwaitCatch"
+    local deadline = os.clock() + 3
+    while Runtime.Fishing.IsModeActive(mode)
+        and Runtime.Fishing.CatchSerial <= catchSerial
+        and os.clock() < deadline
+    do
+        task.wait(0.03)
+    end
+    if Runtime.Fishing.CatchSerial <= catchSerial then
+        Runtime.Fishing.Recover(mode)
+        return false
+    end
+
+    Runtime.Fishing.Phase = "PostCatch"
+    task.wait(0.15)
+    Runtime.Sell.CheckCount()
+    if Runtime.Sell.Pending then Runtime.Sell.Flush() end
+    local character = Service.LocalPlayer.Character
+    if Runtime.Sell.Busy
+        or (character and character:GetAttribute("SellAll") == true)
+    then
+        Runtime.Sell.Wait(Runtime.Sell.Ticket)
+    end
+
+    if not Runtime.Fishing.IsModeActive(mode) then
+        Runtime.Fishing.Recover(mode)
+        return false
+    end
+    Runtime.Fishing.Owner = nil
+    Runtime.Fishing.Phase = "Idle"
+    return true
+end
+
+Runtime.requestConfiguredCast = function(mode)
+    if not Runtime.Fishing.WaitReady(mode) then return false end
+
+    local targetPower = Config.PerfectCast and 0.99 or 0.10
     -- Native ChargeFishingRod returns (accepted, authoritative start time).
+    Runtime.Fishing.Phase = "Charging"
     local chargeCallOk, chargeAccepted, serverChargeStart = pcall(function()
-        return Events.charge:InvokeServer()
+        return Remote.charge:InvokeServer()
     end)
     if not chargeCallOk or not chargeAccepted
         or type(serverChargeStart) ~= "number"
     then
+        Runtime.Fishing.Recover(mode)
         return false
     end
 
-    local deadline = workspace:GetServerTimeNow() + PERFECT_POWER_TIMEOUT
+    local deadline = workspace:GetServerTimeNow() + 2
     while workspace:GetServerTimeNow() < deadline do
         local powerOk, currentPower = pcall(function()
-            return FishingConstants:GetPower(serverChargeStart)
+            return Data.FishingConstants:GetPower(serverChargeStart)
         end)
         if powerOk and type(currentPower) == "number"
-            and currentPower >= PERFECT_POWER_TARGET
+            and currentPower >= targetPower
         then
             currentPower = math.clamp(currentPower, 0, 1)
             local requestTime = workspace:GetServerTimeNow()
-            local waterY = getCastWaterY(currentPower)
+            local waterY = Runtime.getCastWaterY(currentPower)
+            Runtime.Fishing.Phase = "Minigame"
             local minigameCallOk, started = pcall(function()
-                return Events.minigame:InvokeServer(
-                    waterY,
-                    currentPower,
-                    requestTime
-                )
+                return Remote.minigame:InvokeServer(
+                    waterY, currentPower, requestTime)
             end)
-            return minigameCallOk and started ~= false
+            if minigameCallOk and started ~= false then return true end
+            Runtime.Fishing.Recover(mode)
+            return false
         end
-        RunService.Heartbeat:Wait()
+        Service.RunService.Heartbeat:Wait()
     end
 
-    -- Never submit a lower tier when Perfect was requested.
+    -- Never submit a different tier if the requested power was not reached.
+    Runtime.Fishing.Recover(mode)
     return false
 end
 
-local function requestConfiguredCast()
-    if Config.PerfectCast then
-        return requestPerfectCast()
-    end
-    return requestOkCast()
-end
-
 -- ====== FISHING SYSTEM V1 ======
-local fishThread = nil
--- ====== STATE ======
-local isFishing = false
-
-local function castRod()
-    return requestConfiguredCast()
-end
-
-local function stopFishing()
+FishingModes.V1.Stop = function()
     Config.InstantFishing = false
-    isFishing = false
-    if Events.cancel then
-        pcall(function() Events.cancel:InvokeServer(true) end)
+    FishingModes.Active = false
+    if FishingModes.V1.Thread then
+        pcall(task.cancel, FishingModes.V1.Thread)
+        FishingModes.V1.Thread = nil
     end
+    Runtime.Fishing.ResetServer("V1")
 end
 
-local function startFishing()
-    if fishThread then task.cancel(fishThread) end
-    fishThread = task.spawn(function()
+FishingModes.V1.Start = function()
+    if FishingModes.V1.Thread then task.cancel(FishingModes.V1.Thread) end
+    FishingModes.V1.Thread = task.spawn(function()
+        Runtime.Fishing.ResetServer("V1")
+        task.wait(0.1)
         while Config.InstantFishing do
-            isFishing = true
-            local ok, err = pcall(function()
-                if not castRod() then error("V1 cast request rejected") end
-                -- Give the server one short frame to enter the fishing state
-                -- before completing the catch. The configurable pacing still
-                -- remains after the catch, before the next charge.
-                task.wait(0.05)
-                local completed = pcall(function() Events.fishing:FireServer() end)
-                if not completed then error("V1 catch completion failed") end
-
-                -- V1 pacing belongs after CatchFishCompleted, before the next
-                -- charge. Holding charge longer would change the cast tier.
-                task.wait(math.max(Config.CastWait or 0, 0.05))
+            FishingModes.Active = true
+            local ok = pcall(function()
+                if not Runtime.requestConfiguredCast("V1") then error("V1 cast request rejected") end
+                if Config.CastWait > 0 then task.wait(Config.CastWait) end
+                local catchSerial = Runtime.Fishing.CatchSerial
+                Runtime.Fishing.Phase = "Completing"
+                if not pcall(function() Remote.fishing:FireServer() end) then
+                    error("V1 catch completion failed")
+                end
+                if not Runtime.Fishing.AwaitCatch("V1", catchSerial) then
+                    error("V1 catch acknowledgement timeout")
+                end
+                task.wait(0.3)
             end)
-            if not ok and Config.InstantFishing then
-                pcall(function() Events.cancel:InvokeServer(true) end)
-                task.wait(0.5)
-            end
-            isFishing = false
+            Runtime.Fishing.HandleResult("V1", ok)
+            FishingModes.Active = false
         end
-        isFishing = false
+        FishingModes.Active = false
     end)
 end
 
 -- ====== FISHING SYSTEM V2 (Snap Reel) ======
-local fishV2Thread = nil
-local snapReelActive = false
-local Config2 = {
-    Active = false,
-    Delay = 0,
-}
-
 -- AdjustSpeed: FishCaught = 3
-local AnimController = require(ReplicatedStorage.Controllers.AnimationController)
-local origPlayAnim = AnimController.PlayAnimation
-AnimController.PlayAnimation = function(self, name, ...)
-    local track, b, c = origPlayAnim(self, name, ...)
-    if snapReelActive and track then
+FishingModes.V2.AnimationController = require(Service.ReplicatedStorage.Controllers.AnimationController)
+FishingModes.V2.OriginalPlayAnimation = FishingModes.V2.AnimationController.PlayAnimation
+FishingModes.V2.AnimationController.PlayAnimation = function(self, name, ...)
+    local track, b, c = FishingModes.V2.OriginalPlayAnimation(self, name, ...)
+    if FishingModes.V2.SnapReel and track then
         if name == "FishCaught" then
             pcall(function() track:AdjustSpeed(3) end)
         end
@@ -456,31 +605,31 @@ AnimController.PlayAnimation = function(self, name, ...)
     return track, b, c
 end
 
-local function enableBaitVisual() end
-local function disableBaitVisual() end
-
 -- hide bait via ChildAdded, duration exact dari BaitCastVisual
-local cosmeticFolder = workspace:WaitForChild("CosmeticFolder", 10)
-local pendingDuration = nil
+FishingModes.V2.CosmeticFolder = workspace:WaitForChild("CosmeticFolder", 10)
+FishingModes.V2.PendingDuration = nil
 
-if R.baitCast then
-    R.baitCast.OnClientEvent:Connect(function(player, baitData)
-        if not snapReelActive then return end
-        if player ~= LocalPlayer then return end
+if Remote.baitCast then
+    Remote.baitCast.OnClientEvent:Connect(function(player, baitData)
+        if player ~= Service.LocalPlayer then return end
+        if SupportState.skinEffectConns.Active then
+            SupportState.skinEffectConns.LocalEffectUntil = os.clock() + 3
+        end
+        if not FishingModes.V2.SnapReel then return end
         if not (baitData and baitData.CastPosition and baitData.Origin) then return end
         local power = baitData.Power or 0
         local dist = (baitData.Origin - baitData.CastPosition).Magnitude
-        pendingDuration = dist / 40 * (1.2 - power * 0.4)
+        FishingModes.V2.PendingDuration = dist / 40 * (1.2 - power * 0.4)
     end)
 end
 
-if cosmeticFolder then
-    cosmeticFolder.ChildAdded:Connect(function(bait)
-        if not snapReelActive then return end
-        if bait.Name ~= tostring(LocalPlayer.UserId) then return end
+if FishingModes.V2.CosmeticFolder then
+    FishingModes.V2.CosmeticFolder.ChildAdded:Connect(function(bait)
+        if not FishingModes.V2.SnapReel then return end
+        if bait.Name ~= tostring(Service.LocalPlayer.UserId) then return end
 
-        local duration = pendingDuration or 0.4
-        pendingDuration = nil
+        local duration = FishingModes.V2.PendingDuration or 0.4
+        FishingModes.V2.PendingDuration = nil
 
         local hidden = {}
 
@@ -500,10 +649,14 @@ if cosmeticFolder then
 
         local baitAttachment = bait:FindFirstChildWhichIsA("Attachment")
         if baitAttachment then
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj:IsA("Beam") and obj.Attachment1 == baitAttachment and obj.Enabled then
-                    hidden[obj] = obj.Enabled
-                    obj.Enabled = false
+            for _, root in ipairs({ Service.LocalPlayer.Character, FishingModes.V2.CosmeticFolder }) do
+                if root then
+                    for _, obj in ipairs(root:GetDescendants()) do
+                        if obj:IsA("Beam") and obj.Attachment1 == baitAttachment and obj.Enabled then
+                            hidden[obj] = obj.Enabled
+                            obj.Enabled = false
+                        end
+                    end
                 end
             end
         end
@@ -511,140 +664,299 @@ if cosmeticFolder then
         task.wait(duration)
 
         for obj, orig in pairs(hidden) do
-            if type(orig) == "number" then obj.Transparency = orig
-            else obj.Enabled = orig end
+            pcall(function()
+                if not obj.Parent then return end
+                if SupportState.skinEffectConns.Active and SupportState.isVisualEffect(obj) then
+                    SupportState.lockEffect("Skin", obj)
+                elseif type(orig) == "number" then
+                    obj.Transparency = orig
+                else
+                    obj.Enabled = orig
+                end
+            end)
         end
     end)
-end
-
-local function castRodV2()
-    return requestConfiguredCast()
 end
 
 
 -- ====== BLATANT VISUAL ======
-local blatantGeneration = 0
-local blatantThread = nil
-local clearBlatantInventoryVisuals = function() end
-
-local function stopBlatant()
-    if blatantThread then task.cancel(blatantThread); blatantThread = nil end
-    blatantGeneration = blatantGeneration + 1
-    isFishing = false
+FishingModes.Blatant.Stop = function(restarting)
+    if FishingModes.Blatant.Thread then
+        task.cancel(FishingModes.Blatant.Thread)
+        FishingModes.Blatant.Thread = nil
+    end
+    FishingModes.Blatant.Generation = FishingModes.Blatant.Generation + 1
+    FishingModes.Active = false
     Config.BlatantActive = false
-    pcall(clearBlatantInventoryVisuals)
-    if Events.cancel then pcall(function() Events.cancel:InvokeServer(true) end) end
+    table.clear(FishingModes.Blatant.Visual.pending)
+    pcall(FishingModes.Blatant.Visual.clearInventoryVisuals)
+    if not restarting then Runtime.Fishing.ResetServer("Blatant") end
 end
 
-local function startBlatant()
-    stopBlatant()
+FishingModes.Blatant.Start = function()
+    FishingModes.Blatant.Stop(true)
+    Runtime.Fishing.Owner = nil
+    Runtime.Fishing.Phase = "Idle"
     Config.BlatantActive = true
-    blatantGeneration = blatantGeneration + 1
-    blatantThread = task.spawn(function()
+    FishingModes.Blatant.Generation = FishingModes.Blatant.Generation + 1
+    FishingModes.Blatant.Thread = task.spawn(function()
+        Runtime.Fishing.ResetServer("Blatant")
+        task.wait(0.1)
         while Config.BlatantActive do
-            isFishing = true
-            pcall(function()
-                -- Deliberately omit the minigame timestamp to force a fast bad cast.
-                pcall(function() Events.charge:InvokeServer(workspace:GetServerTimeNow()) end)
-                pcall(function() Events.minigame:InvokeServer(1.2854545116425, 1) end)
+            FishingModes.Active = true
+            local ok = pcall(function()
+                if not Runtime.requestConfiguredCast("Blatant") then
+                    error("Blatant cast request rejected")
+                end
                 if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
-                pcall(function() Events.fishing:FireServer() end)
+                FishingModes.Blatant.Visual.nextTicket = FishingModes.Blatant.Visual.nextTicket + 1
+                local ticket = FishingModes.Blatant.Visual.nextTicket
+                FishingModes.Blatant.Visual.pending[ticket] = FishingModes.Blatant.Visual.captureBadge()
+                local catchSerial = Runtime.Fishing.CatchSerial
+                Runtime.Fishing.Phase = "Completing"
+                if not pcall(function() Remote.fishing:FireServer() end) then
+                    FishingModes.Blatant.Visual.pending[ticket] = nil
+                    error("Blatant catch completion failed")
+                else
+                    task.delay(2, function()
+                        FishingModes.Blatant.Visual.pending[ticket] = nil
+                    end)
+                end
+                if not Runtime.Fishing.AwaitCatch("Blatant", catchSerial) then
+                    error("Blatant catch acknowledgement timeout")
+                end
             end)
+            Runtime.Fishing.HandleResult("Blatant", ok)
             task.wait(0.1)
-            isFishing = false
+            FishingModes.Active = false
         end
-        isFishing = false
+        FishingModes.Active = false
     end)
 end
 
-local function stopFishingV2()
-    Config2.Active = false
-    isFishing = false
-    snapReelActive = false
-    enableBaitVisual()
-    if Events.cancel then
-        pcall(function() Events.cancel:InvokeServer(true) end)
+FishingModes.V2.Stop = function()
+    FishingModes.V2.Active = false
+    FishingModes.Active = false
+    FishingModes.V2.SnapReel = false
+    if FishingModes.V2.Thread then
+        pcall(task.cancel, FishingModes.V2.Thread)
+        FishingModes.V2.Thread = nil
     end
+    Runtime.Fishing.ResetServer("V2")
 end
 
-local function startFishingV2()
-    if fishV2Thread then task.cancel(fishV2Thread) end
-    snapReelActive = true
-    disableBaitVisual()
-    fishV2Thread = task.spawn(function()
-        while Config2.Active do
-            isFishing = true
+FishingModes.V2.Start = function()
+    if FishingModes.V2.Thread then task.cancel(FishingModes.V2.Thread) end
+    FishingModes.V2.SnapReel = true
+    FishingModes.V2.Thread = task.spawn(function()
+        Runtime.Fishing.ResetServer("V2")
+        task.wait(0.1)
+        while FishingModes.V2.Active do
+            FishingModes.Active = true
             local ok = pcall(function()
-                if not castRodV2() then error("V2 cast request rejected") end
-                if Config2.Delay > 0 then task.wait(Config2.Delay) end
-                local completed = pcall(function() Events.fishing:FireServer() end)
+                if not Runtime.requestConfiguredCast("V2") then error("V2 cast request rejected") end
+                if FishingModes.V2.Delay > 0 then task.wait(FishingModes.V2.Delay) end
+                local catchSerial = Runtime.Fishing.CatchSerial
+                Runtime.Fishing.Phase = "Completing"
+                local completed = pcall(function() Remote.fishing:FireServer() end)
                 if not completed then error("V2 catch completion failed") end
+                if not Runtime.Fishing.AwaitCatch("V2", catchSerial) then
+                    error("V2 catch acknowledgement timeout")
+                end
                 task.wait(0.05)
             end)
-            if not ok then task.wait(1) end
-            isFishing = false
+            Runtime.Fishing.HandleResult("V2", ok)
+            FishingModes.Active = false
         end
-        isFishing = false
+        FishingModes.Active = false
     end)
 end
 
 -- ====== AUTO SELL SYSTEM ======
-local autoSellThread = nil
-local baselineFishCount = 0
-
-local function sellAll()
-    if not Events.sell then return false end
-    local ok = pcall(function() return Events.sell:InvokeServer() end)
-    return ok
+Runtime.Sell.Finish = function(ticket)
+    if ticket ~= Runtime.Sell.Ticket then return end
+    local worker = Runtime.Sell.Worker
+    local monitor = Runtime.Sell.Monitor
+    Runtime.Sell.Busy = false
+    Runtime.Sell.Phase = "Idle"
+    Runtime.Sell.Worker = nil
+    Runtime.Sell.Monitor = nil
+    Runtime.Sell.CompletedAt = os.clock()
+    if worker and worker ~= coroutine.running() then pcall(task.cancel, worker) end
+    if monitor and monitor ~= coroutine.running() then pcall(task.cancel, monitor) end
 end
 
-local function stopAutoSell()
+Runtime.Sell.Wait = function(ticket)
+    local deadline = os.clock() + 5.5
+    local clearSince = nil
+    while os.clock() < deadline do
+        local character = Service.LocalPlayer.Character
+        local selling = character and character:GetAttribute("SellAll") == true
+        local active = (Runtime.Sell.Busy and Runtime.Sell.Ticket == ticket) or selling
+        if active then
+            clearSince = nil
+        elseif not clearSince then
+            clearSince = os.clock()
+        elseif os.clock() - clearSince >= 0.15 then
+            return true
+        end
+        task.wait(0.05)
+    end
+    if Runtime.Sell.Busy and Runtime.Sell.Ticket == ticket then
+        Runtime.Sell.Finish(ticket)
+    end
+    return false
+end
+
+Runtime.Sell.Execute = function()
+    if Runtime.Sell.Busy or Runtime.Sell.Phase ~= "Idle" then return false end
+    if os.clock() - Runtime.Sell.LastCall < 0.25 then return false end
+    if not Remote.sell then return false end
+    local character = Service.LocalPlayer.Character
+    if character and (character:GetAttribute("SellAll") == true
+        or character:GetAttribute("IsTrading") == true)
+    then
+        return false
+    end
+
+    Runtime.Sell.Busy = true
+    Runtime.Sell.Phase = "Starting"
+    Runtime.Sell.Pending = false
+    Runtime.Sell.LastCall = os.clock()
+    Runtime.Sell.Ticket = Runtime.Sell.Ticket + 1
+    local ticket = Runtime.Sell.Ticket
+    local startedAt = os.clock()
+    local sawSellAll = false
+    local callDone = false
+
+    -- The request and its watchdog are separate so a stalled RF cannot pin
+    -- every fishing loop forever on low-end/mobile executors.
+    Runtime.Sell.Worker = task.spawn(function()
+        pcall(function() return Remote.sell:InvokeServer() end)
+        if ticket ~= Runtime.Sell.Ticket then return end
+        callDone = true
+    end)
+    Runtime.Sell.Monitor = task.spawn(function()
+        while ticket == Runtime.Sell.Ticket do
+            local char = Service.LocalPlayer.Character
+            local selling = char and char:GetAttribute("SellAll") == true
+            if selling then
+                sawSellAll = true
+                Runtime.Sell.Phase = "Selling"
+            elseif sawSellAll
+                or (callDone and os.clock() - startedAt >= 0.35)
+            then
+                Runtime.Sell.Finish(ticket)
+                return
+            elseif os.clock() - startedAt >= 5 then
+                Runtime.Sell.Finish(ticket)
+                return
+            end
+            task.wait(0.05)
+        end
+    end)
+
+    return true
+end
+
+Runtime.Sell.Flush = function()
+    if not Runtime.Sell.Pending then return false end
+    return Runtime.Sell.Execute()
+end
+
+Runtime.Sell.Queue = function(reason)
+    Runtime.Sell.Pending = true
+    Runtime.Sell.Reason = reason or Runtime.Sell.Reason or "Manual"
+    local nativeAuto = false
+    local currentGUID = nil
+    pcall(function()
+        nativeAuto = Data.Player:Get("AutoFishing") == true
+    end)
+    pcall(function()
+        if FishingModes.Controller then
+            if FishingModes.Controller.GetCurrentGUID then
+                currentGUID = FishingModes.Controller:GetCurrentGUID()
+            else
+                currentGUID = FishingModes.Controller.CurrentGUID
+            end
+        end
+    end)
+    if Runtime.Fishing.Phase == "Idle"
+        and not nativeAuto
+        and currentGUID == nil
+    then
+        task.defer(function()
+            if Runtime.Fishing.Phase == "Idle" then Runtime.Sell.Flush() end
+        end)
+    end
+    return true
+end
+
+Runtime.Sell.CheckCount = function()
+    if not Config.AutoSell or Config.AutoSellMode ~= "Count" then return end
+    local currentCount = Data.getFishCount()
+    if Runtime.Sell.CountSeen < 0 then
+        Runtime.Sell.CountSeen = currentCount
+        if currentCount >= Config.SellCount
+            and not Runtime.Sell.Pending
+            and not Runtime.Sell.Busy
+        then
+            Runtime.Sell.Queue("Count")
+        end
+    elseif currentCount ~= Runtime.Sell.CountSeen then
+        local increased = currentCount > Runtime.Sell.CountSeen
+        Runtime.Sell.CountSeen = currentCount
+        if increased and currentCount >= Config.SellCount
+            and not Runtime.Sell.Pending
+            and not Runtime.Sell.Busy
+        then
+            Runtime.Sell.Queue("Count")
+        end
+    end
+end
+
+Runtime.Sell.Stop = function()
     Config.AutoSell = false
-    if autoSellThread then
-        task.cancel(autoSellThread)
-        autoSellThread = nil
+    Runtime.Sell.Pending = false
+    Runtime.Sell.CountSeen = -1
+    if Runtime.Sell.Thread then
+        task.cancel(Runtime.Sell.Thread)
+        Runtime.Sell.Thread = nil
     end
 end
 
-local function startAutoSell()
-    if autoSellThread then task.cancel(autoSellThread) end
-    -- baseline = inventory sekarang, jadi hanya ikan BARU yang dihitung
-    baselineFishCount = getFishCount()
+Runtime.Sell.Start = function()
+    if Runtime.Sell.Thread then task.cancel(Runtime.Sell.Thread) end
+    Runtime.Sell.CountSeen = -1
 
-    -- Count mode: kalau inventory sudah >= threshold -> langsung jual sekarang
-    -- (tidak nunggu ikan baru)
-    if Config.AutoSellMode == "Count" and baselineFishCount >= Config.SellCount then
-        sellAll()
-        task.wait(2)
-        baselineFishCount = getFishCount()
-    end
-
-    autoSellThread = task.spawn(function()
+    Runtime.Sell.Thread = task.spawn(function()
         local currentMode = Config.AutoSellMode
-        local lastSellTick = tick()
+        local seenRevision = Runtime.Sell.Revision
+        local lastSellTick = os.clock()
 
         while Config.AutoSell do
-            if currentMode ~= Config.AutoSellMode then
+            if currentMode ~= Config.AutoSellMode
+                or seenRevision ~= Runtime.Sell.Revision
+            then
                 currentMode = Config.AutoSellMode
-                -- reset baseline dan timer saat mode switch
-                baselineFishCount = getFishCount()
-                lastSellTick = tick()
+                seenRevision = Runtime.Sell.Revision
+                lastSellTick = os.clock()
+                Runtime.Sell.CountSeen = -1
             end
 
             if Config.AutoSellMode == "Delay" then
-                local elapsed = tick() - lastSellTick
-                if elapsed >= Config.SellDelay then
-                    sellAll()
-                    lastSellTick = tick()
+                local timerStart = math.max(lastSellTick, Runtime.Sell.CompletedAt)
+                if os.clock() - timerStart >= Config.SellDelay
+                    and not Runtime.Sell.Pending
+                    and not Runtime.Sell.Busy
+                then
+                    Runtime.Sell.Queue("Delay")
+                    lastSellTick = os.clock()
                 end
                 task.wait(0.5)
 
             elseif Config.AutoSellMode == "Count" then
-                local currentCount = getFishCount()
-                if currentCount >= Config.SellCount then
-                    sellAll()
-                    task.wait(2)
-                end
+                Runtime.Sell.CheckCount()
                 task.wait(0.5)
             end
         end
@@ -652,12 +964,12 @@ local function startAutoSell()
 end
 
 -- ====== SMALL NOTIFICATION (AUTO ON) ======
-local fishNameToId = {}
+FishingModes.FishNameToId = {}
 
 for itemId = 1, 1000 do
-    local fishData = ItemUtility.GetItemDataFromItemType("Fish", itemId)
+    local fishData = Data.ItemUtility.GetItemDataFromItemType("Fish", itemId)
     if fishData and fishData.Data and fishData.Data.Name then
-        fishNameToId[fishData.Data.Name] = itemId
+        FishingModes.FishNameToId[fishData.Data.Name] = itemId
     end
 end
 
@@ -666,73 +978,81 @@ end
 do
     local okTextController, TextNotificationController = pcall(
         require,
-        ReplicatedStorage.Controllers.TextNotificationController
+        Service.ReplicatedStorage.Controllers.TextNotificationController
     )
     local okVisualController, FishCaughtVisual = pcall(
         require,
-        ReplicatedStorage.Controllers.FishingController:WaitForChild("FishCaughtVisual")
+        Service.ReplicatedStorage.Controllers.FishingController:WaitForChild("FishCaughtVisual")
     )
 
-    -- The real inventory is server-owned. These structures only mirror one
-    -- extra caught fish in the local inventory grid and HUD badge.
-    local visualInventoryCopies = {}
-    local visualCopySerial = 0
-    local visualBadgeCount = 0
-    local inventoryGrid = nil
-    local inventoryGui = nil
-    local badgeObject = nil
-    local badgeText = nil
-    local applyingBadge = false
-    local blatantBadgeOverrideActive = false
+    -- One shared table keeps this block below Luau's local-register limit.
+    -- Blatant reuses the native badge and releases it when inventory opens.
 
     local function resolveInventoryGrid()
-        if inventoryGrid and inventoryGrid.Parent then return inventoryGrid end
+        if FishingModes.Blatant.Visual.inventoryGrid and FishingModes.Blatant.Visual.inventoryGrid.Parent then
+            return FishingModes.Blatant.Visual.inventoryGrid
+        end
         pcall(function()
-            inventoryGui = LocalPlayer.PlayerGui:FindFirstChild("Inventory")
-            local main = inventoryGui and inventoryGui:FindFirstChild("Main")
+            FishingModes.Blatant.Visual.inventoryGui = Service.LocalPlayer.PlayerGui:FindFirstChild("Inventory")
+            local main = FishingModes.Blatant.Visual.inventoryGui
+                and FishingModes.Blatant.Visual.inventoryGui:FindFirstChild("Main")
             local content = main and main:FindFirstChild("Content")
             local pages = content and content:FindFirstChild("Pages")
             local inventoryPage = pages and pages:FindFirstChild("Inventory2")
             local pageMain = inventoryPage and inventoryPage:FindFirstChild("Main")
-            inventoryGrid = pageMain and pageMain:FindFirstChild("Inventory")
+            FishingModes.Blatant.Visual.inventoryGrid = pageMain and pageMain:FindFirstChild("Inventory")
         end)
-        return inventoryGrid
+        return FishingModes.Blatant.Visual.inventoryGrid
     end
 
     local function resolveInventoryBadge()
-        if badgeObject and badgeObject.Parent then return badgeObject, badgeText end
+        if FishingModes.Blatant.Visual.nativeBadge and FishingModes.Blatant.Visual.nativeBadge.Parent then
+            return FishingModes.Blatant.Visual.nativeBadge, FishingModes.Blatant.Visual.nativeText
+        end
         pcall(function()
-            local backpack = LocalPlayer.PlayerGui:FindFirstChild("Backpack")
+            local backpack = Service.LocalPlayer.PlayerGui:FindFirstChild("Backpack")
             local display = backpack and backpack:FindFirstChild("Display")
             local inventoryButton = display and display:FindFirstChild("Inventory")
-            badgeObject = inventoryButton and inventoryButton:FindFirstChild("Notification")
-            if badgeObject then
-                if badgeObject:IsA("TextLabel") or badgeObject:IsA("TextButton") then
-                    badgeText = badgeObject
+            FishingModes.Blatant.Visual.nativeBadge = inventoryButton
+                and inventoryButton:FindFirstChild("Notification")
+            if FishingModes.Blatant.Visual.nativeBadge then
+                if FishingModes.Blatant.Visual.nativeBadge:IsA("TextLabel")
+                    or FishingModes.Blatant.Visual.nativeBadge:IsA("TextButton")
+                then
+                    FishingModes.Blatant.Visual.nativeText = FishingModes.Blatant.Visual.nativeBadge
                 else
-                    badgeText = badgeObject:FindFirstChildWhichIsA("TextLabel", true)
-                        or badgeObject:FindFirstChildWhichIsA("TextButton", true)
+                    FishingModes.Blatant.Visual.nativeText = FishingModes.Blatant.Visual.nativeBadge
+                        :FindFirstChildWhichIsA("TextLabel", true)
+                        or FishingModes.Blatant.Visual.nativeBadge
+                            :FindFirstChildWhichIsA("TextButton", true)
                 end
             end
         end)
-        return badgeObject, badgeText
+        return FishingModes.Blatant.Visual.nativeBadge, FishingModes.Blatant.Visual.nativeText
+    end
+
+    FishingModes.Blatant.Visual.captureBadge = function()
+        if FishingModes.Blatant.Visual.badgeOverride then
+            return FishingModes.Blatant.Visual.badgeCount
+        end
+        local notification, textObject = resolveInventoryBadge()
+        return notification and notification.Visible and textObject
+            and tonumber(textObject.Text) or 0
     end
 
     local function refreshInventoryBadge()
+        if not FishingModes.Blatant.Visual.badgeOverride then return end
         local notification, textObject = resolveInventoryBadge()
-        if not notification then return end
-        -- Do not read InventoryNotifications here. Its values are cumulative
-        -- server state, not the unread number currently shown by the HUD.
-        local count = visualBadgeCount
-        applyingBadge = true
+        if not notification or not notification:IsA("GuiObject") then return end
+        FishingModes.Blatant.Visual.writingBadge = true
         pcall(function()
-            if notification:IsA("GuiObject") then notification.Visible = count > 0 end
+            notification.Visible = FishingModes.Blatant.Visual.badgeCount > 0
             if textObject then
-                textObject.Text = tostring(count)
-                textObject.Visible = count > 0
+                textObject.Text = tostring(FishingModes.Blatant.Visual.badgeCount)
+                textObject.Visible = FishingModes.Blatant.Visual.badgeCount > 0
             end
         end)
-        applyingBadge = false
+        FishingModes.Blatant.Visual.writingBadge = false
     end
 
     local function removeVisualInventoryTiles()
@@ -795,7 +1115,7 @@ do
         local grid = resolveInventoryGrid()
         if not grid then return end
         removeVisualInventoryTiles()
-        for serial, descriptor in pairs(visualInventoryCopies) do
+        for serial, descriptor in pairs(FishingModes.Blatant.Visual.copies) do
             local source = findSourceInventoryTile(descriptor)
             if source then
                 local clone = source:Clone()
@@ -824,47 +1144,32 @@ do
             task.delay(delayTime, function()
                 if Config.BlatantActive then
                     refreshVisualInventoryTiles()
-                    if blatantBadgeOverrideActive then
-                        refreshInventoryBadge()
-                    end
                 end
+                refreshInventoryBadge()
             end)
         end
     end
 
-    local function beginBlatantBadgeOverride()
-        if blatantBadgeOverrideActive then return end
-        -- Preserve any unread count already produced by manual, V1, V2, or
-        -- native auto fishing. Blatant only adds its own two-count visual.
-        local notification, textObject = resolveInventoryBadge()
-        local nativeCount = 0
-        if notification and notification:IsA("GuiObject") and notification.Visible
-            and textObject
-        then
-            nativeCount = tonumber(textObject.Text) or 0
-        end
-        visualBadgeCount = nativeCount
-        blatantBadgeOverrideActive = true
-    end
-
-    local function registerVisualInventoryCopy(fishItemId, fishName)
+    local function registerVisualInventoryCopy(fishItemId, fishName, badgeBaseline)
         local itemData = nil
         pcall(function()
-            itemData = ItemUtility.GetItemDataFromItemType("Fish", fishItemId)
+            itemData = Data.ItemUtility.GetItemDataFromItemType("Fish", fishItemId)
         end)
-        visualCopySerial = visualCopySerial + 1
-        visualInventoryCopies[visualCopySerial] = {
+        FishingModes.Blatant.Visual.copySerial = FishingModes.Blatant.Visual.copySerial + 1
+        FishingModes.Blatant.Visual.copies[FishingModes.Blatant.Visual.copySerial] = {
             Icon = itemData and itemData.Data and itemData.Data.Icon or "",
             Name = fishName or (itemData and itemData.Data and itemData.Data.Name) or "Fish",
         }
-        beginBlatantBadgeOverride()
-        -- Blatant exposes one real catch plus one local visual copy.
-        visualBadgeCount = visualBadgeCount + 2
+        if not FishingModes.Blatant.Visual.badgeOverride then
+            FishingModes.Blatant.Visual.badgeCount = tonumber(badgeBaseline) or 0
+            FishingModes.Blatant.Visual.badgeOverride = true
+        end
+        FishingModes.Blatant.Visual.badgeCount = FishingModes.Blatant.Visual.badgeCount + 2
         scheduleInventoryVisualRefresh()
     end
 
-    clearBlatantInventoryVisuals = function()
-        visualInventoryCopies = {}
+    FishingModes.Blatant.Visual.clearInventoryVisuals = function()
+        table.clear(FishingModes.Blatant.Visual.copies)
         removeVisualInventoryTiles()
     end
 
@@ -873,8 +1178,8 @@ do
         local notification, textObject = resolveInventoryBadge()
         if textObject then
             textObject:GetPropertyChangedSignal("Text"):Connect(function()
-                if Config.BlatantActive and blatantBadgeOverrideActive
-                    and visualBadgeCount > 0 and not applyingBadge
+                if FishingModes.Blatant.Visual.badgeOverride
+                    and not FishingModes.Blatant.Visual.writingBadge
                 then
                     task.defer(refreshInventoryBadge)
                 end
@@ -882,21 +1187,21 @@ do
         end
         if notification and notification:IsA("GuiObject") then
             notification:GetPropertyChangedSignal("Visible"):Connect(function()
-                if Config.BlatantActive and blatantBadgeOverrideActive
-                    and visualBadgeCount > 0 and not applyingBadge
+                if FishingModes.Blatant.Visual.badgeOverride
+                    and not FishingModes.Blatant.Visual.writingBadge
                 then
                     task.defer(refreshInventoryBadge)
                 end
             end)
         end
-        if inventoryGui then
-            inventoryGui:GetPropertyChangedSignal("Enabled"):Connect(function()
-                if inventoryGui.Enabled and blatantBadgeOverrideActive then
-                    -- Match the native claim flow: opening inventory is the
-                    -- only action that resets the local unread badge.
-                    visualBadgeCount = 0
-                    refreshInventoryBadge()
-                    blatantBadgeOverrideActive = false
+        if FishingModes.Blatant.Visual.inventoryGui then
+            FishingModes.Blatant.Visual.inventoryGui:GetPropertyChangedSignal("Enabled"):Connect(function()
+                if FishingModes.Blatant.Visual.inventoryGui.Enabled
+                    and FishingModes.Blatant.Visual.badgeOverride
+                then
+                    -- Release ownership; the game's native claim performs reset.
+                    FishingModes.Blatant.Visual.badgeCount = 0
+                    FishingModes.Blatant.Visual.badgeOverride = false
                     if Config.BlatantActive then
                         scheduleInventoryVisualRefresh()
                     end
@@ -916,36 +1221,58 @@ do
         TextNotificationController:DeliverNotification(payload)
     end
 
-    if R.fishCaught then
-        R.fishCaught.OnClientEvent:Connect(function(fishName, fishMetadata, _, _, visualData)
-            local fishItemId = fishNameToId[fishName]
+    if Remote.fishCaught then
+        Remote.fishCaught.OnClientEvent:Connect(function(fishName, fishMetadata, _, _, visualData)
+            Runtime.Fishing.CatchSerial = Runtime.Fishing.CatchSerial + 1
+            Runtime.Fishing.LastCatchAt = os.clock()
+            if SupportState.skinEffectConns.Active then
+                SupportState.skinEffectConns.LocalEffectUntil = os.clock() + 3
+            end
+            -- Manual/native fishing has no custom loop boundary, so process its
+            -- queued sell after Replion receives the newly caught item.
+            task.delay(0.15, function()
+                Runtime.Sell.CheckCount()
+                if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle" then
+                    Runtime.Sell.Flush()
+                end
+            end)
+            local fishItemId = FishingModes.FishNameToId[fishName]
             if not fishItemId then return end
 
-            local notificationCount = Config.BlatantActive and 2 or 1
+            local ticket, badgeBaseline = next(FishingModes.Blatant.Visual.pending)
+            local isBlatantCatch = ticket ~= nil
+            if ticket then FishingModes.Blatant.Visual.pending[ticket] = nil end
+
+            local notificationCount = isBlatantCatch and 2 or 1
             -- Text notifications are globally auto-on. Only Blatant duplicates
             -- the tile; manual, V1, V2, and native auto fishing receive one.
             for _ = 1, notificationCount do
                 pcall(deliverFishNotification, fishItemId)
             end
 
-            if Config.BlatantActive then
-                registerVisualInventoryCopy(fishItemId, fishName)
+            if isBlatantCatch then
+                registerVisualInventoryCopy(fishItemId, fishName, badgeBaseline)
+            elseif FishingModes.Blatant.Visual.badgeOverride then
+                FishingModes.Blatant.Visual.badgeCount = FishingModes.Blatant.Visual.badgeCount + 1
+                task.defer(refreshInventoryBadge)
             end
 
-            if Config.BlatantActive
+            if isBlatantCatch
                 and okVisualController
                 and FishCaughtVisual
                 and visualData
                 and visualData.origin
             then
-                local generation = blatantGeneration
+                local generation = FishingModes.Blatant.Generation
                 local nativeDelay = tonumber(visualData.delayTime) or 0
                 local extraDelay = math.max(nativeDelay, 0)
                 task.delay(extraDelay, function()
-                    if not Config.BlatantActive or generation ~= blatantGeneration then return end
+                    if not Config.BlatantActive
+                        or generation ~= FishingModes.Blatant.Generation
+                    then return end
                     pcall(
                         FishCaughtVisual.playCaughtFishVisual,
-                        LocalPlayer,
+                        Service.LocalPlayer,
                         visualData.origin,
                         fishName,
                         fishMetadata
@@ -957,98 +1284,88 @@ do
 end
 
 -- ====== BIG POPUP TOGGLE ======
-local FishingController = require(ReplicatedStorage.Controllers.FishingController)
-local origRequestCharge = FishingController.RequestChargeFishingRod
-local origRequestClick  = FishingController.RequestFishingMinigameClick
-local stableResultActive = false
+FishingModes.Controller = require(Service.ReplicatedStorage.Controllers.FishingController)
 
-FishingController.RequestChargeFishingRod = function(...)
-    if stableResultActive then return end
-    return origRequestCharge(...)
-end
-
-FishingController.RequestFishingMinigameClick = function(...)
-    if stableResultActive then return end
-    return origRequestClick(...)
+-- Stable Result: block auto worker charge only (isAuto == true), manual fishing unaffected
+do
+    local origCharge = FishingModes.Controller.RequestChargeFishingRod
+    FishingModes.Controller.RequestChargeFishingRod = function(self, pos, isAuto, ...)
+        if Runtime.StableResult and isAuto == true then return end
+        return origCharge(self, pos, isAuto, ...)
+    end
 end
 
 -- Re-invoke true kalau server matiin auto fishing (movement detection dll)
-PlayerData:OnChange("AutoFishing", function(value)
-    if stableResultActive and not value then
+Data.Player:OnChange("AutoFishing", function(value)
+    if Runtime.StableResult and not value then
         task.wait(0.1)
+        if not Runtime.StableResult then return end
         pcall(function()
-            R.updateAutoFishing:InvokeServer(true)
+            Remote.updateAutoFishing:InvokeServer(true)
         end)
     end
 end)
-local _snDisplay = nil
-local function updateBigPopup()
-    if not _snDisplay then
-        local sn = LocalPlayer.PlayerGui:FindFirstChild("Small Notification")
-        _snDisplay = sn and sn:FindFirstChild("Display")
+SupportState.updateBigPopup = function()
+    if not SupportState.snDisplay then
+        local sn = Service.LocalPlayer.PlayerGui:FindFirstChild("Small Notification")
+        SupportState.snDisplay = sn and sn:FindFirstChild("Display")
     end
-    if _snDisplay then
+    if SupportState.snDisplay then
         if Config.DisableFishNotif then
-            _snDisplay.Parent = nil
+            SupportState.snDisplay.Parent = nil
         else
-            local sn = LocalPlayer.PlayerGui:FindFirstChild("Small Notification")
-            if sn then _snDisplay.Parent = sn end
+            local sn = Service.LocalPlayer.PlayerGui:FindFirstChild("Small Notification")
+            if sn then SupportState.snDisplay.Parent = sn end
         end
     end
 end
 
 -- ====== SUPPORT FEATURES FUNCTIONS ======
 
-local autoEquipRodConn = nil
-local function setAutoEquipRod(state)
-    if autoEquipRodConn then autoEquipRodConn:Disconnect() autoEquipRodConn = nil end
+SupportState.setAutoEquipRod = function(state)
+    if SupportState.autoEquipRodConn then SupportState.autoEquipRodConn:Disconnect() SupportState.autoEquipRodConn = nil end
     if state then
-        -- cek langsung saat toggle ON
-        local ok, equipped = pcall(function() return PlayerData:Get("EquippedId") end)
+        local ok, equipped = pcall(function() return Data.Player:Get("EquippedId") end)
         if not (ok and equipped and equipped ~= "") then
             task.wait(0.2)
-            pcall(function() R.equipTool:FireServer(1) end)
+            pcall(function() Remote.equipTool:FireServer(1) end)
         end
-        -- event driven untuk unequip berikutnya
-        autoEquipRodConn = PlayerData:OnChange("EquippedId", function(value)
+        SupportState.autoEquipRodConn = Data.Player:OnChange("EquippedId", function(value)
             if not value or value == "" then
                 task.wait(0.2)
-                pcall(function() R.equipTool:FireServer(1) end)
+                pcall(function() Remote.equipTool:FireServer(1) end)
             end
         end)
     end
 end
 
 -- Disable Cutscenes - hook module Play + block connection + InCutscene watcher
-local disableCutsceneActive = false
-local cutsceneHookDone = false
-
-local function ensureCutsceneHook()
-    if cutsceneHookDone then return end
-    cutsceneHookDone = true
+SupportState.ensureCutsceneHook = function()
+    if SupportState.cutsceneHookDone then return end
+    SupportState.cutsceneHookDone = true
     pcall(function()
-        local CutsceneCtrl = require(ReplicatedStorage.Controllers.CutsceneController)
+        local CutsceneCtrl = require(Service.ReplicatedStorage.Controllers.CutsceneController)
         if not CutsceneCtrl then return end
         local origPlay = CutsceneCtrl.Play
         if type(origPlay) ~= "function" then return end
         CutsceneCtrl.Play = function(self, ...)
-            if disableCutsceneActive then return end
+            if SupportState.disableCutsceneActive then return end
             return origPlay(self, ...)
         end
     end)
 end
 
-local function setDisableCutscenes(state)
+SupportState.setDisableCutscenes = function(state)
     if state then
-        disableCutsceneActive = true
-        ensureCutsceneHook()
+        SupportState.disableCutsceneActive = true
+        SupportState.ensureCutsceneHook()
 
         -- block connection yang sudah ada
-        if R.cutscene then
-            local conns = getconnections(R.cutscene.OnClientEvent)
+        if Remote.cutscene then
+            local conns = getconnections(Remote.cutscene.OnClientEvent)
             for _, conn in pairs(conns) do
                 conn:Disable()
-                table.insert(cutsceneConns, conn)
+                table.insert(SupportState.cutsceneConns, conn)
             end
         end
 
@@ -1056,13 +1373,13 @@ local function setDisableCutscenes(state)
         task.spawn(function()
             for i = 1, 3 do
                 task.wait(1)
-                if not disableCutsceneActive then return end
-                if R.cutscene then
-                    local conns = getconnections(R.cutscene.OnClientEvent)
+                if not SupportState.disableCutsceneActive then return end
+                if Remote.cutscene then
+                    local conns = getconnections(Remote.cutscene.OnClientEvent)
                     for _, conn in pairs(conns) do
-                        if not table.find(cutsceneConns, conn) then
+                        if not table.find(SupportState.cutsceneConns, conn) then
                             conn:Disable()
-                            table.insert(cutsceneConns, conn)
+                            table.insert(SupportState.cutsceneConns, conn)
                         end
                     end
                 end
@@ -1070,58 +1387,58 @@ local function setDisableCutscenes(state)
         end)
 
         -- InCutscene watcher (fire stop backup + kill attribute)
-        if not cutsceneConns.AttrWatcher then
-            cutsceneConns.AttrWatcher = LocalPlayer:GetAttributeChangedSignal("InCutscene"):Connect(function()
-                if disableCutsceneActive and LocalPlayer:GetAttribute("InCutscene") then
-                    if R.stopCutscene then
-                        pcall(function() R.stopCutscene:FireServer() end)
+        if not SupportState.cutsceneConns.AttrWatcher then
+            SupportState.cutsceneConns.AttrWatcher = Service.LocalPlayer:GetAttributeChangedSignal("InCutscene"):Connect(function()
+                if SupportState.disableCutsceneActive and Service.LocalPlayer:GetAttribute("InCutscene") then
+                    if Remote.stopCutscene then
+                        pcall(function() Remote.stopCutscene:FireServer() end)
                     end
-                    LocalPlayer:SetAttribute("InCutscene", false)
-                    pcall(function() LocalPlayer:SetAttribute("IgnoreFOV", false) end)
+                    Service.LocalPlayer:SetAttribute("InCutscene", false)
+                    pcall(function() Service.LocalPlayer:SetAttribute("IgnoreFOV", false) end)
                 end
             end)
         end
     else
-        disableCutsceneActive = false
-        for _, conn in pairs(cutsceneConns) do
+        SupportState.disableCutsceneActive = false
+        for _, conn in pairs(SupportState.cutsceneConns) do
             if typeof(conn) == "userdata" then conn:Enable() end
         end
-        if cutsceneConns.AttrWatcher then
-            cutsceneConns.AttrWatcher:Disconnect()
-            cutsceneConns.AttrWatcher = nil
+        if SupportState.cutsceneConns.AttrWatcher then
+            SupportState.cutsceneConns.AttrWatcher:Disconnect()
+            SupportState.cutsceneConns.AttrWatcher = nil
         end
-        cutsceneConns = {}
+        SupportState.cutsceneConns = {}
     end
 end
 
 -- Disable Ability VFX - block remote + destroy attribute (tanpa hook module)
-local function setDisableAbilityVFX(state)
+SupportState.setDisableAbilityVFX = function(state)
     if state then
-        if not abilityVFXConns.Active then
-            abilityVFXConns.Active = true
+        if not SupportState.abilityVFXConns.Active then
+            SupportState.abilityVFXConns.Active = true
 
             -- block RE/PlayAbilityVFX connection + re-check 3x
-            if R.abilityVFX then
-                for _, conn in pairs(getconnections(R.abilityVFX.OnClientEvent)) do
+            if Remote.abilityVFX then
+                for _, conn in pairs(getconnections(Remote.abilityVFX.OnClientEvent)) do
                     conn:Disable()
-                    table.insert(abilityVFXConns.Blocked, conn)
+                    table.insert(SupportState.abilityVFXConns.Blocked, conn)
                 end
                 task.spawn(function()
                     for i = 1, 3 do
                         task.wait(1)
-                        if not abilityVFXConns.Active then return end
-                        local conns = getconnections(R.abilityVFX.OnClientEvent)
+                        if not SupportState.abilityVFXConns.Active then return end
+                        local conns = getconnections(Remote.abilityVFX.OnClientEvent)
                         for _, conn in pairs(conns) do
-                            if not table.find(abilityVFXConns.Blocked, conn) then
+                            if not table.find(SupportState.abilityVFXConns.Blocked, conn) then
                                 conn:Disable()
-                                table.insert(abilityVFXConns.Blocked, conn)
+                                table.insert(SupportState.abilityVFXConns.Blocked, conn)
                             end
                         end
                     end
                 end)
             end
 
-            -- destroy existing + watch baru
+            -- One workspace watcher replaces per-instance/per-character listeners.
             local function destroyAbilityVFX(v)
                 if not v then return end
                 if v:GetAttribute("AbilityVFX") == true or v:GetAttribute("AbilityAuraVFX") == true
@@ -1129,160 +1446,250 @@ local function setDisableAbilityVFX(state)
                     pcall(function() v:Destroy() end)
                 end
             end
-
-            local function watchDescendant(v)
-                if not abilityVFXConns.Active then return end
-                if v:GetAttribute("AbilityVFX") == true or v:GetAttribute("AbilityAuraVFX") == true
-                or v.Name == "AbilityCharacterAura" then
-                    pcall(function() v:Destroy() end)
-                else
-                    pcall(function()
-                        v:GetAttributeChangedSignal("AbilityVFX"):Connect(function()
-                            if abilityVFXConns.Active and v:GetAttribute("AbilityVFX") == true then
-                                pcall(function() v:Destroy() end)
-                            end
-                        end)
-                    end)
-                end
-            end
-
-            local targets = { LocalPlayer.Character }
-            for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
-                if p ~= LocalPlayer then table.insert(targets, p.Character) end
-            end
-            table.insert(targets, workspace)
-
-            for _, target in ipairs(targets) do
-                if target then
-                    for _, v in ipairs(target:GetDescendants()) do
-                        destroyAbilityVFX(v)
-                    end
-                    target.DescendantAdded:Connect(watchDescendant)
-                end
-            end
-
-            abilityVFXConns.CharacterAdded = game:GetService("Players").PlayerAdded:Connect(function(p)
-                p.CharacterAdded:Connect(function(c)
-                    for _, v in ipairs(c:GetDescendants()) do destroyAbilityVFX(v) end
-                    c.DescendantAdded:Connect(watchDescendant)
-                end)
-            end)
-            abilityVFXConns.SelfCharacterAdded = LocalPlayer.CharacterAdded:Connect(function(c)
-                for _, v in ipairs(c:GetDescendants()) do destroyAbilityVFX(v) end
-                c.DescendantAdded:Connect(watchDescendant)
+            for _, v in ipairs(workspace:GetDescendants()) do destroyAbilityVFX(v) end
+            SupportState.abilityVFXConns.Live = workspace.DescendantAdded:Connect(function(v)
+                if SupportState.abilityVFXConns.Active then destroyAbilityVFX(v) end
             end)
         end
     else
-        abilityVFXConns.Active = false
-        for _, conn in pairs(abilityVFXConns.Blocked) do
+        SupportState.abilityVFXConns.Active = false
+        for _, conn in pairs(SupportState.abilityVFXConns.Blocked) do
             if typeof(conn) == "userdata" then conn:Enable() end
         end
-        abilityVFXConns.Blocked = {}
-        if abilityVFXConns.CharacterAdded then
-            abilityVFXConns.CharacterAdded:Disconnect()
-            abilityVFXConns.CharacterAdded = nil
-        end
-        if abilityVFXConns.SelfCharacterAdded then
-            abilityVFXConns.SelfCharacterAdded:Disconnect()
-            abilityVFXConns.SelfCharacterAdded = nil
+        SupportState.abilityVFXConns.Blocked = {}
+        if SupportState.abilityVFXConns.Live then
+            SupportState.abilityVFXConns.Live:Disconnect()
+            SupportState.abilityVFXConns.Live = nil
         end
     end
 end
 
--- Disable Skin Effect - disable PE/Beam/Trail di tool (tiru SettingsController AddCharacterTrove) - SEMUA PLAYER
-local function setDisableSkinEffect(state)
-    if state then
-        if not skinEffectConns.Active then
-            skinEffectConns.Active = true
+-- Shared lightweight VFX locks. Weather and skin may target the same emitter;
+-- restore it only after both toggles release their own lock.
+SupportState.isVisualEffect = function(obj)
+    return obj:IsA("ParticleEmitter") or obj:IsA("Beam") or obj:IsA("Trail")
+        or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles")
+        or obj:IsA("Light") or obj:IsA("Highlight") or obj:IsA("PostEffect")
+        or obj:IsA("Atmosphere") or obj:IsA("Clouds")
+end
 
-            local function attach(char)
-                if not char then return end
-                local tool = char:FindFirstChild("!!!FISHING_VIEW_MODEL!!!") or char:FindFirstChild("!!!EQUIPPED_TOOL!!!")
-                if tool then
-                    for _, v in ipairs(tool:GetDescendants()) do
-                        if v:IsA("ParticleEmitter") or v:IsA("Beam") or v:IsA("Trail") then
-                            v.Enabled = false
-                        end
-                    end
-                    char.DescendantAdded:Connect(function(obj)
-                        if skinEffectConns.Active and obj:IsDescendantOf(tool) then
-                            if obj:IsA("ParticleEmitter") or obj:IsA("Beam") or obj:IsA("Trail") then
-                                obj.Enabled = false
-                            end
-                        end
-                    end)
+SupportState.lockEffect = function(tag, obj)
+    if not obj or not SupportState.isVisualEffect(obj) then return end
+    local lock = SupportState.effectLocks[obj]
+    if not lock then
+        if obj:IsA("Atmosphere") then
+            lock = { Mode = "Atmosphere", Density = obj.Density, Haze = obj.Haze, Glare = obj.Glare }
+        elseif obj:IsA("Clouds") then
+            lock = { Mode = "Clouds", Cover = obj.Cover, Density = obj.Density }
+        else
+            local ok, enabled = pcall(function() return obj.Enabled end)
+            if not ok then return end
+            lock = { Mode = "Enabled", Original = enabled }
+        end
+        SupportState.effectLocks[obj] = lock
+    end
+    lock[tag] = true
+    pcall(function()
+        if lock.Mode == "Atmosphere" then
+            obj.Density, obj.Haze, obj.Glare = 0, 0, 0
+        elseif lock.Mode == "Clouds" then
+            obj.Cover, obj.Density = 0, 0
+        else
+            obj.Enabled = false
+        end
+    end)
+end
+
+SupportState.releaseEffects = function(tag)
+    for obj, lock in pairs(SupportState.effectLocks) do
+        lock[tag] = nil
+        if not lock.Skin and not lock.Weather then
+            pcall(function()
+                if not obj.Parent then return end
+                if lock.Mode == "Atmosphere" then
+                    obj.Density, obj.Haze, obj.Glare = lock.Density, lock.Haze, lock.Glare
+                elseif lock.Mode == "Clouds" then
+                    obj.Cover, obj.Density = lock.Cover, lock.Density
+                else
+                    obj.Enabled = lock.Original
                 end
-            end
-
-            -- semua player
-            for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
-                attach(p.Character)
-            end
-            skinEffectConns.CharacterAdded = game:GetService("Players").PlayerAdded:Connect(function(p)
-                p.CharacterAdded:Connect(attach)
             end)
-            attach(LocalPlayer.Character)
-            skinEffectConns.SelfCharacterAdded = LocalPlayer.CharacterAdded:Connect(attach)
-        end
-    else
-        skinEffectConns.Active = false
-        if skinEffectConns.CharacterAdded then
-            skinEffectConns.CharacterAdded:Disconnect()
-            skinEffectConns.CharacterAdded = nil
-        end
-        if skinEffectConns.SelfCharacterAdded then
-            skinEffectConns.SelfCharacterAdded:Disconnect()
-            skinEffectConns.SelfCharacterAdded = nil
+            SupportState.effectLocks[obj] = nil
         end
     end
 end
 
--- Disable Weather VFX - disable PE/Beam di instance weather di character
-local WEATHER_NAMES = { "Fog", "Wind", "Radiant", "Storm", "Snow", "Galaxy Storm", "Galaxy", "Meteor Shower", "Admin - Frostmoon" }
-local function setDisableWeatherVFX(state)
-    if state then
-        if not weatherVFXConns.Active then
-            weatherVFXConns.Active = true
-
-            local function disableWeatherInstance(instance)
-                for _, v in ipairs(instance:GetDescendants()) do
-                    if v:IsA("ParticleEmitter") or v:IsA("Beam") then
-                        v.Enabled = false
-                    end
-                end
-                if instance:IsA("ParticleEmitter") or instance:IsA("Beam") then
-                    instance.Enabled = false
-                end
-            end
-
-            local char = LocalPlayer.Character
-            if char then
-                -- disable yang sudah ada (scan semua descendants, bukan cuma langsung)
-                for _, obj in ipairs(char:GetDescendants()) do
-                    if table.find(WEATHER_NAMES, obj.Name) then
-                        disableWeatherInstance(obj)
-                    end
-                end
-                -- disable yang baru muncul
-                char.DescendantAdded:Connect(function(obj)
-                    if weatherVFXConns.Active and table.find(WEATHER_NAMES, obj.Name) then
-                        disableWeatherInstance(obj)
-                    end
-                end)
-            end
-        end
-    else
-        weatherVFXConns.Active = false
+SupportState.clearVFXConnections = function(bucket)
+    for _, connection in ipairs(bucket.Connections) do
+        pcall(function() connection:Disconnect() end)
     end
+    table.clear(bucket.Connections)
+end
+
+SupportState.watchVFXRoot = function(bucket, tag, root, predicate)
+    if not root then return end
+    for _, obj in ipairs(root:GetDescendants()) do
+        if SupportState.isVisualEffect(obj) and predicate(obj) then
+            SupportState.lockEffect(tag, obj)
+        end
+    end
+    table.insert(bucket.Connections, root.DescendantAdded:Connect(function(obj)
+        if bucket.Active and SupportState.isVisualEffect(obj) and predicate(obj) then
+            SupportState.lockEffect(tag, obj)
+        end
+    end))
+end
+
+SupportState.isNearCharacter = function(obj, radius)
+    local root = Service.LocalPlayer.Character
+    root = root and root:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+    local cursor = obj
+    for _ = 1, 7 do
+        if not cursor then break end
+        if cursor:IsA("Attachment") and cursor.Parent and cursor.Parent:IsA("BasePart") then
+            return (cursor.Parent.Position - root.Position).Magnitude <= radius
+        elseif cursor:IsA("BasePart") then
+            return (cursor.Position - root.Position).Magnitude <= radius
+        end
+        cursor = cursor.Parent
+    end
+    return false
+end
+
+-- Disable only the local player's rod-skin, bait-cast and catch effects.
+SupportState.setDisableSkinEffect = function(state)
+    local bucket = SupportState.skinEffectConns
+    SupportState.clearVFXConnections(bucket)
+    bucket.Active = state
+    bucket.LocalEffectUntil = 0
+    if not state then
+        SupportState.releaseEffects("Skin")
+        return
+    end
+
+    local function isLocalSkinEffect(obj)
+        local char = Service.LocalPlayer.Character
+        if char and obj:IsDescendantOf(char) then
+            local tool = char:FindFirstChild("!!!FISHING_VIEW_MODEL!!!")
+                or char:FindFirstChild("!!!EQUIPPED_TOOL!!!")
+            if tool and obj:IsDescendantOf(tool) then return true end
+        end
+        local cosmetic = workspace:FindFirstChild("CosmeticFolder")
+        local cursor = obj
+        if cosmetic then
+            while cursor and cursor.Parent ~= cosmetic do cursor = cursor.Parent end
+            if cursor and cursor.Name == tostring(Service.LocalPlayer.UserId) then return true end
+        end
+        return os.clock() <= bucket.LocalEffectUntil
+            and SupportState.isNearCharacter(obj, 45)
+    end
+
+    local function attachCharacter(char)
+        if bucket.Active and char then
+            SupportState.watchVFXRoot(bucket, "Skin", char, isLocalSkinEffect)
+        end
+    end
+
+    attachCharacter(Service.LocalPlayer.Character)
+    local cosmetic = workspace:FindFirstChild("CosmeticFolder")
+    if cosmetic then
+        local owned = cosmetic:FindFirstChild(tostring(Service.LocalPlayer.UserId))
+        if owned then SupportState.watchVFXRoot(bucket, "Skin", owned, isLocalSkinEffect) end
+        table.insert(bucket.Connections, cosmetic.ChildAdded:Connect(function(child)
+            if bucket.Active and child.Name == tostring(Service.LocalPlayer.UserId) then
+                SupportState.watchVFXRoot(bucket, "Skin", child, isLocalSkinEffect)
+            end
+        end))
+    end
+    table.insert(bucket.Connections, workspace.DescendantAdded:Connect(function(obj)
+        if bucket.Active and SupportState.isVisualEffect(obj)
+            and os.clock() <= bucket.LocalEffectUntil
+            and SupportState.isNearCharacter(obj, 45)
+        then
+            SupportState.lockEffect("Skin", obj)
+        end
+    end))
+    table.insert(bucket.Connections, Service.LocalPlayer.CharacterAdded:Connect(attachCharacter))
+end
+
+-- Disable weather emitters attached to the avatar and weather containers nearby.
+Catalog.WeatherNames = { "Fog", "Wind", "Radiant", "Storm", "Snow", "Galaxy Storm", "Galaxy", "Meteor Shower", "Admin - Frostmoon" }
+Catalog.WeatherKeywords = { "weather", "fog", "wind", "radiant", "storm", "snow", "galaxy", "meteor", "frostmoon", "rain" }
+
+SupportState.isWeatherEffect = function(obj)
+    local cursor = obj
+    for _ = 1, 9 do
+        if not cursor then break end
+        local name = string.lower(cursor.Name)
+        for _, keyword in ipairs(Catalog.WeatherKeywords) do
+            if string.find(name, keyword, 1, true) then return true end
+        end
+        if cursor:GetAttribute("WeatherVFX") == true
+            or cursor:GetAttribute("WeatherEffect") == true
+        then
+            return true
+        end
+        cursor = cursor.Parent
+    end
+    return false
+end
+
+SupportState.setDisableWeatherVFX = function(state)
+    local bucket = SupportState.weatherVFXConns
+    SupportState.clearVFXConnections(bucket)
+    bucket.Active = state
+    if not state then
+        SupportState.releaseEffects("Weather")
+        return
+    end
+
+    local function matches(obj)
+        return (obj:IsA("Atmosphere") or obj:IsA("Clouds") or SupportState.isWeatherEffect(obj))
+            and (obj:IsDescendantOf(Service.Lighting)
+                or obj:IsDescendantOf(workspace.Terrain)
+                or (workspace.CurrentCamera and obj:IsDescendantOf(workspace.CurrentCamera))
+                or SupportState.isNearCharacter(obj, 140))
+    end
+    local function attachCharacter(char)
+        if bucket.Active and char then
+            SupportState.watchVFXRoot(bucket, "Weather", char, SupportState.isWeatherEffect)
+        end
+    end
+    local function attachCamera()
+        if bucket.Active and workspace.CurrentCamera then
+            SupportState.watchVFXRoot(bucket, "Weather", workspace.CurrentCamera, matches)
+        end
+    end
+
+    attachCharacter(Service.LocalPlayer.Character)
+    attachCamera()
+    SupportState.watchVFXRoot(bucket, "Weather", Service.Lighting, matches)
+    SupportState.watchVFXRoot(bucket, "Weather", workspace.Terrain, matches)
+    for _, root in ipairs(workspace:GetChildren()) do
+        if root ~= Service.LocalPlayer.Character
+            and root ~= workspace.CurrentCamera
+            and SupportState.isWeatherEffect(root)
+        then
+            SupportState.watchVFXRoot(bucket, "Weather", root, matches)
+        end
+    end
+    table.insert(bucket.Connections, workspace.DescendantAdded:Connect(function(obj)
+        if bucket.Active and SupportState.isVisualEffect(obj) and matches(obj) then
+            SupportState.lockEffect("Weather", obj)
+        end
+    end))
+    table.insert(bucket.Connections, Service.LocalPlayer.CharacterAdded:Connect(attachCharacter))
+    table.insert(bucket.Connections, workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(attachCamera))
 end
 
 -- Hide Other Players
-local function setHideOtherPlayers(state)
-    for _, conn in pairs(hidePlayersConns) do conn:Disconnect() end
-    hidePlayersConns = {}
+SupportState.setHideOtherPlayers = function(state)
+    for _, conn in pairs(SupportState.hidePlayersConns) do conn:Disconnect() end
+    SupportState.hidePlayersConns = {}
 
     local function hidePlayer(player)
-        if player == LocalPlayer then return end
+        if player == Service.LocalPlayer then return end
         local char = player.Character
         if char then
             for _, obj in ipairs(char:GetDescendants()) do
@@ -1297,40 +1704,39 @@ local function setHideOtherPlayers(state)
     end
 
     if state then
-        for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
+        for _, p in ipairs(Service.Players:GetPlayers()) do
             hidePlayer(p)
         end
-        table.insert(hidePlayersConns, game:GetService("Players").PlayerAdded:Connect(function(p)
+        table.insert(SupportState.hidePlayersConns, Service.Players.PlayerAdded:Connect(function(p)
             p.CharacterAdded:Connect(function() task.wait(0.5) hidePlayer(p) end)
         end))
     else
-        for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
+        for _, p in ipairs(Service.Players:GetPlayers()) do
             hidePlayer(p)  -- state = false -> transparencyModifier = 0 = show
         end
     end
 end
 
-local walkPlatform = nil
-local function setWalkOnWater(state)
-    if walkOnWaterConn then walkOnWaterConn:Disconnect() walkOnWaterConn = nil end
-    if walkOnWaterCharConn then walkOnWaterCharConn:Disconnect() walkOnWaterCharConn = nil end
-    if walkPlatform then walkPlatform:Destroy() walkPlatform = nil end
+SupportState.setWalkOnWater = function(state)
+    if SupportState.walkOnWaterConn then SupportState.walkOnWaterConn:Disconnect() SupportState.walkOnWaterConn = nil end
+    if SupportState.walkOnWaterCharConn then SupportState.walkOnWaterCharConn:Disconnect() SupportState.walkOnWaterCharConn = nil end
+    if SupportState.walkPlatform then SupportState.walkPlatform:Destroy() SupportState.walkPlatform = nil end
 
     if not state then
-        local char = LocalPlayer.Character
+        local char = Service.LocalPlayer.Character
         local hum = char and char:FindFirstChildWhichIsA("Humanoid")
         if hum then pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, true) end) end
         return
     end
 
-    walkPlatform = Instance.new("Part")
-    walkPlatform.Anchored = true
-    walkPlatform.CanCollide = false  -- off dulu
-    walkPlatform.Transparency = 1
-    walkPlatform.Size = Vector3.new(10, 0.5, 10)
-    walkPlatform.Name = "WalkOnWaterPlatform"
-    walkPlatform.CFrame = CFrame.new(0, -9999, 0)  -- jauh di bawah
-    walkPlatform.Parent = workspace
+    SupportState.walkPlatform = Instance.new("Part")
+    SupportState.walkPlatform.Anchored = true
+    SupportState.walkPlatform.CanCollide = false  -- off dulu
+    SupportState.walkPlatform.Transparency = 1
+    SupportState.walkPlatform.Size = Vector3.new(10, 0.5, 10)
+    SupportState.walkPlatform.Name = "WalkOnWaterPlatform"
+    SupportState.walkPlatform.CFrame = CFrame.new(0, -9999, 0)  -- jauh di bawah
+    SupportState.walkPlatform.Parent = workspace
 
     local function attachToChar(char)
         local hum = char:FindFirstChildWhichIsA("Humanoid")
@@ -1372,8 +1778,8 @@ local function setWalkOnWater(state)
         -- disable swimming SEKARANG agar tidak bisa swim sama sekali
         pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, false) end)
 
-        if walkOnWaterConn then walkOnWaterConn:Disconnect() end
-        walkOnWaterConn = game:GetService("RunService").Stepped:Connect(function()
+        if SupportState.walkOnWaterConn then SupportState.walkOnWaterConn:Disconnect() end
+        SupportState.walkOnWaterConn = Service.RunService.Stepped:Connect(function()
             if not root.Parent then return end
             local pos = root.Position
             local feetPos = pos - Vector3.new(0, 3, 0)  -- posisi kaki
@@ -1384,43 +1790,41 @@ local function setWalkOnWater(state)
                 -- baru masuk air -> raycast untuk dapat exact surface Y
                 inWater = true
                 waterSurfaceY = getWaterSurfaceY(pos) or (pos.Y - 2)
-                walkPlatform.CFrame = CFrame.new(pos.X, waterSurfaceY, pos.Z)
-                walkPlatform.CanCollide = true
+                SupportState.walkPlatform.CFrame = CFrame.new(pos.X, waterSurfaceY, pos.Z)
+                SupportState.walkPlatform.CanCollide = true
             elseif not isWaterNow and inWater then
                 inWater = false
                 waterSurfaceY = nil
-                walkPlatform.CanCollide = false
-                walkPlatform.CFrame = CFrame.new(0, -9999, 0)
+                SupportState.walkPlatform.CanCollide = false
+                SupportState.walkPlatform.CFrame = CFrame.new(0, -9999, 0)
             end
 
             -- platform ikut XZ, Y = exact water surface (tidak berubah saat loncat)
             if inWater and waterSurfaceY then
-                walkPlatform.CFrame = CFrame.new(pos.X, waterSurfaceY, pos.Z)
+                SupportState.walkPlatform.CFrame = CFrame.new(pos.X, waterSurfaceY, pos.Z)
             end
         end)
     end
 
-    local char = LocalPlayer.Character
+    local char = Service.LocalPlayer.Character
     if char then attachToChar(char) end
-    walkOnWaterCharConn = LocalPlayer.CharacterAdded:Connect(attachToChar)
+    SupportState.walkOnWaterCharConn = Service.LocalPlayer.CharacterAdded:Connect(attachToChar)
 end
 
 -- Lock Position
-local lockPosConn = nil
-local lockedCFrame = nil
-local function setLockPosition(state)
-    if lockPosConn then lockPosConn:Disconnect() lockPosConn = nil end
+SupportState.setLockPosition = function(state)
+    if SupportState.lockPosConn then SupportState.lockPosConn:Disconnect() SupportState.lockPosConn = nil end
     if state then
-        local char = LocalPlayer.Character
+        local char = Service.LocalPlayer.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if root then
-            lockedCFrame = root.CFrame
+            SupportState.lockedCFrame = root.CFrame
             -- Anchored = true -> tidak bisa di-fling, tidak BAC (pure client)
             pcall(function() root.Anchored = true end)
         end
     else
-        lockedCFrame = nil
-        local char = LocalPlayer.Character
+        SupportState.lockedCFrame = nil
+        local char = Service.LocalPlayer.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if root then
             pcall(function() root.Anchored = false end)
@@ -1429,36 +1833,36 @@ local function setLockPosition(state)
 end
 
 -- Bypass Radar
-local function setBypassRadar(state)
-    if R.fishingRadar then
-        pcall(function() R.fishingRadar:InvokeServer(state) end)
+SupportState.setBypassRadar = function(state)
+    if Remote.fishingRadar then
+        pcall(function() Remote.fishingRadar:InvokeServer(state) end)
     end
 end
 
 -- Auto Equip Diving Gear
-local function setAutoEquipDivingGear(state)
-    local diveData = ItemUtility.GetItemDataFromItemType("Gears", "Diving Gear")
+SupportState.setAutoEquipDivingGear = function(state)
+    local diveData = Data.ItemUtility.GetItemDataFromItemType("Gears", "Diving Gear")
     if not diveData then return end
     local itemId = diveData.Data and diveData.Data.Id
     if not itemId then return end
 
-    local currentEquipped = PlayerData:Get("EquippedOxygenTankId")
+    local currentEquipped = Data.Player:Get("EquippedOxygenTankId")
     if state then
         if currentEquipped ~= itemId then
-            pcall(function() R.equipOxygen:InvokeServer(itemId) end)
+            pcall(function() Remote.equipOxygen:InvokeServer(itemId) end)
         end
     else
         if currentEquipped == itemId then
-            pcall(function() R.unequipOxygen:InvokeServer() end)
+            pcall(function() Remote.unequipOxygen:InvokeServer() end)
         end
     end
 end
 
 -- Disable Fishing Animation
-local function setNoFishingAnimation(state)
-    noFishAnimActive = state
+SupportState.setNoFishingAnimation = function(state)
+    SupportState.noFishAnimActive = state
     pcall(function()
-        local AnimCtrl = require(ReplicatedStorage.Controllers.AnimationController)
+        local AnimCtrl = require(Service.ReplicatedStorage.Controllers.AnimationController)
         if state then
             AnimCtrl:DestroyActiveAnimationTracks()
         end
@@ -1466,11 +1870,10 @@ local function setNoFishingAnimation(state)
 end
 
 -- patch AnimController untuk Disable Fishing Animation (jalan bersama V2)
-local _animCtrlPatched = false
-local function ensureAnimPatch()
-    if _animCtrlPatched then return end
-    _animCtrlPatched = true
-    local AnimCtrl = require(ReplicatedStorage.Controllers.AnimationController)
+SupportState.ensureAnimPatch = function()
+    if SupportState.animCtrlPatched then return end
+    SupportState.animCtrlPatched = true
+    local AnimCtrl = require(Service.ReplicatedStorage.Controllers.AnimationController)
     local orig = AnimCtrl.PlayAnimation
     local FISHING_ANIMS = {
         StartRodCharge=true, LoopedRodCharge=true, RodThrow=true,
@@ -1480,23 +1883,23 @@ local function ensureAnimPatch()
     }
     AnimCtrl.PlayAnimation = function(self, name, ...)
         -- Disable Fishing Animation: block BEFORE orig runs
-        if noFishAnimActive and FISHING_ANIMS[name] then
+        if SupportState.noFishAnimActive and FISHING_ANIMS[name] then
             return nil, nil, nil
         end
         local track, b, c = orig(self, name, ...)
         -- V2 AdjustSpeed FishCaught
-        if snapReelActive and track and name == "FishCaught" then
+        if FishingModes.V2.SnapReel and track and name == "FishCaught" then
             pcall(function() track:AdjustSpeed(3) end)
         end
         return track, b, c
     end
 end
-ensureAnimPatch()
+SupportState.ensureAnimPatch()
 
 -- ====== UI (NEW LIBRARY) ======
 
 -- ====== CONSTANTS ======
-local EVENT_LIST = {
+Catalog.EventList = {
     "Admin - 1x1x1 Rage",
     "Admin - 2025 Anniversary",
     "Admin - 2025 Christmas",
@@ -1517,7 +1920,7 @@ local EVENT_LIST = {
     "Thunderzilla Hunt",
 }
 
-local TOTEM_LIST = {
+Catalog.TotemList = {
     "Abyssal Totem",
     "Cosmic Totem",
     "Easter Totem",
@@ -1531,19 +1934,18 @@ local TOTEM_LIST = {
     "Super Love Totem"
 }
 
-local Orvion = loadstring(game:HttpGet(
+UI.Library = loadstring(game:HttpGet(
     "https://raw.githubusercontent.com/KnullXDgt/Orvion-UI-Library-Gen2/main/source.luau?t=" .. os.time()
 ))()
+UI.execName = "Unknown"
+pcall(function() UI.execName = getexecutorname() end)
 
-local _execName = "Unknown"
-pcall(function() _execName = getexecutorname() end)
-
-local Window = Orvion:CreateWindow({
+UI.Window = UI.Library:CreateWindow({
     Title          = "Orvion Hub",
     Icon           = "rbxassetid://95126399202412",
     TitleImage     = "rbxassetid://138517423977481",
     Subtitle       = "",
-    Badges         = {"v0.1", "Executor: " .. _execName},
+    Badges         = {"v0.1", "Executor: " .. UI.execName},
     Center       = true,
     Draggable    = true,
     Resizable    = true,
@@ -1553,174 +1955,191 @@ local Window = Orvion:CreateWindow({
 
 -- ====== FISHING TAB ======
 -- ====== INFO TAB ======
-local InfoTab = Window:CreateTab("Info", "rbxassetid://94529541997278")
-Window:AddWelcomeCard(InfoTab)
-local InfoSection = Window:AddCollapsible(InfoTab, "Information", true)
-Window:AddParagraph(InfoSection, "What is Orvion Hub?", "Orvion Hub is a reflection of my coding journey  built through trial, error, and a lot of iteration. It shows how much I have grown as a developer, and how much I still have left to learn.\nLowkey started this just for myself, no cap. Somewhere along the way it turned into something worth sharing.")
+UI.InfoTab = UI.Window:CreateTab("Info", "rbxassetid://94529541997278")
+UI.Window:AddWelcomeCard(UI.InfoTab)
+UI.InfoSection = UI.Window:AddCollapsible(UI.InfoTab, "Information", true)
+UI.Window:AddParagraph(UI.InfoSection, "What is Orvion Hub?", "Orvion Hub is a reflection of my coding journey  built through trial, error, and a lot of iteration. It shows how much I have grown as a developer, and how much I still have left to learn.\nLowkey started this just for myself, no cap. Somewhere along the way it turned into something worth sharing.")
 
-local FishingTab = Window:CreateTab("Main", "rbxassetid://117906088481880")
+UI.FishingTab = UI.Window:CreateTab("Main", "rbxassetid://117906088481880")
 
-local SupportSection = Window:AddCollapsible(FishingTab, "Support Features", false)
+UI.SupportSection = UI.Window:AddCollapsible(UI.FishingTab, "Support Features", false)
 
-Window:AddToggle(SupportSection, "Disable Obtained Fish", "", false, function(state)
+UI.Window:AddToggle(UI.SupportSection, "Disable Obtained Fish", "", false, function(state)
     Config.DisableFishNotif = state
-    updateBigPopup()
+    SupportState.updateBigPopup()
 end, "Toggle_Disable Obtained Fish")
 
-Window:AddToggle(SupportSection, "Disable Fishing Animation", "", false, function(state)
-    setNoFishingAnimation(state)
+UI.Window:AddToggle(UI.SupportSection, "Disable Fishing Animation", "", false, function(state)
+    SupportState.setNoFishingAnimation(state)
 end, "Toggle_Disable Fishing Animation")
 
-Window:AddToggle(SupportSection, "Disable Cutscenes", "", false, function(state)
-    setDisableCutscenes(state)
+UI.Window:AddToggle(UI.SupportSection, "Disable Cutscenes", "", false, function(state)
+    SupportState.setDisableCutscenes(state)
 end, "Toggle_Disable Cutscenes")
 
-Window:AddToggle(SupportSection, "Disable Skin Effect", "", false, function(state)
-    setDisableSkinEffect(state)
+UI.Window:AddToggle(UI.SupportSection, "Disable Skin Effect", "", false, function(state)
+    SupportState.setDisableSkinEffect(state)
 end, "Toggle_Disable Skin Effect")
 
-Window:AddToggle(SupportSection, "Disable Ability VFX", "", false, function(state)
-    setDisableAbilityVFX(state)
+UI.Window:AddToggle(UI.SupportSection, "Disable Ability VFX", "", false, function(state)
+    SupportState.setDisableAbilityVFX(state)
 end, "Toggle_Disable Ability VFX")
 
-Window:AddToggle(SupportSection, "Disable Weather VFX", "", false, function(state)
-    setDisableWeatherVFX(state)
+UI.Window:AddToggle(UI.SupportSection, "Disable Weather VFX", "", false, function(state)
+    SupportState.setDisableWeatherVFX(state)
 end, "Toggle_Disable Weather VFX")
 
-Window:AddToggle(SupportSection, "Auto Equip Rod", "", false, function(state)
-    setAutoEquipRod(state)
+UI.Window:AddToggle(UI.SupportSection, "Auto Equip Rod", "", false, function(state)
+    SupportState.setAutoEquipRod(state)
 end, "Toggle_Auto Equip Rod")
 
-Window:AddToggle(SupportSection, "Hide Other Players", "", false, function(state)
-    setHideOtherPlayers(state)
+UI.Window:AddToggle(UI.SupportSection, "Hide Other Players", "", false, function(state)
+    SupportState.setHideOtherPlayers(state)
 end, "Toggle_Hide Other Players")
 
-Window:AddToggle(SupportSection, "Walk On Water", "", false, function(state)
-    setWalkOnWater(state)
+UI.Window:AddToggle(UI.SupportSection, "Walk On Water", "", false, function(state)
+    SupportState.setWalkOnWater(state)
 end, "Toggle_Walk On Water")
 
-Window:AddToggle(SupportSection, "Bypass Radar", "", false, function(state)
-    setBypassRadar(state)
+UI.Window:AddToggle(UI.SupportSection, "Bypass Radar", "", false, function(state)
+    SupportState.setBypassRadar(state)
 end, "Toggle_Bypass Radar")
 
-Window:AddToggle(SupportSection, "Auto Equip Diving Gear", "", false, function(state)
-    setAutoEquipDivingGear(state)
+UI.Window:AddToggle(UI.SupportSection, "Auto Equip Diving Gear", "", false, function(state)
+    SupportState.setAutoEquipDivingGear(state)
 end, "Toggle_Auto Equip Diving Gear")
 
-Window:AddToggle(SupportSection, "Lock Position", "", false, function(state)
-    setLockPosition(state)
+UI.Window:AddToggle(UI.SupportSection, "Lock Position", "", false, function(state)
+    SupportState.setLockPosition(state)
 end, "Toggle_Lock Position")
+UI.Window:AddToggle(UI.SupportSection, "Anti AFK", "", true, function(state)
+    if state then
+        if getconnections then
+            for _, connection in pairs(getconnections(Service.LocalPlayer.Idled)) do
+                pcall(function() connection:Disable() end)
+            end
+        end
+    else
+        if getconnections then
+            for _, connection in pairs(getconnections(Service.LocalPlayer.Idled)) do
+                pcall(function() connection:Enable() end)
+            end
+        end
+    end
+end)
 -- Instant Fishing v1
-local FishingSection = Window:AddCollapsible(FishingTab, "Instant Fishing", false)
+UI.FishingSection = UI.Window:AddCollapsible(UI.FishingTab, "Instant Fishing", false)
 
-Window:AddInput(FishingSection, "Delay Complete", "", "Write your input here...", function(v)
+UI.Window:AddInput(UI.FishingSection, "Delay Complete", "", "Write your input here...", function(v)
     local n = tonumber(v)
     if n and n >= 0 then Config.CastWait = n end
 end, "Input_Delay Complete")
 
-Window:AddToggle(FishingSection, "Instant Fishing", "", false, function(state)
+UI.Window:AddToggle(UI.FishingSection, "Instant Fishing", "", false, function(state)
     Config.InstantFishing = state
-    if state then startFishing() else stopFishing() end
+    if state then FishingModes.V1.Start() else FishingModes.V1.Stop() end
 end, "Toggle_Instant Fishing")
 
 -- Instant Fishing v2
-local FishingV2Section = Window:AddCollapsible(FishingTab, "Instant Fishing V2", false)
+UI.FishingV2Section = UI.Window:AddCollapsible(UI.FishingTab, "Instant Fishing V2", false)
 
-Window:AddInput(FishingV2Section, "Delay Complete V2", "", "Write your input here...", function(v)
+UI.Window:AddInput(UI.FishingV2Section, "Delay Complete V2", "", "Write your input here...", function(v)
     local n = tonumber(v)
-    if n and n >= 0 then Config2.Delay = n end
+    if n and n >= 0 then FishingModes.V2.Delay = n end
 end, "Input_Delay Complete V2")
 
-Window:AddToggle(FishingV2Section, "Instant Fishing V2", "", false, function(state)
-    Config2.Active = state
-    if state then startFishingV2() else stopFishingV2() end
+UI.Window:AddToggle(UI.FishingV2Section, "Instant Fishing V2", "", false, function(state)
+    FishingModes.V2.Active = state
+    if state then FishingModes.V2.Start() else FishingModes.V2.Stop() end
 end, "Toggle_Instant Fishing v2")
 
 -- Blatant (Visual)
-local BlatantSection = Window:AddCollapsible(FishingTab, "Blatant (Visual)", false)
-Window:AddInput(BlatantSection, "Delay Blatant", "", "Write your input here...", function(v)
+UI.BlatantSection = UI.Window:AddCollapsible(UI.FishingTab, "Blatant (Visual)", false)
+UI.Window:AddInput(UI.BlatantSection, "Delay Blatant", "", "Write your input here...", function(v)
     local n = tonumber(v)
     if n and n >= 0 then Config.BlatantDelay = n end
 end, "Input_Blatant Delay")
-Window:AddToggle(BlatantSection, "Blatant (Visual)", "", false, function(state)
+UI.Window:AddToggle(UI.BlatantSection, "Blatant (Visual)", "", false, function(state)
     Config.BlatantActive = state
-    if state then startBlatant() else stopBlatant() end
+    if state then FishingModes.Blatant.Start() else FishingModes.Blatant.Stop() end
 end, "Toggle_Blatant Visual")
 
 -- Stable Results
-local StableSection = Window:AddCollapsible(FishingTab, "Stable Results", false)
+UI.StableSection = UI.Window:AddCollapsible(UI.FishingTab, "Stable Results", false)
 
-Window:AddToggle(StableSection, "Stable Result", "", false, function(state)
-    if R.updateAutoFishing then
+UI.Window:AddToggle(UI.StableSection, "Stable Result", "", false, function(state)
+    if Remote.updateAutoFishing then
         pcall(function()
             if state then
-                stableResultActive = true
-                R.updateAutoFishing:InvokeServer(true)
-                if R.markAutoFishing then
-                    pcall(function() R.markAutoFishing:InvokeServer() end)
+                Runtime.StableResult = true
+                Remote.updateAutoFishing:InvokeServer(true)
+                if Remote.markAutoFishing then
+                    pcall(function() Remote.markAutoFishing:InvokeServer() end)
                 end
             else
-                stableResultActive = false
-                R.updateAutoFishing:InvokeServer(false)
+                Runtime.StableResult = false
+                Remote.updateAutoFishing:InvokeServer(false)
+                pcall(function() Remote.cancel:InvokeServer(true) end)
             end
         end)
     end
 end, "Toggle_Stable Result")
-Window:AddToggle(StableSection, "Auto Perfect", "", false, function(state)
+UI.Window:AddToggle(UI.StableSection, "Auto Perfect", "", false, function(state)
     Config.PerfectCast = state
 end, "Toggle_Auto Perfect")
 
 -- ====== SELL FEATURES (under Main tab) ======
-local SellSection = Window:AddCollapsible(FishingTab, "Sell Features", false)
+UI.SellSection = UI.Window:AddCollapsible(UI.FishingTab, "Sell Features", false)
 
-Window:AddDropdown(SellSection, "Select Sell Mode", "", {"Delay", "Count"}, false, "Delay", function(value)
+UI.Window:AddDropdown(UI.SellSection, "Select Sell Mode", "", {"Delay", "Count"}, false, "Delay", function(value)
     Config.AutoSellMode = value
+    if not Runtime.Sell.Busy then Runtime.Sell.Pending = false end
+    Runtime.Sell.CountSeen = -1
+    Runtime.Sell.Revision = Runtime.Sell.Revision + 1
 end, "Dropdown_Sell Mode")
 
-Window:AddInput(SellSection, "Set Value", "", "Write your input here...", function(v)
+UI.Window:AddInput(UI.SellSection, "Set Value", "", "Write your input here...", function(v)
     local n = tonumber(v)
     if n and n >= 1 then
         Config.SellDelay = n
         Config.SellCount = n
+        if not Runtime.Sell.Busy then Runtime.Sell.Pending = false end
+        Runtime.Sell.CountSeen = -1
+        Runtime.Sell.Revision = Runtime.Sell.Revision + 1
     end
 end, "Input_Sell Delay")
 
-Window:AddToggle(SellSection, "Start Sell", "", false, function(state)
+UI.Window:AddToggle(UI.SellSection, "Start Sell", "", false, function(state)
     Config.AutoSell = state
-    if state then startAutoSell() else stopAutoSell() end
+    if state then Runtime.Sell.Start() else Runtime.Sell.Stop() end
 end, "Toggle_Auto Sell")
 
-Window:AddButton(SellSection, "Sell All Now", "", "rbxassetid://16932740082", function()
-    sellAll()
-    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Sold!", Color=Color3.fromRGB(150,150,170), Delay=2 })
+UI.Window:AddButton(UI.SellSection, "Sell All Now", "", "rbxassetid://16932740082", function()
+    Runtime.Sell.Queue("Manual")
+    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Sold!", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 
 -- ====== TELEPORT TAB ======
 
 -- ====== EVENT TELEPORT LOGIC ======
-local preEventCFrame = nil
-local eventWaterPlatform = nil
-local eventWaterConn = nil
-local eventWaterCharConn = nil
-
-local function stopEventWalkOnWater()
-    if eventWaterConn then eventWaterConn:Disconnect(); eventWaterConn = nil end
-    if eventWaterCharConn then eventWaterCharConn:Disconnect(); eventWaterCharConn = nil end
-    if eventWaterPlatform then eventWaterPlatform:Destroy(); eventWaterPlatform = nil end
-    local char = LocalPlayer.Character
+Navigation.stopEventWalkOnWater = function()
+    if Navigation.eventWaterConn then Navigation.eventWaterConn:Disconnect(); Navigation.eventWaterConn = nil end
+    if Navigation.eventWaterCharConn then Navigation.eventWaterCharConn:Disconnect(); Navigation.eventWaterCharConn = nil end
+    if Navigation.eventWaterPlatform then Navigation.eventWaterPlatform:Destroy(); Navigation.eventWaterPlatform = nil end
+    local char = Service.LocalPlayer.Character
     local hum = char and char:FindFirstChildWhichIsA("Humanoid")
     if hum then pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, true) end) end
 end
 
-local function startEventWalkOnWater()
-    stopEventWalkOnWater()
-    eventWaterPlatform = Instance.new("Part")
-    eventWaterPlatform.Anchored = true
-    eventWaterPlatform.CanCollide = false
-    eventWaterPlatform.Transparency = 1
-    eventWaterPlatform.Size = Vector3.new(10, 0.5, 10)
-    eventWaterPlatform.CFrame = CFrame.new(0, -9999, 0)
-    eventWaterPlatform.Parent = workspace
+Navigation.startEventWalkOnWater = function()
+    Navigation.stopEventWalkOnWater()
+    Navigation.eventWaterPlatform = Instance.new("Part")
+    Navigation.eventWaterPlatform.Anchored = true
+    Navigation.eventWaterPlatform.CanCollide = false
+    Navigation.eventWaterPlatform.Transparency = 1
+    Navigation.eventWaterPlatform.Size = Vector3.new(10, 0.5, 10)
+    Navigation.eventWaterPlatform.CFrame = CFrame.new(0, -9999, 0)
+    Navigation.eventWaterPlatform.Parent = workspace
 
     local function attachEventChar(char)
         local hum = char:FindFirstChildWhichIsA("Humanoid")
@@ -1748,8 +2167,8 @@ local function startEventWalkOnWater()
             return ok and isWater or false
         end
 
-        if eventWaterConn then eventWaterConn:Disconnect() end
-        eventWaterConn = game:GetService("RunService").Stepped:Connect(function()
+        if Navigation.eventWaterConn then Navigation.eventWaterConn:Disconnect() end
+        Navigation.eventWaterConn = Service.RunService.Stepped:Connect(function()
             if not root.Parent then return end
             local pos = root.Position
             local feetPos = pos - Vector3.new(0, 3, 0)
@@ -1757,36 +2176,36 @@ local function startEventWalkOnWater()
             if isWaterNow and not inWater then
                 inWater = true
                 waterSurfaceY = getWaterSurfaceY(pos) or (pos.Y - 2)
-                eventWaterPlatform.CFrame = CFrame.new(pos.X, waterSurfaceY, pos.Z)
-                eventWaterPlatform.CanCollide = true
+                Navigation.eventWaterPlatform.CFrame = CFrame.new(pos.X, waterSurfaceY, pos.Z)
+                Navigation.eventWaterPlatform.CanCollide = true
                 pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, false) end)
             elseif not isWaterNow and inWater then
                 inWater = false
                 waterSurfaceY = nil
-                eventWaterPlatform.CanCollide = false
-                eventWaterPlatform.CFrame = CFrame.new(0, -9999, 0)
+                Navigation.eventWaterPlatform.CanCollide = false
+                Navigation.eventWaterPlatform.CFrame = CFrame.new(0, -9999, 0)
                 pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Swimming, true) end)
             end
             if inWater and waterSurfaceY then
-                eventWaterPlatform.CFrame = CFrame.new(pos.X, waterSurfaceY, pos.Z)
+                Navigation.eventWaterPlatform.CFrame = CFrame.new(pos.X, waterSurfaceY, pos.Z)
             end
         end)
     end
 
-    local char = LocalPlayer.Character
+    local char = Service.LocalPlayer.Character
     if char then attachEventChar(char) end
-    eventWaterCharConn = LocalPlayer.CharacterAdded:Connect(attachEventChar)
+    Navigation.eventWaterCharConn = Service.LocalPlayer.CharacterAdded:Connect(attachEventChar)
 end
 
-local function findEventPosition(eventName)
+Navigation.findEventPosition = function(eventName)
     -- 1. EventSpawnLocations (exact, works for Thunderzilla too)
-    if not EventsReplion then
-        pcall(function() EventsReplion = Replion.Client:WaitReplion("Events") end)
+    if not Data.Events then
+        pcall(function() Data.Events = Data.Replion.Client:WaitReplion("Events") end)
     end
     local pos = nil
     pcall(function()
-        if EventsReplion then
-            local locs = EventsReplion:GetExpect("EventSpawnLocations")
+        if Data.Events then
+            local locs = Data.Events:GetExpect("EventSpawnLocations")
             if locs and locs[eventName] then pos = locs[eventName] end
         end
     end)
@@ -1804,35 +2223,35 @@ local function findEventPosition(eventName)
 end
 
 
-local TpTab = Window:CreateTab("Teleport", "rbxassetid://6723742952")
-local TpSection = Window:AddCollapsible(TpTab, "Teleport to Island", false)
+UI.TpTab = UI.Window:CreateTab("Teleport", "rbxassetid://6723742952")
+UI.TpSection = UI.Window:AddCollapsible(UI.TpTab, "Teleport to Island", false)
 
-Window:AddDropdown(TpSection, "Select Island", "", LOCATION_NAMES, false, "Ancient Jungle", function(value)
+UI.Window:AddDropdown(UI.TpSection, "Select Island", "", Catalog.LocationNames, false, "Ancient Jungle", function(value)
     Config.TeleportLocation = value
 end, "Dropdown_Select Map")
 
-Window:AddButton(TpSection, "Teleport", "", "", function()
-    teleportTo(Config.TeleportLocation)
-    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. Config.TeleportLocation, Color=Color3.fromRGB(150,150,170), Delay=2 })
+UI.Window:AddButton(UI.TpSection, "Teleport", "", "", function()
+    Navigation.teleportTo(Config.TeleportLocation)
+    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. Config.TeleportLocation, Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 
 
 -- Teleport to Event
-local function getBestEventPos()
+Navigation.getBestEventPos = function()
     local priority = Config.PriorityEvent
     local selectEv = Config.SelectEvent
     if priority and priority ~= "Select Option" then
-        local pos = findEventPosition(priority)
+        local pos = Navigation.findEventPosition(priority)
         if pos then return pos, "priority" end
     end
     if selectEv and selectEv ~= "Select Option" then
-        local pos = findEventPosition(selectEv)
+        local pos = Navigation.findEventPosition(selectEv)
         if pos then return pos, "select" end
     end
     return nil, nil
 end
 
-local TpEventSection = Window:AddCollapsible(TpTab, "Teleport to Event", false)
+UI.TpEventSection = UI.Window:AddCollapsible(UI.TpTab, "Teleport to Event", false)
 
 
 
@@ -1853,52 +2272,50 @@ local TpEventSection = Window:AddCollapsible(TpTab, "Teleport to Event", false)
 
 
 
-local eventWatcherConn = nil
-local eventTeleportActive = false
-Window:AddDropdown(TpEventSection, "Priority Event", "", EVENT_LIST, false, "Select Option", function(value)
+UI.Window:AddDropdown(UI.TpEventSection, "Priority Event", "", Catalog.EventList, false, "Select Option", function(value)
     Config.PriorityEvent = value
-    if eventTeleportActive then
-        local pos = getBestEventPos()
+    if Navigation.eventTeleportActive then
+        local pos = Navigation.getBestEventPos()
         if pos then
             pcall(function()
-                local ch = LocalPlayer.Character
+                local ch = Service.LocalPlayer.Character
                 local rt = ch and ch:FindFirstChild("HumanoidRootPart")
                 if rt then rt.CFrame = CFrame.new(pos + Vector3.new(0, 6, 0)) end
             end)
-            startEventWalkOnWater()
+            Navigation.startEventWalkOnWater()
         end
     end
 end)
-Window:AddDropdown(TpEventSection, "Select Event", "", EVENT_LIST, false, "Select Option", function(value)
+UI.Window:AddDropdown(UI.TpEventSection, "Select Event", "", Catalog.EventList, false, "Select Option", function(value)
     Config.SelectEvent = value
-    if eventTeleportActive then
-        local pos = getBestEventPos()
+    if Navigation.eventTeleportActive then
+        local pos = Navigation.getBestEventPos()
         if pos then
             pcall(function()
-                local ch = LocalPlayer.Character
+                local ch = Service.LocalPlayer.Character
                 local rt = ch and ch:FindFirstChild("HumanoidRootPart")
                 if rt then rt.CFrame = CFrame.new(pos + Vector3.new(0, 6, 0)) end
             end)
-            startEventWalkOnWater()
+            Navigation.startEventWalkOnWater()
         end
     end
 end)
-Window:AddToggle(TpEventSection, "Start Auto Event", "", false, function(state)
+UI.Window:AddToggle(UI.TpEventSection, "Start Auto Event", "", false, function(state)
     if state then
-        local char = LocalPlayer.Character
+        local char = Service.LocalPlayer.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if not root then return end
-        preEventCFrame = root.CFrame
-        eventTeleportActive = true
-        local initPos, initSource = getBestEventPos()
+        Navigation.preEventCFrame = root.CFrame
+        Navigation.eventTeleportActive = true
+        local initPos, initSource = Navigation.getBestEventPos()
         local wasFound = initPos ~= nil
         local currentSource = initSource
         if initPos then
             pcall(function() root.CFrame = CFrame.new(initPos + Vector3.new(0, 6, 0)) end)
-            startEventWalkOnWater()
+            Navigation.startEventWalkOnWater()
         end
-        eventWatcherConn = workspace.DescendantRemoving:Connect(function(removed)
-            if not eventTeleportActive or not wasFound then return end
+        Navigation.eventWatcherConn = workspace.DescendantRemoving:Connect(function(removed)
+            if not Navigation.eventTeleportActive or not wasFound then return end
             if not removed:IsA("Model") then return end
             local eventName = (currentSource == "priority") and Config.PriorityEvent or Config.SelectEvent
             if not eventName or eventName == "Select Option" then return end
@@ -1907,59 +2324,59 @@ Window:AddToggle(TpEventSection, "Start Auto Event", "", false, function(state)
             local removedLower = removed.Name:lower()
             if removedLower ~= lowerName and removedLower ~= strippedName then return end
             task.defer(function()
-                    if not eventTeleportActive then return end
-                    local pos, source = getBestEventPos()
+                    if not Navigation.eventTeleportActive then return end
+                    local pos, source = Navigation.getBestEventPos()
                     if pos then
                         if currentSource ~= source then
                             wasFound = true
                             currentSource = source
                             pcall(function()
-                                local ch = LocalPlayer.Character
+                                local ch = Service.LocalPlayer.Character
                                 local rt = ch and ch:FindFirstChild("HumanoidRootPart")
                                 if rt then rt.CFrame = CFrame.new(pos + Vector3.new(0, 6, 0)) end
                             end)
-                            startEventWalkOnWater()
+                            Navigation.startEventWalkOnWater()
                         end
                     else
                         wasFound = false
                         currentSource = nil
-                        stopEventWalkOnWater()
-                        if preEventCFrame then
+                        Navigation.stopEventWalkOnWater()
+                        if Navigation.preEventCFrame then
                             pcall(function()
-                                local ch = LocalPlayer.Character
+                                local ch = Service.LocalPlayer.Character
                                 local rt = ch and ch:FindFirstChild("HumanoidRootPart")
-                                if rt then rt.CFrame = preEventCFrame end
+                                if rt then rt.CFrame = Navigation.preEventCFrame end
                             end)
                         end
                     end
                 end)
         end)
         task.spawn(function()
-            while eventTeleportActive do
+            while Navigation.eventTeleportActive do
                 task.wait(2)
-                if not eventTeleportActive then break end
-                local pos, source = getBestEventPos()
+                if not Navigation.eventTeleportActive then break end
+                local pos, source = Navigation.getBestEventPos()
                 if pos then
                     if not wasFound or currentSource ~= source then
                         wasFound = true
                         currentSource = source
                         pcall(function()
-                            local ch = LocalPlayer.Character
+                            local ch = Service.LocalPlayer.Character
                             local rt = ch and ch:FindFirstChild("HumanoidRootPart")
                             if rt then rt.CFrame = CFrame.new(pos + Vector3.new(0, 6, 0)) end
                         end)
-                        startEventWalkOnWater()
+                        Navigation.startEventWalkOnWater()
                     end
                 else
                     if wasFound then
                         wasFound = false
                         currentSource = nil
-                        stopEventWalkOnWater()
-                        if preEventCFrame then
+                        Navigation.stopEventWalkOnWater()
+                        if Navigation.preEventCFrame then
                             pcall(function()
-                                local ch = LocalPlayer.Character
+                                local ch = Service.LocalPlayer.Character
                                 local rt = ch and ch:FindFirstChild("HumanoidRootPart")
-                                if rt then rt.CFrame = preEventCFrame end
+                                if rt then rt.CFrame = Navigation.preEventCFrame end
                             end)
                         end
                     end
@@ -1967,16 +2384,16 @@ Window:AddToggle(TpEventSection, "Start Auto Event", "", false, function(state)
             end
         end)
     else
-        eventTeleportActive = false
-        if eventWatcherConn then eventWatcherConn:Disconnect(); eventWatcherConn = nil end
-        stopEventWalkOnWater()
-        if preEventCFrame then
+        Navigation.eventTeleportActive = false
+        if Navigation.eventWatcherConn then Navigation.eventWatcherConn:Disconnect(); Navigation.eventWatcherConn = nil end
+        Navigation.stopEventWalkOnWater()
+        if Navigation.preEventCFrame then
             pcall(function()
-                local char = LocalPlayer.Character
+                local char = Service.LocalPlayer.Character
                 local root = char and char:FindFirstChild("HumanoidRootPart")
-                if root then root.CFrame = preEventCFrame end
+                if root then root.CFrame = Navigation.preEventCFrame end
             end)
-            preEventCFrame = nil
+            Navigation.preEventCFrame = nil
         end
     end
 end, "Toggle_Start Auto Event")
@@ -1984,18 +2401,18 @@ end, "Toggle_Start Auto Event")
 
 
 -- Teleport to NPC
-local TpNpcSection = Window:AddCollapsible(TpTab, "Teleport to NPC", false)
-local npcInitList = getNPCNames()
-local SelectNpcDropdown = Window:AddDropdown(TpNpcSection, "Select NPC", "", npcInitList, false, npcInitList[1] or "Select NPC", function(value)
+UI.TpNpcSection = UI.Window:AddCollapsible(UI.TpTab, "Teleport to NPC", false)
+Navigation.npcInitList = Navigation.getNPCNames()
+UI.SelectNpcDropdown = UI.Window:AddDropdown(UI.TpNpcSection, "Select NPC", "", Navigation.npcInitList, false, Navigation.npcInitList[1] or "Select NPC", function(value)
     Config.TeleportNPC = value
 end, "Dropdown_Select NPC")
-Window:AddButtonGrid(TpNpcSection,
+UI.Window:AddButtonGrid(UI.TpNpcSection,
     { Title = "Teleport", Callback = function()
     local name = Config.TeleportNPC
     if not name or name == "" then return end
     local teleported = false
     pcall(function()
-        local char = LocalPlayer.Character
+        local char = Service.LocalPlayer.Character
         if not char then return end
         local root = char:FindFirstChild("HumanoidRootPart")
         if not root then return end
@@ -2011,33 +2428,33 @@ Window:AddButtonGrid(TpNpcSection,
 
     end)
     if teleported then
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. name, Color=Color3.fromRGB(150,150,170), Delay=2 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. name, Color=Color3.fromRGB(150,150,170), Delay=2 })
     else
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="NPC not found: " .. name, Color=Color3.fromRGB(150,150,170), Delay=2 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="NPC not found: " .. name, Color=Color3.fromRGB(150,150,170), Delay=2 })
     end
     end},
     { Title = "Refresh", Callback = function()
-        local nl = getNPCNames()
-        SelectNpcDropdown:Refresh(nl, nl[1] or "Select NPC")
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Refreshed " .. #nl .. " NPCs!", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        local nl = Navigation.getNPCNames()
+        UI.SelectNpcDropdown:Refresh(nl, nl[1] or "Select NPC")
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Refreshed " .. #nl .. " NPCs!", Color=Color3.fromRGB(150,150,170), Delay=2 })
     end}
 )
 
 -- Teleport to Player
-local TpPlayerSection = Window:AddCollapsible(TpTab, "Teleport to Player", false)
-local SelectPlayerDropdown = Window:AddDropdown(TpPlayerSection, "Pick Player", "", getPlayerList(), false, "Select Option", function(value)
+UI.TpPlayerSection = UI.Window:AddCollapsible(UI.TpTab, "Teleport to Player", false)
+UI.SelectPlayerDropdown = UI.Window:AddDropdown(UI.TpPlayerSection, "Pick Player", "", Navigation.getPlayerList(), false, "Select Option", function(value)
     Config.TeleportPlayer = value
 end)
-Window:AddButtonGrid(TpPlayerSection,
+UI.Window:AddButtonGrid(UI.TpPlayerSection,
     { Title = "Teleport", Callback = function()
         local target = Config.TeleportPlayer
         if not target or target == "" then return end
         pcall(function()
-            local char = LocalPlayer.Character
+            local char = Service.LocalPlayer.Character
             if not char then return end
             local root = char:FindFirstChild("HumanoidRootPart")
             if not root then return end
-            local tp = Players:FindFirstChild(target)
+            local tp = Service.Players:FindFirstChild(target)
             if not tp then return end
             local tc = tp.Character
             if not tc then return end
@@ -2045,122 +2462,179 @@ Window:AddButtonGrid(TpPlayerSection,
             if not tr then return end
             root.CFrame = tr.CFrame + Vector3.new(3, 0, 0)
         end)
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. tostring(Config.TeleportPlayer), Color=Color3.fromRGB(150,150,170), Delay=2 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. tostring(Config.TeleportPlayer), Color=Color3.fromRGB(150,150,170), Delay=2 })
     end},
     { Title = "Refresh", Callback = function()
-        local pl = getPlayerList(); SelectPlayerDropdown:Refresh(pl, pl[1] or "Select Player")
+        local pl = Navigation.getPlayerList(); UI.SelectPlayerDropdown:Refresh(pl, pl[1] or "Select Player")
     end}
 )
 
 -- Saved Location
-local SavedLocSection = Window:AddCollapsible(TpTab, "Saved Location", false)
-Window:AddButton(SavedLocSection, "Save Current Location", "", "rbxassetid://16932740082", function()
-    local ok = saveCurrentLocation()
+UI.SavedLocSection = UI.Window:AddCollapsible(UI.TpTab, "Saved Location", false)
+UI.Window:AddButton(UI.SavedLocSection, "Save Current Location", "", "rbxassetid://16932740082", function()
+    local ok = Navigation.saveCurrentLocation()
     local msg = ok and "Location saved!" or "Failed to save location."
-    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=msg, Color=Color3.fromRGB(150,150,170), Delay=2 })
+    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=msg, Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
-Window:AddButton(SavedLocSection, "Teleport to Saved", "", "rbxassetid://16932740082", function()
-    local ok, result = pcall(teleportToSaved)
+UI.Window:AddButton(UI.SavedLocSection, "Teleport to Saved", "", "rbxassetid://16932740082", function()
+    local ok, result = pcall(Navigation.teleportToSaved)
     local msg = (ok and result) and "Teleported to saved!" or "No saved location."
-    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=msg, Color=Color3.fromRGB(150,150,170), Delay=2 })
+    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=msg, Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
-Window:AddButton(SavedLocSection, "Reset Saved Location", "", "rbxassetid://16932740082", function()
+UI.Window:AddButton(UI.SavedLocSection, "Reset Saved Location", "", "rbxassetid://16932740082", function()
     pcall(function()
-        if isfile(SAVED_LOCATION_FILE) then delfile(SAVED_LOCATION_FILE) end
+        if isfile(Catalog.SavedLocationFile) then delfile(Catalog.SavedLocationFile) end
     end)
-    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Saved location cleared.", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Saved location cleared.", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
-Window:AddToggle(SavedLocSection, "Auto Teleport on Spawn", "", false, function(state)
-    setAutoTeleportOnSpawn(state)
+UI.Window:AddToggle(UI.SavedLocSection, "Auto Teleport on Spawn", "", false, function(state)
+    Navigation.setAutoTeleportOnSpawn(state)
 end, "Toggle_Auto Teleport on Spawn")
 
-
-local S = {}
 
 -- ====== SHOP: AUTO BUY WEATHER ======
 S.WEATHER_LIST = {"Fog", "Radiant", "Storm", "Treasure Hunt", "Wind"}
 S.weatherWatchConn = nil
+S.weatherWorker = nil
+S.weatherQueue = {}
+S.weatherQueued = {}
+S.weatherGeneration = 0
 
-local function stopWeatherWatcher()
+S.stopWeatherWatcher = function()
+    S.weatherGeneration = S.weatherGeneration + 1
     if S.weatherWatchConn then
         pcall(function() S.weatherWatchConn:Disconnect() end)
         S.weatherWatchConn = nil
     end
+    if S.weatherWorker then
+        pcall(task.cancel, S.weatherWorker)
+        S.weatherWorker = nil
+    end
+    table.clear(S.weatherQueue)
+    table.clear(S.weatherQueued)
     Config.BuyWeatherActive = false
 end
 
-local function buyWeatherEvent(eventName, silent)
+S.buyWeatherEvent = function(eventName, silent)
     local ok, result = pcall(function()
-        return R.weatherPurchase:InvokeServer(eventName)
+        return Remote.weatherPurchase:InvokeServer(eventName)
     end)
     if ok and result == true then
         if not silent then
-            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=eventName, Color=Color3.fromRGB(150,150,170), Delay=3 })
+            UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=eventName, Color=Color3.fromRGB(150,150,170), Delay=3 })
         end
         return true
     end
     return false
 end
 
-local function startWeatherWatcher()
-    -- Lazy-load EventsReplion
-    if not EventsReplion then
+S.enqueueWeather = function(eventName)
+    if not Config.BuyWeatherActive then return end
+    if not table.find(Config.SelectedWeatherEvents, eventName) then return end
+    if S.weatherQueued[eventName] then return end
+    S.weatherQueued[eventName] = true
+    table.insert(S.weatherQueue, eventName)
+    if S.weatherWorker then return end
+
+    local generation = S.weatherGeneration
+    S.weatherWorker = task.spawn(function()
+        while Config.BuyWeatherActive
+            and generation == S.weatherGeneration
+            and #S.weatherQueue > 0
+        do
+            local eventName = table.remove(S.weatherQueue, 1)
+
+            while Runtime.Sell.Busy and Config.BuyWeatherActive
+                and generation == S.weatherGeneration
+            do
+                task.wait(0.1)
+            end
+
+            local success = false
+            for attempt = 1, 2 do
+                if not Config.BuyWeatherActive
+                    or generation ~= S.weatherGeneration
+                then
+                    break
+                end
+                success = S.buyWeatherEvent(eventName, attempt == 1)
+                if success then break end
+                task.wait(1.5)
+            end
+
+            S.weatherQueued[eventName] = nil
+            task.wait(0.35)
+        end
+        if generation == S.weatherGeneration then
+            S.weatherWorker = nil
+        end
+    end)
+end
+
+S.startWeatherWatcher = function()
+    if S.weatherWatchConn then
+        pcall(function() S.weatherWatchConn:Disconnect() end)
+        S.weatherWatchConn = nil
+    end
+    if S.weatherWorker then
+        pcall(task.cancel, S.weatherWorker)
+        S.weatherWorker = nil
+    end
+    table.clear(S.weatherQueue)
+    table.clear(S.weatherQueued)
+    S.weatherGeneration = S.weatherGeneration + 1
+    Config.BuyWeatherActive = true
+
+    -- Lazy-load Data.Events
+    if not Data.Events then
         pcall(function()
-            EventsReplion = Replion.Client:WaitReplion("Events")
+            Data.Events = Data.Replion.Client:WaitReplion("Events")
         end)
     end
-    if not EventsReplion then return end
+    if not Data.Events then return end
     -- Connect watcher langsung (jangan terlambat detect event selesai)
-    S.weatherWatchConn = EventsReplion:OnArrayRemove("WeatherMachine", function(_, removedEvent)
+    S.weatherWatchConn = Data.Events:OnArrayRemove("WeatherMachine", function(_, removedEvent)
         if not Config.BuyWeatherActive then return end
         if not table.find(Config.SelectedWeatherEvents, removedEvent) then return end
-        task.spawn(function()
-            task.wait(0.5)
-            if not Config.BuyWeatherActive then return end
-            local success = buyWeatherEvent(removedEvent)
-            if not success then
-                stopWeatherWatcher()
-            end
-        end)
+        S.enqueueWeather(removedEvent)
     end)
     -- Initial buy di-defer: tunggu dropdown autoload selesai dulu
     task.defer(function()
         if not Config.BuyWeatherActive then return end
         local activeList = {}
-        pcall(function() activeList = EventsReplion:GetExpect("WeatherMachine") or {} end)
-        local bought = {}
+        pcall(function() activeList = Data.Events:GetExpect("WeatherMachine") or {} end)
         for _, ev in ipairs(Config.SelectedWeatherEvents) do
+            if not Config.BuyWeatherActive then break end
             if ev ~= "Select Option" and not table.find(activeList, ev) then
-                if buyWeatherEvent(ev, true) then
-                    table.insert(bought, ev)
-                end
-                task.wait(0.3)
+                S.enqueueWeather(ev)
             end
-        end
-        if #bought > 0 then
-            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=table.concat(bought, ", "), Color=Color3.fromRGB(150,150,170), Delay=4 })
         end
     end)
 end
 
-local AutomationTab = Window:CreateTab("Automation", "rbxassetid://102105242487044")
+UI.AutomationTab = UI.Window:CreateTab("Automation", "rbxassetid://102105242487044")
 
-S.WeatherSection = Window:AddCollapsible(AutomationTab, "Weather Features", false)
+S.WeatherSection = UI.Window:AddCollapsible(UI.AutomationTab, "Weather Features", false)
 
-Window:AddDropdown(S.WeatherSection, "Select Weather", "", S.WEATHER_LIST, 3, {}, function(selected)
-    Config.SelectedWeatherEvents = (type(selected) == "table") and selected or {}
+UI.Window:AddDropdown(S.WeatherSection, "Select Weather", "", S.WEATHER_LIST, 3, {}, function(selected)
+    Config.SelectedWeatherEvents = {}
+    if type(selected) == "table" then
+        for i = 1, math.min(#selected, 3) do
+            table.insert(Config.SelectedWeatherEvents, selected[i])
+        end
+    end
 end, "Dropdown_Select Weather")
 
-Window:AddToggle(S.WeatherSection, "Buy Weather", "", false, function(state)
+UI.Window:AddToggle(S.WeatherSection, "Buy Weather", "", false, function(state)
     Config.BuyWeatherActive = state
     if state then
-        startWeatherWatcher()
+        S.startWeatherWatcher()
     else
-        stopWeatherWatcher()
+        S.stopWeatherWatcher()
     end
 end, "Toggle_Buy Weather")
 
-S.TotemSection = Window:AddCollapsible(AutomationTab, "Totem Features", false)
+S.TotemSection = UI.Window:AddCollapsible(UI.AutomationTab, "Totem Features", false)
 
 
 
@@ -2181,13 +2655,9 @@ S.totemCreatedConn = nil
 S.totemDistMonitor = nil
 S.totemWorldPos = nil  -- posisi totem aktif di world
 
-S.spawnTotemRemote = GetServerRemote("RE/SpawnTotem")
-S.totemCreatedRemote = GetServerRemote("RE/TotemCreated")
-S.totemSpawnedRemote = GetServerRemote("RE/TotemSpawned")
-
 -- listen RE/TotemSpawned untuk dapat posisi totem
-if S.totemSpawnedRemote then
-    S.totemSpawnedRemote.OnClientEvent:Connect(function(pos)
+if Remote.totemSpawned then
+    Remote.totemSpawned.OnClientEvent:Connect(function(pos)
         S.totemWorldPos = pos
     end)
 end
@@ -2195,12 +2665,12 @@ end
 S.findTotemUUID = function(totemName)
     local uuid = nil
     pcall(function()
-        local inv = PlayerData:GetExpect("Inventory")
+        local inv = Data.Player:GetExpect("Inventory")
         for catName, items in pairs(inv) do
             if type(items) == "table" then
                 for _, item in pairs(items) do
                     if type(item) == "table" and item.UUID and item.Id then
-                        local ok2, data = pcall(ItemUtility.GetItemDataFromItemType, catName, item.Id)
+                        local ok2, data = pcall(Data.ItemUtility.GetItemDataFromItemType, catName, item.Id)
                         if ok2 and data and data.Data then
                             local name = tostring(data.Data.Name or "")
                             if name == totemName then
@@ -2225,11 +2695,11 @@ S.scheduleRespawn = function()
     if S.totemCreatedConn then S.totemCreatedConn:Disconnect(); S.totemCreatedConn = nil end
     if S.autoSpawnThread then pcall(task.cancel, S.autoSpawnThread); S.autoSpawnThread = nil end
 
-    if S.totemCreatedRemote then
-        S.totemCreatedConn = S.totemCreatedRemote.OnClientEvent:Connect(function(model, totemId)
+    if Remote.totemCreated then
+        S.totemCreatedConn = Remote.totemCreated.OnClientEvent:Connect(function(model, totemId)
             -- filter: hanya model yang di-spawn oleh kita (cek posisi dekat player)
             if not model then return end
-            local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local root = Service.LocalPlayer.Character and Service.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             if root then
                 local ok, pivot = pcall(function() return model:GetPivot() end)
                 if ok and pivot then
@@ -2255,7 +2725,7 @@ S.scheduleRespawn = function()
                     task.wait(10)
                     if not Config.AutoSpawnTotem or model.Parent == nil then break end
                     if S.totemWorldPos then
-                        local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                        local root = Service.LocalPlayer.Character and Service.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
                         if root then
                             local dist = (S.totemWorldPos - root.Position).Magnitude
                             if dist > 100 then
@@ -2279,15 +2749,15 @@ S.spawnTotem = function(isManual)
     if not totemName or totemName == "" then return false end
     local uuid = S.findTotemUUID(totemName)
     if not uuid then
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not found in inventory", Color=Color3.fromRGB(150,150,170), Delay=3 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not found in inventory", Color=Color3.fromRGB(150,150,170), Delay=3 })
         return false
     end
-    local rf = S.spawnTotemRemote
+    local rf = Remote.spawnTotem
     if not rf then return false end
     local ok = pcall(function() rf:FireServer(uuid) end)
     if ok then
         if isManual then
-            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=totemName .. " spawned", Color=Color3.fromRGB(150,150,170), Delay=3 })
+            UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=totemName .. " spawned", Color=Color3.fromRGB(150,150,170), Delay=3 })
         end
         if Config.AutoSpawnTotem then S.scheduleRespawn() end
         return true
@@ -2308,15 +2778,15 @@ S.startAutoSpawn = function()
     task.spawn(S.spawnTotem)
 end
 
-Window:AddDropdown(S.TotemSection, "Select Totem", "", TOTEM_LIST, false, Config.SelectedTotem, function(value)
+UI.Window:AddDropdown(S.TotemSection, "Select Totem", "", Catalog.TotemList, false, Config.SelectedTotem, function(value)
     Config.SelectedTotem = value or "Luck Totem"
 end, "Dropdown_Select Totem")
 
-Window:AddButton(S.TotemSection, "Refresh Totem List", "", "rbxassetid://16932740082", function()
+UI.Window:AddButton(S.TotemSection, "Refresh Totem List", "", "rbxassetid://16932740082", function()
     local inv = nil
-    pcall(function() inv = PlayerData:Get("Inventory") end)
+    pcall(function() inv = Data.Player:Get("Inventory") end)
     if not inv or not inv.Totems then
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Inventory not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content="Inventory not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
     local ownedTypes = {}
@@ -2327,26 +2797,26 @@ Window:AddButton(S.TotemSection, "Refresh Totem List", "", "rbxassetid://1693274
     for typeId in pairs(ownedTypes) do
         local name = tostring(typeId)
         pcall(function()
-            local d = ItemUtility.GetItemDataFromItemType("Totems", typeId)
+            local d = Data.ItemUtility.GetItemDataFromItemType("Totems", typeId)
             if d and d.Data and d.Data.Name then name = d.Data.Name end
         end)
         table.insert(names, name)
     end
     local content = #names > 0 and table.concat(names, ", ") or "No totems found"
-    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=content, Color=Color3.fromRGB(150,150,170), Delay=4 })
+    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content=content, Color=Color3.fromRGB(150,150,170), Delay=4 })
 end)
 
-Window:AddToggle(S.TotemSection, "Auto Spawn Totem", "", false, function(state)
+UI.Window:AddToggle(S.TotemSection, "Auto Spawn Totem", "", false, function(state)
     Config.AutoSpawnTotem = state
     if state then S.startAutoSpawn() else S.stopAutoSpawn() end
 end, "Toggle_Auto Spawn Totem")
 
-Window:AddButton(S.TotemSection, "Spawn Now", "", "rbxassetid://16932740082", function()
+UI.Window:AddButton(S.TotemSection, "Spawn Now", "", "rbxassetid://16932740082", function()
     S.spawnTotem(true)
 end)
 
 -- Helper: update paragraph text, support both old (Frame) dan new (table:Set) library
-local function setParagraphText(para, text)
+S.setParagraphText = function(para, text)
     if not para then return end
     if type(para) == "table" and para.Set then
         pcall(function() para:Set(text) end)
@@ -2361,26 +2831,26 @@ end
 
 -- ===== ENCHANT FEATURES =====
 do
-    local EnchantSection = Window:AddCollapsible(AutomationTab, "Enchant Features", false)
-    Window:AddParagraph(EnchantSection, "Enchant Status", "Current Rod: None\nEnchant 1: None\nEnchant 2: None\nEnchant Stones Left: 0")
+    local EnchantSection = UI.Window:AddCollapsible(UI.AutomationTab, "Enchant Features", false)
+    UI.Window:AddParagraph(EnchantSection, "Enchant Status", "Current Rod: None\nEnchant 1: None\nEnchant 2: None\nEnchant Stones Left: 0")
     local EST = {"Normal Enchant Stone", "Runic Enchant Stone", "Evolved Enchant Stone"}
-    Window:AddDropdown(EnchantSection, "Enchant Type", "", EST, false, "Normal Enchant Stone", function(v)
+    UI.Window:AddDropdown(EnchantSection, "Enchant Type", "", EST, false, "Normal Enchant Stone", function(v)
         Config.EnchantType = v or "Normal Enchant Stone"
     end, "Dropdown_Enchant Type")
-    Window:AddDropdown(EnchantSection, "Target Enchant", "", {}, false, "Select Option", function(v)
+    UI.Window:AddDropdown(EnchantSection, "Target Enchant", "", {}, false, "Select Option", function(v)
         Config.TargetEnchant = v or "Select Option"
     end, "Dropdown_Target Enchant")
-    Window:AddToggle(EnchantSection, "Auto Enchant Reroll", "", false, function(state)
+    UI.Window:AddToggle(EnchantSection, "Auto Enchant Reroll", "", false, function(state)
         Config.AutoEnchantReroll = state
     end, "Toggle_Auto Enchant Reroll")
-    Window:AddButtonGrid(EnchantSection,
+    UI.Window:AddButtonGrid(EnchantSection,
         { Title = "Teleport to Altar 1", Callback = function()
-            local char = LocalPlayer.Character
+            local char = Service.LocalPlayer.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if root then pcall(function() root.CFrame = CFrame.new(3246.00122, -1300.65588, 1395.11926, -0.430797249, 0, 0.902448714, 0, 1, 0, -0.902448714, 0, -0.430797249) end) end
         end },
         { Title = "Teleport to Altar 2", Callback = function()
-            local char = LocalPlayer.Character
+            local char = Service.LocalPlayer.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if root then pcall(function() root.CFrame = CFrame.new(1478.63489, 130.679703, -609.361938, -0.996601522, 2.26994281e-08, -0.0823735297, 2.58843453e-08, 1, -3.7596422e-08, 0.0823735297, -3.96008382e-08, -0.996601522) end) end
         end }
@@ -2389,21 +2859,21 @@ end
 
 -- ===== CREATE TRANSCENDED STONE =====
 do
-    local TranscendedSection = Window:AddCollapsible(AutomationTab, "Create Transcended Stone", false)
-    Window:AddParagraph(TranscendedSection, "Status", "Waiting")
-    Window:AddDropdown(TranscendedSection, "Select Secret Fish", "", {}, false, "Select Option", function(v)
+    local TranscendedSection = UI.Window:AddCollapsible(UI.AutomationTab, "Create Transcended Stone", false)
+    UI.Window:AddParagraph(TranscendedSection, "Status", "Waiting")
+    UI.Window:AddDropdown(TranscendedSection, "Select Secret Fish", "", {}, false, "Select Option", function(v)
         Config.SelectedSecretFish = v or "Select Option"
     end, "Dropdown_Select Secret Fish")
-Window:AddButton(TranscendedSection, "Refresh Fish List", "", "rbxassetid://16932740082", function() end)
-    Window:AddInput(TranscendedSection, "Amount", "", "Enter amount...", function(v)
+UI.Window:AddButton(TranscendedSection, "Refresh Fish List", "", "rbxassetid://16932740082", function() end)
+    UI.Window:AddInput(TranscendedSection, "Amount", "", "Enter amount...", function(v)
         Config.TranscendedAmount = tonumber(v) or 1
     end, "Input_Transcended Amount")
-    Window:AddToggle(TranscendedSection, "Enable Auto Create", "", false, function(state)
+    UI.Window:AddToggle(TranscendedSection, "Enable Auto Create", "", false, function(state)
         Config.AutoCreateTranscended = state
     end, "Toggle_Enable Auto Create")
 end
 
-S.ShopTab = Window:CreateTab("Shop", "rbxassetid://87353934937155")
+S.ShopTab = UI.Window:CreateTab("Shop", "rbxassetid://87353934937155")
 
 -- ==========================================
 -- ROD FEATURES
@@ -2419,26 +2889,26 @@ S.ROD_LIST = {"Starter Rod","Luck Rod","Carbon Rod","Grass Rod","Demascus Rod","
     "Lucky Rod","Midnight Rod","Seabreeze Rod","Eclipse Rod","Steampunk Rod","Chrome Rod",
     "Fluorescent Rod","Magma Rod","Astral Rod","Ares Rod","Angler Rod","Bamboo Rod"}
 
-S.RodSection = Window:AddCollapsible(S.ShopTab, "Rod Features", false)
+S.RodSection = UI.Window:AddCollapsible(S.ShopTab, "Rod Features", false)
 
-Window:AddDropdown(S.RodSection, "Select Rod", "", S.ROD_LIST, false, Config.SelectedRod, function(v)
+UI.Window:AddDropdown(S.RodSection, "Select Rod", "", S.ROD_LIST, false, Config.SelectedRod, function(v)
     Config.SelectedRod = v or "Starter Rod"
 end, "Dropdown_Select Rod")
 
-Window:AddButton(S.RodSection, "Buy Rod", "", "rbxassetid://16932740082", function()
+UI.Window:AddButton(S.RodSection, "Buy Rod", "", "rbxassetid://16932740082", function()
     local rodId = S.ROD_MAP[Config.SelectedRod]
-    if not rodId or not R.purchaseRod then
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    if not rodId or not Remote.purchaseRod then
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
-    local ok, success, uuid = pcall(function() return R.purchaseRod:InvokeServer(rodId) end)
+    local ok, success, uuid = pcall(function() return Remote.purchaseRod:InvokeServer(rodId) end)
     if ok then
-        if success and uuid and R.equipItem then
-            pcall(function() R.equipItem:FireServer(uuid, "Fishing Rods") end)
+        if success and uuid and Remote.equipItem then
+            pcall(function() Remote.equipItem:FireServer(uuid, "Fishing Rods") end)
         end
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=Config.SelectedRod .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content=Config.SelectedRod .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
     else
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Purchase failed", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content="Purchase failed", Color=Color3.fromRGB(150,150,170), Delay=2 })
     end
 end)
 
@@ -2453,26 +2923,26 @@ S.BAIT_MAP = {
 S.BAIT_LIST = {"Topwater Bait","Luck Bait","Midnight Bait","Nature Bait",
     "Chroma Bait","Dark Matter Bait","Corrupt Bait","Aether Bait","Singularity Bait"}
 
-S.BaitSection = Window:AddCollapsible(S.ShopTab, "Bait Features", false)
+S.BaitSection = UI.Window:AddCollapsible(S.ShopTab, "Bait Features", false)
 
-Window:AddDropdown(S.BaitSection, "Select Bait", "", S.BAIT_LIST, false, Config.SelectedBait, function(v)
+UI.Window:AddDropdown(S.BaitSection, "Select Bait", "", S.BAIT_LIST, false, Config.SelectedBait, function(v)
     Config.SelectedBait = v or "Topwater Bait"
 end, "Dropdown_Select Bait")
 
-Window:AddButton(S.BaitSection, "Buy Bait", "", "rbxassetid://16932740082", function()
+UI.Window:AddButton(S.BaitSection, "Buy Bait", "", "rbxassetid://16932740082", function()
     local baitId = S.BAIT_MAP[Config.SelectedBait]
-    if not baitId or not R.purchaseBait then
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    if not baitId or not Remote.purchaseBait then
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
-    local ok, success, shouldEquip = pcall(function() return R.purchaseBait:InvokeServer(baitId) end)
+    local ok, success, shouldEquip = pcall(function() return Remote.purchaseBait:InvokeServer(baitId) end)
     if ok then
-        if shouldEquip and R.equipBait then
-            pcall(function() R.equipBait:FireServer(baitId) end)
+        if shouldEquip and Remote.equipBait then
+            pcall(function() Remote.equipBait:FireServer(baitId) end)
         end
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=Config.SelectedBait .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content=Config.SelectedBait .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
     else
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Purchase failed", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content="Purchase failed", Color=Color3.fromRGB(150,150,170), Delay=2 })
     end
 end)
 
@@ -2504,8 +2974,8 @@ S.autoBuyBMThread = nil
 
 S.buyBMItem = function(itemName)
     local itemId = S.BM_MAP[itemName]
-    if not itemId or not R.purchaseBM then return false end
-    local ok, result = pcall(function() return R.purchaseBM:InvokeServer(itemId) end)
+    if not itemId or not Remote.purchaseBM then return false end
+    local ok, result = pcall(function() return Remote.purchaseBM:InvokeServer(itemId) end)
     return ok and result and (type(result) == "table" and result.Success or result == true)
 end
 
@@ -2515,10 +2985,10 @@ S.startAutoBuyBM = function()
     if S.autoBuyBMThread then pcall(task.cancel, S.autoBuyBMThread); S.autoBuyBMThread = nil end
     Config.AutoBuyBM = true
     S.autoBuyBMThread = task.spawn(function()
-        local root = game:GetService("Players").LocalPlayer.Character
-            and game:GetService("Players").LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local root = Service.LocalPlayer.Character
+            and Service.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         local preBMCF = root and root.CFrame
-        teleportToBM(S.BM_CF)
+        Navigation.teleportToBM(S.BM_CF)
         task.wait(1.5)
         local bought = {}
         for _, name in ipairs(Config.SelectedBMItems) do
@@ -2532,31 +3002,31 @@ S.startAutoBuyBM = function()
         S.autoBuyBMThread = nil
         if S.bmToggleFunc then task.defer(function() pcall(function() S.bmToggleFunc:Set(false) end) end) end
         if #bought > 0 then
-            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Bought: " .. table.concat(bought, ", "), Color=Color3.fromRGB(150,150,170), Delay=4 })
+            UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Bought: " .. table.concat(bought, ", "), Color=Color3.fromRGB(150,150,170), Delay=4 })
         else
-            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Nothing bought / out of stock", Color=Color3.fromRGB(150,150,170), Delay=3 })
+            UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Nothing bought / out of stock", Color=Color3.fromRGB(150,150,170), Delay=3 })
         end
     end)
 end
 
-S.BMSection = Window:AddCollapsible(S.ShopTab, "Black Market Features", false)
+S.BMSection = UI.Window:AddCollapsible(S.ShopTab, "Black Market Features", false)
 
-Window:AddDropdown(S.BMSection, "Select Item", "", S.BM_LIST, 999, {}, function(selected)
+UI.Window:AddDropdown(S.BMSection, "Select Item", "", S.BM_LIST, 999, {}, function(selected)
     Config.SelectedBMItems = type(selected) == "table" and selected or {}
 end, "Dropdown_Select BM Item")
 
-Window:AddButton(S.BMSection, "Refresh List", "", "rbxassetid://16932740082", function()
-    local ok, BMC = pcall(function() return require(game:GetService("ReplicatedStorage").Shared.BlackMarketConfig) end)
+UI.Window:AddButton(S.BMSection, "Refresh List", "", "rbxassetid://16932740082", function()
+    local ok, BMC = pcall(function() return require(Service.ReplicatedStorage.Shared.BlackMarketConfig) end)
     if ok and BMC then
         local ok2, items = pcall(function() return BMC.GetItems() end)
         if ok2 and items then
-            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Stock refreshed", Color=Color3.fromRGB(150,150,170), Delay=2 })
+            UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content="Stock refreshed", Color=Color3.fromRGB(150,150,170), Delay=2 })
         end
     end
 end)
 
 S.bmToggleFunc = nil
-S.bmToggleFunc = Window:AddToggle(S.BMSection, "Buy Black Market Item", "", false, function(state)
+S.bmToggleFunc = UI.Window:AddToggle(S.BMSection, "Buy Black Market Item", "", false, function(state)
     Config.AutoBuyBM = state
     if state then
         S.startAutoBuyBM()
@@ -2587,13 +3057,13 @@ S.bpToggleFunc = nil
 
 S.updateBPStatus = function(text)
     if S.bpStatusLabel then
-        setParagraphText(S.bpStatusLabel, text)
+        S.setParagraphText(S.bpStatusLabel, text)
     end
 end
 
 S.buyBPSlots = function()
-    if not R.bpPurchase then
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    if not Remote.bpPurchase then
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
     local slots = Config.SelectedBPSlots
@@ -2609,12 +3079,12 @@ S.buyBPSlots = function()
         if index then
             local owned = false
             pcall(function()
-                local bp = PlayerData:Get("GalaxyBP26")
+                local bp = Data.Player:Get("GalaxyBP26")
                 if bp and bp[tostring(index)] then owned = true end
             end)
             if not owned then
                 S.updateBPStatus("Buy " .. i .. "/" .. total .. " (Slot " .. index .. ")")
-                pcall(function() R.bpPurchase:FireServer(index) end)
+                pcall(function() Remote.bpPurchase:FireServer(index) end)
                 bought = bought + 1
                 task.wait(0.8)
             else
@@ -2624,21 +3094,21 @@ S.buyBPSlots = function()
     end
     S.updateBPStatus("Done  bought " .. bought .. "/" .. total)
     if bought == 0 and total > 0 then
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="No Galaxy Points or all slots owned", Color=Color3.fromRGB(150,150,170), Delay=4 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content="No Galaxy Points or all slots owned", Color=Color3.fromRGB(150,150,170), Delay=4 })
     end
     Config.AutoBuyBP = false
     if S.bpToggleFunc then task.defer(function() pcall(function() S.bpToggleFunc:Set(false) end) end) end
 end
 
-S.BPSection = Window:AddCollapsible(S.ShopTab, "Battlepass Shop Features", false)
+S.BPSection = UI.Window:AddCollapsible(S.ShopTab, "Battlepass Shop Features", false)
 
-S.bpStatusLabel = Window:AddParagraph(S.BPSection, "Status", "Waiting")
+S.bpStatusLabel = UI.Window:AddParagraph(S.BPSection, "Status", "Waiting")
 
-Window:AddDropdown(S.BPSection, "Buy Item", "", S.BP_LIST, 999, {}, function(selected)
+UI.Window:AddDropdown(S.BPSection, "Buy Item", "", S.BP_LIST, 999, {}, function(selected)
     Config.SelectedBPSlots = type(selected) == "table" and selected or {}
 end, "Dropdown_Select BP Slots")
 
-S.bpToggleFunc = Window:AddToggle(S.BPSection, "Buy Battlepass Item", "", false, function(state)
+S.bpToggleFunc = UI.Window:AddToggle(S.BPSection, "Buy Battlepass Item", "", false, function(state)
     Config.AutoBuyBP = state
     if state then
         S.updateBPStatus("Starting...")
@@ -2666,32 +3136,32 @@ S.updateMerchantStatus = function(bought, total)
     local content = "Item: " .. (itemName ~= "Select Option" and itemName or "-") ..
         "\nPrice: " .. price .. " Coins" ..
         "\nBuy: " .. buyStr
-    setParagraphText(S.merchantStatusParagraph, content)
+    S.setParagraphText(S.merchantStatusParagraph, content)
 end
 
-S.MerchantSection = Window:AddCollapsible(S.ShopTab, "Merchant Features", false)
+S.MerchantSection = UI.Window:AddCollapsible(S.ShopTab, "Merchant Features", false)
 
-S.merchantStatusParagraph = Window:AddParagraph(S.MerchantSection, "Status", "Item: -\nPrice: ? Coins\nBuy: 0/1")
+S.merchantStatusParagraph = UI.Window:AddParagraph(S.MerchantSection, "Status", "Item: -\nPrice: ? Coins\nBuy: 0/1")
 
 S.merchantDropdownItems = {}
-S.merchantDropdown = Window:AddDropdown(S.MerchantSection, "Select Item", "", S.merchantDropdownItems, false, nil, function(v)
+S.merchantDropdown = UI.Window:AddDropdown(S.MerchantSection, "Select Item", "", S.merchantDropdownItems, false, nil, function(v)
     Config.SelectedMerchantItem = v or "Select Option"
     S.updateMerchantStatus()
 end, "Dropdown_Select Merchant Item")
 
-Window:AddInput(S.MerchantSection, "Quantity", "", "Enter quantity...", function(v)
+UI.Window:AddInput(S.MerchantSection, "Quantity", "", "Enter quantity...", function(v)
     Config.MerchantQty = tonumber(v) or 1
 end, "Input_Merchant Qty")
 
-Window:AddButton(S.MerchantSection, "Refresh Item Merchant", "", "rbxassetid://16932740082", function()
+UI.Window:AddButton(S.MerchantSection, "Refresh Item Merchant", "", "rbxassetid://16932740082", function()
     local mr = nil
-    pcall(function() mr = Replion.Client:WaitReplion("Merchant") end)
+    pcall(function() mr = Data.Replion.Client:WaitReplion("Merchant") end)
     if not mr then
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content="Replion not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content="Replion not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
-    local ok2, MID = pcall(function() return require(game:GetService("ReplicatedStorage").Shared.MarketItemData) end)
-    local ok3, IU  = pcall(function() return require(game:GetService("ReplicatedStorage").Shared.ItemUtility) end)
+    local ok2, MID = pcall(function() return require(Service.ReplicatedStorage.Shared.MarketItemData) end)
+    local ok3, IU  = pcall(function() return require(Service.ReplicatedStorage.Shared.ItemUtility) end)
     -- build MarketItemData map
     local midMap = {}
     if ok2 and MID then
@@ -2723,25 +3193,25 @@ Window:AddButton(S.MerchantSection, "Refresh Item Merchant", "", "rbxassetid://1
         pcall(function() S.merchantDropdown:Refresh(newList, defaultItem) end)
     end
     S.updateMerchantStatus()
-    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Content=tostring(#newList) .. " items found", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content=tostring(#newList) .. " items found", Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 
 S.merchantBuying = false
-Window:AddButton(S.MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", function()
+UI.Window:AddButton(S.MerchantSection, "Buy Manual", "", "rbxassetid://16932740082", function()
     if S.merchantBuying then return end
     S.merchantBuying = true
     local name = Config.SelectedMerchantItem
     if name == "Select Option" or not S.merchantItems[name] then
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select item first", Color=Color3.fromRGB(150,150,170), Delay=2 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select item first", Color=Color3.fromRGB(150,150,170), Delay=2 })
         S.merchantBuying = false
         return
     end
     local itemId = S.merchantItems[name].id
     local price = tonumber(S.merchantItems[name].price) or 0
     local coins = 0
-    pcall(function() coins = PlayerData:GetExpect("Coins") or 0 end)
+    pcall(function() coins = Data.Player:GetExpect("Coins") or 0 end)
     if price > 0 and coins < price then
-        Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not enough coins", Color=Color3.fromRGB(150,150,170), Delay=3 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not enough coins", Color=Color3.fromRGB(150,150,170), Delay=3 })
         S.merchantBuying = false
         return
     end
@@ -2749,14 +3219,14 @@ Window:AddButton(S.MerchantSection, "Buy Manual", "", "rbxassetid://16932740082"
     local bought = 0
     for i = 1, qty do
         S.updateMerchantStatus(bought, qty)
-        local ok, result = pcall(function() return R.purchaseMerchant:InvokeServer(itemId) end)
+        local ok, result = pcall(function() return Remote.purchaseMerchant:InvokeServer(itemId) end)
         if ok and result then
             bought = bought + 1
         else
             local c = 0
-            pcall(function() c = PlayerData:GetExpect("Coins") or 0 end)
+            pcall(function() c = Data.Player:GetExpect("Coins") or 0 end)
             if price > 0 and c < price then
-                Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not enough coins", Color=Color3.fromRGB(150,150,170), Delay=3 })
+                UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not enough coins", Color=Color3.fromRGB(150,150,170), Delay=3 })
                 break
             end
         end
@@ -2764,18 +3234,18 @@ Window:AddButton(S.MerchantSection, "Buy Manual", "", "rbxassetid://16932740082"
         if i < qty then task.wait(0.5) end
     end
     S.updateMerchantStatus(bought, qty)
-    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
+    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
     S.merchantBuying = false
 end)
 
 S.autoBuyMerchantThread = nil
 S.merchantToggleFunc = nil
-S.merchantToggleFunc = Window:AddToggle(S.MerchantSection, "Buy Merchant Item", "", false, function(state)
+S.merchantToggleFunc = UI.Window:AddToggle(S.MerchantSection, "Buy Merchant Item", "", false, function(state)
     Config.AutoBuyMerchant = state
     if state then
         S.autoBuyMerchantThread = task.spawn(function()
             local name = Config.SelectedMerchantItem
-            if name == "Select Option" or not S.merchantItems[name] or not R.purchaseMerchant then
+            if name == "Select Option" or not S.merchantItems[name] or not Remote.purchaseMerchant then
                 Config.AutoBuyMerchant = false
                 return
             end
@@ -2786,18 +3256,18 @@ S.merchantToggleFunc = Window:AddToggle(S.MerchantSection, "Buy Merchant Item", 
             for i = 1, qty do
                 if not Config.AutoBuyMerchant then break end
                 local coins = 0
-                pcall(function() coins = PlayerData:GetExpect("Coins") or 0 end)
+                pcall(function() coins = Data.Player:GetExpect("Coins") or 0 end)
                 if price > 0 and coins < price then
-                    Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not enough coins", Color=Color3.fromRGB(150,150,170), Delay=3 })
+                    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Not enough coins", Color=Color3.fromRGB(150,150,170), Delay=3 })
                     break
                 end
                 S.updateMerchantStatus(bought, qty)
-                local ok, result = pcall(function() return R.purchaseMerchant:InvokeServer(itemId) end)
+                local ok, result = pcall(function() return Remote.purchaseMerchant:InvokeServer(itemId) end)
                 if ok and result then bought = bought + 1 end
                 S.updateMerchantStatus(bought, qty)
                 if i < qty then task.wait(0.5) end
             end
-            Orvion:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
+            UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=name .. " x" .. bought .. " bought", Color=Color3.fromRGB(150,150,170), Delay=3 })
             Config.AutoBuyMerchant = false
             if S.merchantToggleFunc then task.defer(function() pcall(function() S.merchantToggleFunc:Set(false) end) end) end
         end)
@@ -2808,6 +3278,6 @@ S.merchantToggleFunc = Window:AddToggle(S.MerchantSection, "Buy Merchant Item", 
 end, "Toggle_Buy Merchant Item")
 
 -- ====== STARTUP ======
-updateBigPopup()
-Window:SetActiveTab("Info")
-Window:Show()
+SupportState.updateBigPopup()
+UI.Window:SetActiveTab("Info")
+UI.Window:Show()
