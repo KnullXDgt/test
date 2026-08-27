@@ -1995,21 +1995,7 @@ do
         end
     end) end)
 
-    local startTime = os.time()
-    task.spawn(function()
-        while true do
-            task.wait(1)
-            local ok, ping = pcall(function()
-                return math.floor(Service.Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
-            end)
-            local p = ok and ping or 0
-            local elapsed = os.time() - startTime
-            local h = math.floor(elapsed / 3600)
-            local m = math.floor((elapsed % 3600) / 60)
-            local s = elapsed % 60
-            label.Text = string.format("Ping: %d ms | %d:%02d:%02d", p, h, m, s)
-        end
-    end)
+    UI.pingLabel = label
 end
 
 UI.Window = UI.Library:CreateWindow({
@@ -2037,8 +2023,32 @@ UI.FishingTab = UI.Window:CreateTab("Main", "rbxassetid://117906088481880")
 UI.SupportSection = UI.Window:AddCollapsible(UI.FishingTab, "Support Features", false)
 
 UI.Window:AddToggle(UI.SupportSection, "Show Real-Ping", "", false, function(state)
-    if UI.pingGui then
-        UI.pingGui.Enabled = state
+    if not UI.pingGui then return end
+    UI.pingGui.Enabled = state
+    if state then
+        local startTime = os.time()
+        UI.pingTimerThread = task.spawn(function()
+            while UI.pingGui and UI.pingGui.Enabled do
+                task.wait(1)
+                local ok, ping = pcall(function()
+                    return math.floor(Service.Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
+                end)
+                local p = ok and ping or 0
+                local elapsed = os.time() - startTime
+                local h = math.floor(elapsed / 3600)
+                local m = math.floor((elapsed % 3600) / 60)
+                local s = elapsed % 60
+                if UI.pingLabel then
+                    UI.pingLabel.Text = string.format("Ping: %d ms | %d:%02d:%02d", p, h, m, s)
+                end
+            end
+        end)
+    else
+        if UI.pingTimerThread then
+            task.cancel(UI.pingTimerThread)
+            UI.pingTimerThread = nil
+        end
+        if UI.pingLabel then UI.pingLabel.Text = "Ping: -- ms | 0:00:00" end
     end
 end, "Toggle_Show Real-Ping")
 UI.Window:AddToggle(UI.SupportSection, "Disable Obtained Fish", "", false, function(state)
