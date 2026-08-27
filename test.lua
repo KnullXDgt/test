@@ -2035,6 +2035,11 @@ UI.FishingTab = UI.Window:CreateTab("Main", "rbxassetid://117906088481880")
 
 UI.SupportSection = UI.Window:AddCollapsible(UI.FishingTab, "Support Features", false)
 
+UI.Window:AddToggle(UI.SupportSection, "Show Real-Ping", "", true, function(state)
+    if UI.pingGui then
+        UI.pingGui.Enabled = state
+    end
+end, "Toggle_Show Real-Ping")
 UI.Window:AddToggle(UI.SupportSection, "Disable Obtained Fish", "", false, function(state)
     Config.DisableFishNotif = state
     SupportState.updateBigPopup()
@@ -2098,11 +2103,6 @@ UI.Window:AddToggle(UI.SupportSection, "Anti AFK", "", true, function(state)
         end
     end
 end)
-UI.Window:AddToggle(UI.SupportSection, "Show Ping Timer", "", true, function(state)
-    if UI.pingGui then
-        UI.pingGui.Enabled = state
-    end
-end, "Toggle_Show Ping Timer")
 -- Instant Fishing v1
 UI.FishingSection = UI.Window:AddCollapsible(UI.FishingTab, "Instant Fishing", false)
 
