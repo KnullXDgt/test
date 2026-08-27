@@ -1943,11 +1943,13 @@ pcall(function() UI.execName = getexecutorname() end)
 
 -- ====== PING TIMER UI ======
 do
+    local UIS = game:GetService("UserInputService")
     local pingGui = Instance.new("ScreenGui")
     pingGui.Name = "PingTimerUI"
     pingGui.ResetOnSpawn = false
     pingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     pingGui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+    UI.pingGui = pingGui
 
     local frame = Instance.new("Frame", pingGui)
     frame.Size = UDim2.new(0, 220, 0, 40)
@@ -1965,6 +1967,32 @@ do
     label.TextColor3 = Color3.fromRGB(255, 255, 255)
     label.TextSize = 18
     label.Text = "Ping: -- ms | 0:00:00"
+
+    -- Drag logic
+    local dragging, dragStart, startPos = false, nil, nil
+    pcall(function() frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+        end
+    end) end)
+    pcall(function() UIS.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement
+            and input.UserInputType ~= Enum.UserInputType.Touch then return end
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end) end)
+    pcall(function() UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end) end)
 
     local startTime = os.time()
     task.spawn(function()
@@ -2070,6 +2098,11 @@ UI.Window:AddToggle(UI.SupportSection, "Anti AFK", "", true, function(state)
         end
     end
 end)
+UI.Window:AddToggle(UI.SupportSection, "Show Ping Timer", "", true, function(state)
+    if UI.pingGui then
+        UI.pingGui.Enabled = state
+    end
+end, "Toggle_Show Ping Timer")
 -- Instant Fishing v1
 UI.FishingSection = UI.Window:AddCollapsible(UI.FishingTab, "Instant Fishing", false)
 
