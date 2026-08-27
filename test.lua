@@ -10,6 +10,7 @@ local Service = {
     HttpService = game:GetService("HttpService"),
     RunService = game:GetService("RunService"),
     Lighting = game:GetService("Lighting"),
+    Stats = game:GetService("Stats"),
 }
 Service.LocalPlayer = Service.Players.LocalPlayer
 
@@ -1939,6 +1940,48 @@ UI.Library = loadstring(game:HttpGet(
 ))()
 UI.execName = "Unknown"
 pcall(function() UI.execName = getexecutorname() end)
+
+-- ====== PING TIMER UI ======
+do
+    local pingGui = Instance.new("ScreenGui")
+    pingGui.Name = "PingTimerUI"
+    pingGui.ResetOnSpawn = false
+    pingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    pingGui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+
+    local frame = Instance.new("Frame", pingGui)
+    frame.Size = UDim2.new(0, 220, 0, 40)
+    frame.Position = UDim2.new(0, 15, 0.5, -150)
+    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    frame.BackgroundTransparency = 0.15
+    frame.BorderSizePixel = 0
+    frame.Active = true
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(1, 0)
+
+    local label = Instance.new("TextLabel", frame)
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Font = Enum.Font.GothamBold
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.TextSize = 18
+    label.Text = "Ping: -- ms | 0:00:00"
+
+    local startTime = os.time()
+    task.spawn(function()
+        while true do
+            task.wait(1)
+            local ok, ping = pcall(function()
+                return math.floor(Service.Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
+            end)
+            local p = ok and ping or 0
+            local elapsed = os.time() - startTime
+            local h = math.floor(elapsed / 3600)
+            local m = math.floor((elapsed % 3600) / 60)
+            local s = elapsed % 60
+            label.Text = string.format("Ping: %d ms | %d:%02d:%02d", p, h, m, s)
+        end
+    end)
+end
 
 UI.Window = UI.Library:CreateWindow({
     Title          = "Orvion Hub",
