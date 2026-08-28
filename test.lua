@@ -3457,8 +3457,9 @@ do
             for cat, items in pairs(inv) do
                 if type(items) ~= "table" then continue end
                 for _, item in ipairs(items) do
-                    -- stone count: only in Enchant Stones category
-                    if cat == "Enchant Stones" and tonumber(item.Id) == tonumber(stoneId) then
+                    -- stone count: filter by known stone IDs
+                    local STONE_IDS = {[10]=true,[929]=true,[558]=true,[125]=true,[1098]=true,[246]=true,[714]=true,[873]=true}
+                    if STONE_IDS[tonumber(item.Id)] and tonumber(item.Id) == tonumber(stoneId) then
                         stoneCount = stoneCount + 1
                     end
                     -- rod: needs item data
@@ -3583,10 +3584,11 @@ do
                 pcall(function()
                     local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
                     if not inv then return end
+                    local SIDS = {[10]=true,[929]=true,[558]=true,[125]=true,[1098]=true,[246]=true,[714]=true,[873]=true}
                     for cat,items in pairs(inv) do
-                        if type(items)~="table" or cat~="Enchant Stones" then continue end
+                        if type(items)~="table" then continue end
                         for _,s in ipairs(items) do
-                            if tonumber(s.Id)==tonumber(stoneId) then stoneUUID=s.UUID break end
+                            if SIDS[tonumber(s.Id)] and tonumber(s.Id)==tonumber(stoneId) then stoneUUID=s.UUID break end
                         end
                         if stoneUUID then break end
                     end
@@ -3731,15 +3733,14 @@ do
                 if not done then pcall(task.cancel,worker) end
                 if result then
                     created = created+1
-                    UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Transcended Stone created ("..created.."/"..amount..")"})
-                else
+                    else
                     setPara(S.transcendedPara,"Failed",errMsg)
                     break
                 end
-                task.wait(0.3)
+                task.wait(0.7)
             end
             if Config.AutoCreateTranscended and created > 0 then
-                setPara(S.transcendedPara,"Complete","Create "..created.."/"..amount)
+                setPara(S.transcendedPara,"Complete","Created "..created.." Transcended Stones")
                 UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Done! Created "..created.." Transcended Stones"})
             end
             pcall(function() S.transcendedToggle:Set(false) end)
