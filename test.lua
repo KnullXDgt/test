@@ -2431,7 +2431,7 @@ do
 
     local frame = Instance.new("Frame", pingGui)
     frame.Size = UDim2.new(0, 220, 0, 40)
-    frame.Position = UDim2.new(0, 15, 0.5, -150)
+    frame.Position = UDim2.new(0.015, 0, 0.165, 0)
     frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     frame.BackgroundTransparency = 0.15
     frame.BorderSizePixel = 0
