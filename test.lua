@@ -60,6 +60,9 @@ end
 Remote.cutscene = Remote.Net:WaitForChild("RE/ReplicateCutscene", 10)
 Remote.abilityVFX = Remote.Net:WaitForChild("RE/PlayAbilityVFX", 10)
 Remote.baitCast = Remote.Net:FindFirstChild("RE/BaitCastVisual")
+Remote.enchantAltar1 = Remote.Resolve("RE/ActivateEnchantingAltar")
+Remote.enchantRoll = Remote.Resolve("RE/RollEnchant")
+Remote.createTranscended = Remote.Resolve("RF/CreateTranscendedStone")
 
 -- Support Features state
 local SupportState = {
@@ -3399,46 +3402,283 @@ end
 
 -- ===== ENCHANT FEATURES =====
 do
-    local EnchantSection = UI.Window:AddCollapsible(UI.AutomationTab, "Enchant Features", false)
-    UI.Window:AddParagraph(EnchantSection, "Enchant Status", "Current Rod: None\nEnchant 1: None\nEnchant 2: None\nEnchant Stones Left: 0")
-    local EST = {"Normal Enchant Stone", "Runic Enchant Stone", "Evolved Enchant Stone"}
-    UI.Window:AddDropdown(EnchantSection, "Enchant Type", "", EST, false, "Normal Enchant Stone", function(v)
-        Config.EnchantType = v or "Normal Enchant Stone"
-    end, "Dropdown_Enchant Type")
-    UI.Window:AddDropdown(EnchantSection, "Target Enchant", "", {}, false, "Select Option", function(v)
+    local STONE_ID = {
+        ["Enchant Stone"]=10,["Runic Enchant Stone"]=929,
+        ["Evolved Enchant Stone"]=558,["Super Enchant Stone"]=125,
+        ["Withering Stone"]=1098,["Transcended Stone"]=246,
+        ["Candy Enchant Stone"]=714,["Eggy Enchant Stone"]=873,
+    }
+    local STONE_LIST = {
+        "Enchant Stone","Runic Enchant Stone","Evolved Enchant Stone",
+        "Super Enchant Stone","Withering Stone","Transcended Stone",
+        "Candy Enchant Stone","Eggy Enchant Stone",
+    }
+    local TARGET_LIST = {
+        "Big Hunter I","Big Hunter II","Blob Hunter","Cursed I","Cursed II",
+        "Dynamic Duo","Easter Spirit","Empowered I","Empowered II","Empowered III",
+        "FORGOTTEN Hunter","Fairy Hunter I","Fairy Hunter II","Glistening I","Glistening II",
+        "Gold Digger I","Heartbreaker","Incubator","Leprechaun I","Leprechaun II",
+        "Lovestruck","More Hearts","Mutation Hunter I","Mutation Hunter II","Mutation Hunter III",
+        "Perfection","Prismatic I","Reeler I","Reeler II","SECRET Hunter",
+        "Shark Hunter I","Shark Hunter II","Stargazer I","Stargazer II",
+        "Stormhunter I","Stormhunter II","XPerienced I","XPerienced II",
+    }
+    local function setPara(para, title, content)
+        pcall(function()
+            local t = para:FindFirstChild("ParagraphTitle")
+            local c = para:FindFirstChild("ParagraphContent")
+            if t then t.Text = title end
+            if c then c.Text = content end
+        end)
+    end
+    local function equipAndHold(UUID, itemType)
+        local eq = Data.Player:Get("EquippedItems") or {}
+        local slot = table.find(eq, tostring(UUID))
+        if not slot then
+            if #eq >= 5 then return false end
+            pcall(function() Remote.equipItem:FireServer(UUID, itemType) end)
+            local dl = os.clock() + 3
+            while not slot and os.clock() < dl do
+                eq = Data.Player:Get("EquippedItems") or {}
+                slot = table.find(eq, tostring(UUID))
+                if not slot then task.wait(0.05) end
+            end
+        end
+        if not slot then return false end
+        pcall(function() Remote.equipTool:FireServer(slot) end)
+        local dl2 = os.clock() + 3
+        while Data.Player:Get("EquippedType") ~= itemType and os.clock() < dl2 do
+            task.wait(0.05)
+        end
+        return Data.Player:Get("EquippedType") == itemType
+    end
+    local function updateEnchantPara()
+        if not S.enchantPara then return end
+        local rodName,e1,e2,stoneCount = "None","None","None",0
+        pcall(function()
+            local eq = Data.Player:Get("EquippedItems") or {}
+            local rodInv = Data.Player:Get({"Inventory","Fishing Rods"}) or {}
+            for _,uuid in pairs(eq) do
+                for _,rod in ipairs(rodInv) do
+                    if tostring(rod.UUID) == tostring(uuid) then
+                        local ok,d = pcall(Data.ItemUtility.GetItemDataFromItemType,"Fishing Rods",rod.Id)
+                        if ok and d then rodName = d.Data.Name end
+                        local meta = rod.Metadata or {}
+                        if meta.EnchantId then
+                            local ok2,ed = pcall(function() return Data.ItemUtility:GetEnchantData(meta.EnchantId) end)
+                            if ok2 and ed and ed.Data then e1 = ed.Data.Name end
+                        end
+                        if meta.EnchantId2 then
+                            local ok3,ed = pcall(function() return Data.ItemUtility:GetEnchantData(meta.EnchantId2) end)
+                            if ok3 and ed and ed.Data then e2 = ed.Data.Name end
+                        end
+                    end
+                end
+            end
+            local stoneId = STONE_ID[Config.EnchantType] or 10
+            local stoneInv = Data.Player:Get({"Inventory","Enchant Stones"}) or {}
+            for _,s in ipairs(stoneInv) do
+                if s.Id == stoneId then stoneCount = stoneCount + 1 end
+            end
+        end)
+        setPara(S.enchantPara,"Enchant Status",
+            "Current Rod: "..rodName..
+            "\nEnchant 1: "..e1..
+            "\nEnchant 2: "..e2..
+            "\nEnchant Stones Left: "..stoneCount)
+    end
+    S.enchantConns = {}
+    local EnchantSection = UI.Window:AddCollapsible(UI.AutomationTab,"Enchant Features",false)
+    S.enchantPara = UI.Window:AddParagraph(EnchantSection,"Enchant Status","Current Rod: None\nEnchant 1: None\nEnchant 2: None\nEnchant Stones Left: 0")
+    UI.Window:AddDropdown(EnchantSection,"Enchant Type","",STONE_LIST,false,"Enchant Stone",function(v)
+        Config.EnchantType = v or "Enchant Stone"
+        updateEnchantPara()
+    end,"Dropdown_Enchant Type")
+    UI.Window:AddDropdown(EnchantSection,"Target Enchant","",TARGET_LIST,false,"Select Option",function(v)
         Config.TargetEnchant = v or "Select Option"
-    end, "Dropdown_Target Enchant")
-    UI.Window:AddToggle(EnchantSection, "Auto Enchant Reroll", "", false, function(state)
+    end,"Dropdown_Target Enchant")
+    S.enchantToggle = UI.Window:AddToggle(EnchantSection,"Auto Enchant Reroll","",false,function(state)
+        for _,conn in ipairs(S.enchantConns) do pcall(function() conn:Disconnect() end) end
+        S.enchantConns = {}
+        S.enchantPending = false
+        if S.enchantThread then pcall(task.cancel,S.enchantThread) S.enchantThread = nil end
         Config.AutoEnchantReroll = state
-    end, "Toggle_Auto Enchant Reroll")
+        if not state then return end
+        table.insert(S.enchantConns,Data.Player:OnChange({"Inventory","Fishing Rods"},updateEnchantPara))
+        table.insert(S.enchantConns,Data.Player:OnChange({"Inventory","Enchant Stones"},updateEnchantPara))
+        table.insert(S.enchantConns,Remote.enchantRoll.OnClientEvent:Connect(function(enchantId)
+            local enchantName = "Unknown"
+            pcall(function()
+                local d = Data.ItemUtility:GetEnchantData(enchantId)
+                if d and d.Data then enchantName = d.Data.Name end
+            end)
+            if enchantName == Config.TargetEnchant then
+                pcall(function() S.enchantToggle:Set(false) end)
+                UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Got enchant: "..enchantName})
+            end
+            S.enchantPending = false
+        end))
+        updateEnchantPara()
+        S.enchantThread = task.spawn(function()
+            while Config.AutoEnchantReroll do
+                local rodUUID = nil
+                pcall(function()
+                    local eq = Data.Player:Get("EquippedItems") or {}
+                    local rodInv = Data.Player:Get({"Inventory","Fishing Rods"}) or {}
+                    for _,uuid in pairs(eq) do
+                        for _,rod in ipairs(rodInv) do
+                            if tostring(rod.UUID)==tostring(uuid) then rodUUID=uuid break end
+                        end
+                        if rodUUID then break end
+                    end
+                end)
+                if not rodUUID then updateEnchantPara() break end
+                local stoneUUID,stoneId = nil,(STONE_ID[Config.EnchantType] or 10)
+                pcall(function()
+                    local inv = Data.Player:Get({"Inventory","Enchant Stones"}) or {}
+                    for _,s in ipairs(inv) do
+                        if s.Id==stoneId then stoneUUID=s.UUID break end
+                    end
+                end)
+                if not stoneUUID then updateEnchantPara() break end
+                if not equipAndHold(stoneUUID,"Enchant Stones") then task.wait(0.3) continue end
+                S.enchantPending = true
+                pcall(function() Remote.enchantAltar1:FireServer(rodUUID) end)
+                local dl = os.clock()+12
+                while S.enchantPending and os.clock()<dl do task.wait(0.05) end
+                S.enchantPending = false
+                if not Config.AutoEnchantReroll then break end
+                task.wait(0.3)
+            end
+        end)
+    end,"Toggle_Auto Enchant Reroll")
     UI.Window:AddButtonGrid(EnchantSection,
-        { Title = "Teleport to Altar 1", Callback = function()
-            local char = Service.LocalPlayer.Character
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-            if root then pcall(function() root.CFrame = CFrame.new(3246.00122, -1300.65588, 1395.11926, -0.430797249, 0, 0.902448714, 0, 1, 0, -0.902448714, 0, -0.430797249) end) end
-        end },
-        { Title = "Teleport to Altar 2", Callback = function()
-            local char = Service.LocalPlayer.Character
-            local root = char and char:FindFirstChild("HumanoidRootPart")
-            if root then pcall(function() root.CFrame = CFrame.new(1478.63489, 130.679703, -609.361938, -0.996601522, 2.26994281e-08, -0.0823735297, 2.58843453e-08, 1, -3.7596422e-08, 0.0823735297, -3.96008382e-08, -0.996601522) end) end
-        end }
+        {Title="Teleport to Altar 1",Callback=function()
+            local char=Service.LocalPlayer.Character
+            local root=char and char:FindFirstChild("HumanoidRootPart")
+            if root then pcall(function() root.CFrame=CFrame.new(3246.00122,-1300.65588,1395.11926,-0.430797249,0,0.902448714,0,1,0,-0.902448714,0,-0.430797249) end) end
+        end},
+        {Title="Teleport to Altar 2",Callback=function()
+            local char=Service.LocalPlayer.Character
+            local root=char and char:FindFirstChild("HumanoidRootPart")
+            if root then pcall(function() root.CFrame=CFrame.new(1478.63489,130.679703,-609.361938,-0.996601522,2.26994281e-08,-0.0823735297,2.58843453e-08,1,-3.7596422e-08,0.0823735297,-3.96008382e-08,-0.996601522) end) end
+        end}
     )
 end
 
 -- ===== CREATE TRANSCENDED STONE =====
 do
-    local TranscendedSection = UI.Window:AddCollapsible(UI.AutomationTab, "Create Transcended Stone", false)
-    UI.Window:AddParagraph(TranscendedSection, "Status", "Waiting")
-    UI.Window:AddDropdown(TranscendedSection, "Select Secret Fish", "", {}, false, "Select Option", function(v)
+    local function setPara(para, title, content)
+        pcall(function()
+            local t = para:FindFirstChild("ParagraphTitle")
+            local c = para:FindFirstChild("ParagraphContent")
+            if t then t.Text = title end
+            if c then c.Text = content end
+        end)
+    end
+    local function equipAndHold(UUID, itemType)
+        local eq = Data.Player:Get("EquippedItems") or {}
+        local slot = table.find(eq, tostring(UUID))
+        if not slot then
+            if #eq >= 5 then return false end
+            pcall(function() Remote.equipItem:FireServer(UUID, itemType) end)
+            local dl = os.clock()+3
+            while not slot and os.clock()<dl do
+                eq = Data.Player:Get("EquippedItems") or {}
+                slot = table.find(eq, tostring(UUID))
+                if not slot then task.wait(0.05) end
+            end
+        end
+        if not slot then return false end
+        pcall(function() Remote.equipTool:FireServer(slot) end)
+        local dl2 = os.clock()+3
+        while Data.Player:Get("EquippedType")~=itemType and os.clock()<dl2 do task.wait(0.05) end
+        return Data.Player:Get("EquippedType")==itemType
+    end
+    local TranscendedSection = UI.Window:AddCollapsible(UI.AutomationTab,"Create Transcended Stone",false)
+    S.transcendedPara = UI.Window:AddParagraph(TranscendedSection,"Status","Waiting")
+    S.secretFishDropdown = UI.Window:AddDropdown(TranscendedSection,"Select Secret Fish","",{},false,"Select Option",function(v)
         Config.SelectedSecretFish = v or "Select Option"
-    end, "Dropdown_Select Secret Fish")
-UI.Window:AddButton(TranscendedSection, "Refresh Fish List", "", "rbxassetid://16932740082", function() end)
-    UI.Window:AddInput(TranscendedSection, "Amount", "", "Enter amount...", function(v)
+    end,"Dropdown_Select Secret Fish")
+    UI.Window:AddButton(TranscendedSection,"Refresh Fish List","","rbxassetid://16932740082",function()
+        local fishInv = Data.Player:Get({"Inventory","Fish"}) or {}
+        local counts,nameList = {},{}
+        for _,item in ipairs(fishInv) do
+            pcall(function()
+                local d = Data.ItemUtility.GetItemDataFromItemType("Fish",item.Id)
+                if d and d.Data and d.Data.Tier==7 then
+                    local name = d.Data.Name
+                    if not counts[name] then counts[name]=0 table.insert(nameList,name) end
+                    counts[name] = counts[name]+1
+                end
+            end)
+        end
+        local list = {}
+        for _,name in ipairs(nameList) do table.insert(list,"x"..counts[name].." "..name) end
+        table.sort(list)
+        if S.secretFishDropdown then S.secretFishDropdown:Refresh(list,nil) end
+        setPara(S.transcendedPara,"Fish List",#list.." types of secret fish found")
+    end)
+    UI.Window:AddInput(TranscendedSection,"Amount","","Enter amount...",function(v)
         Config.TranscendedAmount = tonumber(v) or 1
-    end, "Input_Transcended Amount")
-    UI.Window:AddToggle(TranscendedSection, "Enable Auto Create", "", false, function(state)
+    end,"Input_Transcended Amount")
+    S.transcendedToggle = UI.Window:AddToggle(TranscendedSection,"Enable Auto Create","",false,function(state)
+        if S.transcendedThread then pcall(task.cancel,S.transcendedThread) S.transcendedThread=nil end
         Config.AutoCreateTranscended = state
-    end, "Toggle_Enable Auto Create")
+        if not state then return end
+        S.transcendedThread = task.spawn(function()
+            local fishName = string.match(Config.SelectedSecretFish or "","^x%d+ (.+)$")
+            if not fishName then
+                setPara(S.transcendedPara,"Status","Please select a fish first")
+                pcall(function() S.transcendedToggle:Set(false) end)
+                return
+            end
+            local amount = math.max(tonumber(Config.TranscendedAmount) or 1,1)
+            local created = 0
+            for i=1,amount do
+                if not Config.AutoCreateTranscended then break end
+                local fishUUID = nil
+                pcall(function()
+                    local inv = Data.Player:Get({"Inventory","Fish"}) or {}
+                    for _,item in ipairs(inv) do
+                        local d = Data.ItemUtility.GetItemDataFromItemType("Fish",item.Id)
+                        if d and d.Data and d.Data.Name==fishName and d.Data.Tier==7 then
+                            fishUUID=item.UUID break
+                        end
+                    end
+                end)
+                if not fishUUID then
+                    setPara(S.transcendedPara,"Status","No "..fishName.." found")
+                    break
+                end
+                setPara(S.transcendedPara,"Equipping",fishName)
+                if not equipAndHold(fishUUID,"Fish") then task.wait(0.5) continue end
+                setPara(S.transcendedPara,"Crafting","Create "..i.."/"..amount)
+                local done,result,errMsg = false,false,"Timeout"
+                local worker = task.spawn(function()
+                    local ok,r,m = pcall(function() return Remote.createTranscended:InvokeServer() end)
+                    if ok then result=r errMsg=tostring(m or "") end
+                    done = true
+                end)
+                local dl = os.clock()+10
+                while not done and os.clock()<dl do task.wait(0.05) end
+                if not done then pcall(task.cancel,worker) end
+                if result then
+                    created = created+1
+                    UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Transcended Stone created ("..created.."/"..amount..")"})
+                else
+                    setPara(S.transcendedPara,"Failed",errMsg)
+                    break
+                end
+                task.wait(0.3)
+            end
+            if Config.AutoCreateTranscended and created>=amount then
+                setPara(S.transcendedPara,"Complete","Create "..amount.."/"..amount)
+                UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Done! Created "..amount.." Transcended Stones"})
+            end
+            pcall(function() S.transcendedToggle:Set(false) end)
+        end)
+    end,"Toggle_Enable Auto Create")
 end
 
 S.ShopTab = UI.Window:CreateTab("Shop", "rbxassetid://87353934937155")
