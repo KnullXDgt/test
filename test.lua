@@ -61,6 +61,7 @@ Remote.cutscene = Remote.Net:WaitForChild("RE/ReplicateCutscene", 10)
 Remote.abilityVFX = Remote.Net:WaitForChild("RE/PlayAbilityVFX", 10)
 Remote.baitCast = Remote.Net:FindFirstChild("RE/BaitCastVisual")
 Remote.enchantAltar1 = Remote.Resolve("RE/ActivateEnchantingAltar")
+Remote.unequipItem = Remote.Resolve("RE/UnequipItem")
 Remote.enchantAltar2 = Remote.Resolve("RE/ActivateSecondEnchantingAltar")
 Remote.enchantRoll = Remote.Resolve("RE/RollEnchant")
 Remote.createTranscended = Remote.Resolve("RF/CreateTranscendedStone")
@@ -3660,7 +3661,12 @@ do
             local eId   = tostring(Data.Player:Get("EquippedId") or "")
             if eType==itemType and eId==tostring(UUID) then
                 equipped = true
-            elseif eType==itemType and eId~=tostring(UUID) then
+            elseif eType~="" and eId~=tostring(UUID) then
+                -- Wrong item equipped (any type), unequip it then retry
+                pcall(function()
+                    if eId~="" then Remote.unequipItem:FireServer(eId) end
+                end)
+                task.wait(0.2)
                 local eq2 = Data.Player:Get("EquippedItems") or {}
                 local cs = table.find(eq2, tostring(UUID))
                 if cs then pcall(function() Remote.equipTool:FireServer(cs) end) end
@@ -3714,8 +3720,7 @@ do
             local amount = math.max(tonumber(Config.TranscendedAmount) or 1,1)
             local created = 0
             local failed = 0
-            for i=1,amount do
-                if not Config.AutoCreateTranscended then break end
+            while created < amount and Config.AutoCreateTranscended do
                 local fishUUID = nil
                 pcall(function()
                     local invT=Data.Player:Get("Inventory") or Data.Player.Data.Inventory
@@ -3743,7 +3748,7 @@ do
                     task.wait(0.5)
                     continue
                 end
-                setPara(S.transcendedPara,"Sacrificing","Create "..i.."/"..amount.." Â· Done: "..created.." | Fail: "..failed)
+                setPara(S.transcendedPara,"Sacrificing","Create "..(created+1).."/"..amount.." Â· Done: "..created.." | Fail: "..failed)
                 local done,result,errMsg = false,false,"Timeout"
                 local worker = task.spawn(function()
                     local ok,r,m = pcall(function() return Remote.createTranscended:InvokeServer() end)
