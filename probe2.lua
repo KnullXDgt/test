@@ -209,30 +209,56 @@ end
 
 log("Extra listeners active")
 save()
--- === STONE INVENTORY STRUCTURE DUMP ===
+-- === STONE COUNT COMPARISON (per-item vs per-quantity) ===
 task.spawn(function()
     task.wait(2)
     local inv = PD:Get("Inventory") or PD.Data.Inventory or {}
-    log("=== STONE STRUCTURE DUMP ===")
+    log("=== STONE COUNT COMPARISON ===")
+    local countByItem = {}   -- +1 per item
+    local countByQty  = {}   -- +Quantity per item
     for cat, items in pairs(inv) do
         if type(items) == "table" then
             for _, item in ipairs(items) do
                 local rawId = item.Id or item.Identifier
                 local d = IU.GetItemDataFromItemType(cat, rawId)
                 if d and d.Data and d.Data.Type == "Enchant Stones" then
-                    local parts = {}
-                    for k,v in pairs(item) do
-                        if type(v) ~= "table" then
-                            table.insert(parts, tostring(k).."="..tostring(v))
-                        end
-                    end
-                    log("  cat="..tostring(cat).." | "..table.concat(parts,", "))
+                    local name = d.Data.Name or tostring(rawId)
+                    local qty  = tonumber(item.Quantity) or 1
+                    countByItem[name] = (countByItem[name] or 0) + 1
+                    countByQty[name]  = (countByQty[name]  or 0) + qty
+                    log("  ITEM: "..name.." | UUID="..tostring(item.UUID).." | Qty="..tostring(item.Quantity).." | Id="..tostring(rawId))
                 end
             end
         end
     end
-    log("============================")
+    log("--- TOTALS ---")
+    for name, cnt in pairs(countByItem) do
+        log("  "..name.." | +1 per item = "..cnt.." | +Quantity = "..(countByQty[name] or cnt))
+    end
+    log("=== END STONE COUNT ===")
     save()
 end)
+
+-- Watch Items inventory changes (stones live here)
+PD:OnChange({"Inventory","Items"}, function()
+    local inv = PD:Get("Inventory") or PD.Data.Inventory or {}
+    local items = inv["Items"] or {}
+    local stoneInfo = {}
+    for _, item in ipairs(items) do
+        local rawId = item.Id or item.Identifier
+        local d = IU.GetItemDataFromItemType("Items", rawId)
+        if d and d.Data and d.Data.Type == "Enchant Stones" then
+            table.insert(stoneInfo, (d.Data.Name or "?").."(Qty="..(item.Quantity or "?")..")")
+        end
+    end
+    if #stoneInfo > 0 then
+        log("[ITEMS CHANGE] Stones: "..table.concat(stoneInfo, ", "))
+        save()
+    end
+end)
+log("Stone count comparison + Items watcher active")
+save()
+
+
 
 
