@@ -209,4 +209,30 @@ end
 
 log("Extra listeners active")
 save()
+-- === STONE INVENTORY STRUCTURE DUMP ===
+task.spawn(function()
+    task.wait(2)
+    local inv = PD:Get("Inventory") or PD.Data.Inventory or {}
+    log("=== STONE STRUCTURE DUMP ===")
+    for cat, items in pairs(inv) do
+        if type(items) == "table" then
+            for _, item in ipairs(items) do
+                local rawId = item.Id or item.Identifier
+                local d = IU.GetItemDataFromItemType(cat, rawId)
+                if d and d.Data and d.Data.Type == "Enchant Stones" then
+                    local parts = {}
+                    for k,v in pairs(item) do
+                        if type(v) ~= "table" then
+                            table.insert(parts, tostring(k).."="..tostring(v))
+                        end
+                    end
+                    log("  cat="..tostring(cat).." | "..table.concat(parts,", "))
+                end
+            end
+        end
+    end
+    log("============================")
+    save()
+end)
+
 
