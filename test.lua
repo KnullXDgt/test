@@ -3458,8 +3458,8 @@ do
             for cat, items in pairs(inv) do
                 if type(items) ~= "table" then continue end
                 for _, item in ipairs(items) do
-                    -- stone count: check by Id only, no d needed
-                    if tonumber(item.Id) == tonumber(stoneId) then
+                    -- stone count: only in Enchant Stones category
+                    if cat == "Enchant Stones" and tonumber(item.Id) == tonumber(stoneId) then
                         stoneCount = stoneCount + 1
                     end
                     -- rod: needs item data
@@ -3585,7 +3585,7 @@ do
                     local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
                     if not inv then return end
                     for cat,items in pairs(inv) do
-                        if type(items)~="table" then continue end
+                        if type(items)~="table" or cat~="Enchant Stones" then continue end
                         for _,s in ipairs(items) do
                             if tonumber(s.Id)==tonumber(stoneId) then stoneUUID=s.UUID break end
                         end
