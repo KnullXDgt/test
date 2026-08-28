@@ -3457,10 +3457,11 @@ do
             for cat, items in pairs(inv) do
                 if type(items) ~= "table" then continue end
                 for _, item in ipairs(items) do
-                    -- stone count: filter by known stone IDs
-                    local STONE_IDS = {[10]=true,[929]=true,[558]=true,[125]=true,[1098]=true,[246]=true,[714]=true,[873]=true}
-                    if STONE_IDS[tonumber(item.Id)] and tonumber(item.Id) == tonumber(stoneId) then
-                        stoneCount = stoneCount + 1
+                    -- stone count: filter by known stone IDs (check Id OR Identifier)
+                    local STONE_IDS={[10]=true,[929]=true,[558]=true,[125]=true,[1098]=true,[246]=true,[714]=true,[873]=true}
+                    local itemId=tonumber(item.Id) or tonumber(item.Identifier)
+                    if STONE_IDS[itemId] and itemId==tonumber(stoneId) then
+                        stoneCount=stoneCount+1
                     end
                     -- rod: needs item data
                     local d = Data.ItemUtility.GetItemDataFromItemType(cat, item.Id)
@@ -3507,8 +3508,8 @@ do
     end
     local EnchantSection = UI.Window:AddCollapsible(UI.AutomationTab,"Enchant Features",false)
     S.enchantPara = UI.Window:AddParagraph(EnchantSection,"Enchant Status","Current Rod: None\nEnchant 1: None\nEnchant 2: None\nEnchant Stones Left: 0")
-    UI.Window:AddDropdown(EnchantSection,"Enchant Type","",STONE_LIST,false,"Enchant Stone",function(v)
-        Config.EnchantType = v or "Enchant Stone"
+    UI.Window:AddDropdown(EnchantSection,"Enchant Type","",STONE_LIST,false,"Select Option",function(v)
+        Config.EnchantType = v or "Select Option"
         if Config.AutoEnchantReroll then updateEnchantPara() end
     end,"Dropdown_Enchant Type")
     UI.Window:AddDropdown(EnchantSection,"Target Enchant","",TARGET_LIST,false,"Select Option",function(v)
@@ -3584,11 +3585,12 @@ do
                 pcall(function()
                     local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
                     if not inv then return end
-                    local SIDS = {[10]=true,[929]=true,[558]=true,[125]=true,[1098]=true,[246]=true,[714]=true,[873]=true}
+                    local SIDS={[10]=true,[929]=true,[558]=true,[125]=true,[1098]=true,[246]=true,[714]=true,[873]=true}
                     for cat,items in pairs(inv) do
                         if type(items)~="table" then continue end
                         for _,s in ipairs(items) do
-                            if SIDS[tonumber(s.Id)] and tonumber(s.Id)==tonumber(stoneId) then stoneUUID=s.UUID break end
+                            local sId=tonumber(s.Id) or tonumber(s.Identifier)
+                            if SIDS[sId] and sId==tonumber(stoneId) then stoneUUID=s.UUID break end
                         end
                         if stoneUUID then break end
                     end
