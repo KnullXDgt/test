@@ -3428,7 +3428,6 @@ do
         local eq = Data.Player:Get("EquippedItems") or {}
         local slot = table.find(eq, tostring(UUID))
         if not slot then
-            if #eq >= 5 then return false end
             pcall(function() Remote.equipItem:FireServer(UUID, itemType) end)
             local dl = os.clock() + 3
             while not slot and os.clock() < dl do
@@ -3541,7 +3540,7 @@ do
         if not state then return end
         table.insert(S.enchantConns,Data.Player:OnChange({"Inventory","Fishing Rods"},updateEnchantPara))
         table.insert(S.enchantConns,Data.Player:OnChange({"Inventory","Enchant Stones"},updateEnchantPara))
-        table.insert(S.enchantConns,Remote.enchantRoll.OnClientEvent:Connect(function(enchantId)
+        table.insert(S.enchantConns,Remote.enchantRoll.OnClientEvent:Connect(function(_, enchantId)
             local enchantName = "Unknown"
             pcall(function()
                 local d = Data.ItemUtility:GetEnchantData(enchantId)
@@ -3637,7 +3636,6 @@ do
         local eq = Data.Player:Get("EquippedItems") or {}
         local slot = table.find(eq, tostring(UUID))
         if not slot then
-            if #eq >= 5 then return false end
             pcall(function() Remote.equipItem:FireServer(UUID, itemType) end)
             local dl = os.clock()+3
             while not slot and os.clock()<dl do
