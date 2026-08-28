@@ -3450,13 +3450,19 @@ do
         local rodName,e1,e2,stoneCount = "None","None","None",0
         pcall(function()
             local eq = Data.Player:Get("EquippedItems") or {}
-            local rodInv = (Data.Player:Get("Inventory") or {})["Fishing Rods"] or {}
-            for _,uuid in pairs(eq) do
-                for _,rod in ipairs(rodInv) do
-                    if tostring(rod.UUID) == tostring(uuid) then
-                        local ok,d = pcall(Data.ItemUtility.GetItemDataFromItemType,"Fishing Rods",rod.Id)
-                        if ok and d then rodName = d.Data.Name end
-                        local meta = rod.Metadata or {}
+            local equippedSet = {}
+            for _,uuid in pairs(eq) do equippedSet[tostring(uuid)] = true end
+            local stoneId = STONE_ID[Config.EnchantType] or 10
+            local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+            if not inv then return end
+            for cat, items in pairs(inv) do
+                if type(items) ~= "table" then continue end
+                for _, item in ipairs(items) do
+                    local d = Data.ItemUtility.GetItemDataFromItemType(cat, item.Id)
+                    if not (d and d.Data) then continue end
+                    if d.Data.Type == "Fishing Rods" and equippedSet[tostring(item.UUID)] then
+                        rodName = d.Data.Name or rodName
+                        local meta = item.Metadata or {}
                         if meta.EnchantId then
                             local ok2,ed = pcall(function() return Data.ItemUtility:GetEnchantData(meta.EnchantId) end)
                             if ok2 and ed and ed.Data then e1 = ed.Data.Name end
@@ -3465,14 +3471,11 @@ do
                             local ok3,ed = pcall(function() return Data.ItemUtility:GetEnchantData(meta.EnchantId2) end)
                             if ok3 and ed and ed.Data then e2 = ed.Data.Name end
                         end
-                        break
+                    end
+                    if tonumber(item.Id) == tonumber(stoneId) then
+                        stoneCount = stoneCount + 1
                     end
                 end
-            end
-            local stoneId = STONE_ID[Config.EnchantType] or 10
-            local stoneInv = (Data.Player:Get("Inventory") or {})["Enchant Stones"] or {}
-            for _,s in ipairs(stoneInv) do
-                if tonumber(s.Id) == tonumber(stoneId) then stoneCount = stoneCount + 1 end
             end
         end)
         setPara(S.enchantPara,"Enchant Status",
@@ -3482,6 +3485,24 @@ do
             "\nEnchant Stones Left: "..stoneCount)
     end
     S.enchantConns = {}
+    -- Shared inventory scanner (tradeui pattern)
+    local function scanInventory(filterFn)
+        local result = {}
+        local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+        if not inv then return result end
+        for cat, items in pairs(inv) do
+            if type(items) == "table" then
+                for _, item in ipairs(items) do
+                    local d = Data.ItemUtility.GetItemDataFromItemType(cat, item.Id)
+                    if d and d.Data then
+                        local hit = filterFn(item, d)
+                        if hit then table.insert(result, hit) end
+                    end
+                end
+            end
+        end
+        return result
+    end
     local EnchantSection = UI.Window:AddCollapsible(UI.AutomationTab,"Enchant Features",false)
     S.enchantPara = UI.Window:AddParagraph(EnchantSection,"Enchant Status","Current Rod: None\nEnchant 1: None\nEnchant 2: None\nEnchant Stones Left: 0")
     UI.Window:AddDropdown(EnchantSection,"Enchant Type","",STONE_LIST,false,"Enchant Stone",function(v)
@@ -3494,6 +3515,24 @@ do
     S.enchantToggle = UI.Window:AddToggle(EnchantSection,"Auto Enchant Reroll","",false,function(state)
         for _,conn in ipairs(S.enchantConns) do pcall(function() conn:Disconnect() end) end
         S.enchantConns = {}
+    -- Shared inventory scanner (tradeui pattern)
+    local function scanInventory(filterFn)
+        local result = {}
+        local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+        if not inv then return result end
+        for cat, items in pairs(inv) do
+            if type(items) == "table" then
+                for _, item in ipairs(items) do
+                    local d = Data.ItemUtility.GetItemDataFromItemType(cat, item.Id)
+                    if d and d.Data then
+                        local hit = filterFn(item, d)
+                        if hit then table.insert(result, hit) end
+                    end
+                end
+            end
+        end
+        return result
+    end
         S.enchantPending = false
         if S.enchantThread then pcall(task.cancel,S.enchantThread) S.enchantThread = nil end
         Config.AutoEnchantReroll = state
@@ -3523,10 +3562,17 @@ do
                 local rodUUID = nil
                 pcall(function()
                     local eq = Data.Player:Get("EquippedItems") or {}
-                    local rodInv = (Data.Player:Get("Inventory") or {})["Fishing Rods"] or {}
-                    for _,uuid in pairs(eq) do
-                        for _,rod in ipairs(rodInv) do
-                            if tostring(rod.UUID)==tostring(uuid) then rodUUID=uuid break end
+                    local equippedSet = {}
+                    for _,uuid in pairs(eq) do equippedSet[tostring(uuid)]=true end
+                    local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+                    if not inv then return end
+                    for cat,items in pairs(inv) do
+                        if type(items)~="table" then continue end
+                        for _,item in ipairs(items) do
+                            local d = Data.ItemUtility.GetItemDataFromItemType(cat,item.Id)
+                            if d and d.Data and d.Data.Type=="Fishing Rods" and equippedSet[tostring(item.UUID)] then
+                                rodUUID = item.UUID break
+                            end
                         end
                         if rodUUID then break end
                     end
@@ -3534,9 +3580,14 @@ do
                 if not rodUUID then updateEnchantPara() break end
                 local stoneUUID,stoneId = nil,(STONE_ID[Config.EnchantType] or 10)
                 pcall(function()
-                    local inv = (Data.Player:Get("Inventory") or {})["Enchant Stones"] or {}
-                    for _,s in ipairs(inv) do
-                        if tonumber(s.Id)==tonumber(stoneId) then stoneUUID=s.UUID break end
+                    local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+                    if not inv then return end
+                    for cat,items in pairs(inv) do
+                        if type(items)~="table" then continue end
+                        for _,s in ipairs(items) do
+                            if tonumber(s.Id)==tonumber(stoneId) then stoneUUID=s.UUID break end
+                        end
+                        if stoneUUID then break end
                     end
                 end)
                 if not stoneUUID then updateEnchantPara() break end
@@ -3605,17 +3656,21 @@ do
         Config.SelectedSecretFish = v or "Select Option"
     end,"Dropdown_Select Secret Fish")
     UI.Window:AddButton(TranscendedSection,"Refresh Fish List","","rbxassetid://16932740082",function()
-        local fishInv = (Data.Player:Get("Inventory") or {})["Fish"] or {}
         local counts,nameList = {},{}
-        for _,item in ipairs(fishInv) do
-            pcall(function()
-                local d = Data.ItemUtility.GetItemDataFromItemType("Fish",item.Id)
-                if d and d.Data and tonumber(d.Data.Tier)==7 then
-                    local name = d.Data.Name
-                    if not counts[name] then counts[name]=0 table.insert(nameList,name) end
-                    counts[name] = counts[name]+1
+        local inv=Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+        if inv then
+            for cat,items in pairs(inv) do
+                if type(items)=="table" then
+                    for _,item in ipairs(items) do
+                        local d=Data.ItemUtility.GetItemDataFromItemType(cat,item.Id)
+                        if d and d.Data and d.Data.Type=="Fish" and tonumber(d.Data.Tier)==7 then
+                            local name=d.Data.Name or tostring(item.Id)
+                            if not counts[name] then counts[name]=0 table.insert(nameList,name) end
+                            counts[name]=counts[name]+1
+                        end
+                    end
                 end
-            end)
+            end
         end
         local list = {}
         for _,name in ipairs(nameList) do table.insert(list,"x"..counts[name].." "..name) end
@@ -3643,11 +3698,18 @@ do
                 if not Config.AutoCreateTranscended then break end
                 local fishUUID = nil
                 pcall(function()
-                    local inv = (Data.Player:Get("Inventory") or {})["Fish"] or {}
-                    for _,item in ipairs(inv) do
-                        local d = Data.ItemUtility.GetItemDataFromItemType("Fish",item.Id)
-                        if d and d.Data and d.Data.Name==fishName and tonumber(d.Data.Tier)==7 then
-                            fishUUID=item.UUID break
+                    local invT=Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+                    if invT then
+                        for cat,items in pairs(invT) do
+                            if type(items)=="table" then
+                                for _,item in ipairs(items) do
+                                    local d=Data.ItemUtility.GetItemDataFromItemType(cat,item.Id)
+                                    if d and d.Data and d.Data.Type=="Fish" and d.Data.Name==fishName and tonumber(d.Data.Tier)==7 then
+                                        fishUUID=item.UUID break
+                                    end
+                                end
+                            end
+                            if fishUUID then break end
                         end
                     end
                 end)
