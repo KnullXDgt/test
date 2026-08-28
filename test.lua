@@ -61,7 +61,6 @@ Remote.cutscene = Remote.Net:WaitForChild("RE/ReplicateCutscene", 10)
 Remote.abilityVFX = Remote.Net:WaitForChild("RE/PlayAbilityVFX", 10)
 Remote.baitCast = Remote.Net:FindFirstChild("RE/BaitCastVisual")
 Remote.enchantAltar1 = Remote.Resolve("RE/ActivateEnchantingAltar")
-Remote.unequipItem = Remote.Resolve("RE/UnequipItem")
 Remote.enchantAltar2 = Remote.Resolve("RE/ActivateSecondEnchantingAltar")
 Remote.enchantRoll = Remote.Resolve("RE/RollEnchant")
 Remote.createTranscended = Remote.Resolve("RF/CreateTranscendedStone")
@@ -156,7 +155,6 @@ local Config = {
     TargetEnchant         = "Select Option",
     AutoEnchantReroll     = false,
     SelectedSecretFish    = "Select Option",
-    TranscendedOption     = "Select Option",
     TranscendedAmount     = 1,
     AutoCreateTranscended = false,
     -- Rod
@@ -3393,6 +3391,49 @@ S.setParagraphText = function(para, text)
     end
 end
 
+-- Equip an inventory item and wait until the server confirms it is held.
+-- Switching held tools only needs EquipToolFromHotbar; UnequipItem would
+-- unnecessarily change the player's hotbar layout.
+S.equipAndHold = function(UUID, itemType)
+    local uuid = tostring(UUID or "")
+    if uuid == "" or not Remote.equipItem or not Remote.equipTool then
+        return false
+    end
+
+    local equippedItems = Data.Player:Get("EquippedItems") or {}
+    local slot = table.find(equippedItems, uuid)
+    if not slot then
+        local sent = pcall(function()
+            Remote.equipItem:FireServer(UUID, itemType)
+        end)
+        if not sent then return false end
+
+        local equipDeadline = os.clock() + 3
+        while not slot and os.clock() < equipDeadline do
+            task.wait(0.05)
+            equippedItems = Data.Player:Get("EquippedItems") or {}
+            slot = table.find(equippedItems, uuid)
+        end
+    end
+    if not slot then return false end
+
+    local sent = pcall(function()
+        Remote.equipTool:FireServer(slot)
+    end)
+    if not sent then return false end
+
+    local holdDeadline = os.clock() + 3
+    while os.clock() < holdDeadline do
+        local equippedType = Data.Player:Get("EquippedType")
+        local equippedId = tostring(Data.Player:Get("EquippedId") or "")
+        if equippedType == itemType and equippedId == uuid then
+            return true
+        end
+        task.wait(0.05)
+    end
+    return false
+end
+
 
 -- ===== ENCHANT FEATURES =====
 do
@@ -3425,45 +3466,30 @@ do
             if c then c.Text = content end
         end)
     end
-    local function equipAndHold(UUID, itemType)
-        local eq = Data.Player:Get("EquippedItems") or {}
-        local slot = table.find(eq, tostring(UUID))
-        if not slot then
-            pcall(function() Remote.equipItem:FireServer(UUID, itemType) end)
-            local dl = os.clock() + 3
-            while not slot and os.clock() < dl do
-                eq = Data.Player:Get("EquippedItems") or {}
-                slot = table.find(eq, tostring(UUID))
-                if not slot then task.wait(0.05) end
-            end
-        end
-        if not slot then return false end
-        pcall(function() Remote.equipTool:FireServer(slot) end)
-        local dl2 = os.clock()+3
-        local equipped = false
-        while not equipped and os.clock()<dl2 do
-            local eType = Data.Player:Get("EquippedType")
-            local eId   = tostring(Data.Player:Get("EquippedId") or "")
-            if eType==itemType and eId==tostring(UUID) then
-                equipped = true
-            elseif eType~="" and eId~=tostring(UUID) then
-                -- Wrong item equipped, unequip it then wait for removal + retry
-                pcall(function()
-                    if eId~="" then Remote.unequipItem:FireServer(eId) end
-                end)
-                local waitDl = os.clock()+1.5
-                while os.clock()<waitDl do
-                    local eq2 = Data.Player:Get("EquippedItems") or {}
-                    if not table.find(eq2, eId) then break end
-                    task.wait(0.05)
+    local function findEnchantStone(stoneId)
+        local firstUUID, total = nil, 0
+        pcall(function()
+            local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+            if not inv then return end
+            for cat, items in pairs(inv) do
+                if type(items) ~= "table" then continue end
+                for _, item in ipairs(items) do
+                    local rawId = item.Id or item.Identifier
+                    if tonumber(rawId) == tonumber(stoneId) then
+                        local itemData = Data.ItemUtility.GetItemDataFromItemType(cat, rawId)
+                        local quantity = tonumber(item.Quantity) or 1
+                        if itemData and itemData.Data
+                            and itemData.Data.Type == "Enchant Stones"
+                            and quantity > 0
+                        then
+                            firstUUID = firstUUID or item.UUID
+                            total = total + quantity
+                        end
+                    end
                 end
-                local eq2 = Data.Player:Get("EquippedItems") or {}
-                local cs = table.find(eq2, tostring(UUID))
-                if cs then pcall(function() Remote.equipTool:FireServer(cs) end) end
             end
-            if not equipped then task.wait(0.05) end
-        end
-        return equipped
+        end)
+        return firstUUID, total
     end
     local function updateEnchantPara()
         if not S.enchantPara then return end
@@ -3507,24 +3533,6 @@ do
             "\nEnchant Stones Left: "..stoneCount)
     end
     S.enchantConns = {}
-    -- Shared inventory scanner (tradeui pattern)
-    local function scanInventory(filterFn)
-        local result = {}
-        local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
-        if not inv then return result end
-        for cat, items in pairs(inv) do
-            if type(items) == "table" then
-                for _, item in ipairs(items) do
-                    local d = Data.ItemUtility.GetItemDataFromItemType(cat, item.Id)
-                    if d and d.Data then
-                        local hit = filterFn(item, d)
-                        if hit then table.insert(result, hit) end
-                    end
-                end
-            end
-        end
-        return result
-    end
     local EnchantSection = UI.Window:AddCollapsible(UI.AutomationTab,"Enchant Features",false)
     S.enchantPara = UI.Window:AddParagraph(EnchantSection,"Enchant Status","Current Rod: None\nEnchant 1: None\nEnchant 2: None\nEnchant Stones Left: 0")
     UI.Window:AddDropdown(EnchantSection,"Enchant Type","",STONE_LIST,false,"Select Option",function(v)
@@ -3537,50 +3545,48 @@ do
     S.enchantToggle = UI.Window:AddToggle(EnchantSection,"Auto Enchant Reroll","",false,function(state)
         for _,conn in ipairs(S.enchantConns) do pcall(function() conn:Disconnect() end) end
         S.enchantConns = {}
-    -- Shared inventory scanner (tradeui pattern)
-    local function scanInventory(filterFn)
-        local result = {}
-        local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
-        if not inv then return result end
-        for cat, items in pairs(inv) do
-            if type(items) == "table" then
-                for _, item in ipairs(items) do
-                    local d = Data.ItemUtility.GetItemDataFromItemType(cat, item.Id)
-                    if d and d.Data then
-                        local hit = filterFn(item, d)
-                        if hit then table.insert(result, hit) end
-                    end
-                end
-            end
-        end
-        return result
-    end
         S.enchantPending = false
+        S.enchantExpectedStoneId = nil
+        S.enchantExpectedTarget = nil
         if S.enchantThread then pcall(task.cancel,S.enchantThread) S.enchantThread = nil end
         Config.AutoEnchantReroll = state
         if not state then return end
-        table.insert(S.enchantConns,Data.Player:OnChange({"Inventory","Fishing Rods"},updateEnchantPara))
-        table.insert(S.enchantConns,Data.Player:OnChange({"Inventory","Enchant Stones"},updateEnchantPara))
-        table.insert(S.enchantConns,Remote.enchantRoll.OnClientEvent:Connect(function(_, enchantId)
+        if not Remote.enchantAltar1 or not Remote.enchantAltar2 or not Remote.enchantRoll then
+            UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant remote not found"})
+            pcall(function() S.enchantToggle:Set(false) end)
+            return
+        end
+        S.enchantInventorySerial = 0
+        table.insert(S.enchantConns,Data.Player:OnChange({"Inventory","Items"},function()
+            S.enchantInventorySerial = S.enchantInventorySerial + 1
+            updateEnchantPara()
+        end))
+        table.insert(S.enchantConns,Remote.enchantRoll.OnClientEvent:Connect(function(_, enchantId, eventStoneId)
+            if not S.enchantPending then return end
+            if eventStoneId ~= nil and S.enchantExpectedStoneId ~= nil
+                and tonumber(eventStoneId) ~= tonumber(S.enchantExpectedStoneId)
+            then
+                return
+            end
             local enchantName = "Unknown"
             pcall(function()
                 local d = Data.ItemUtility:GetEnchantData(enchantId)
                 if d and d.Data then enchantName = d.Data.Name end
             end)
-            task.delay(0.2, updateEnchantPara)
-            if enchantName == Config.TargetEnchant then
+            task.delay(0.2, function()
+                if Config.AutoEnchantReroll then updateEnchantPara() end
+            end)
+            if enchantName == S.enchantExpectedTarget then
                 pcall(function() S.enchantToggle:Set(false) end)
                 UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant Completed - "..enchantName})
             end
             S.enchantPending = false
+            S.enchantExpectedStoneId = nil
+            S.enchantExpectedTarget = nil
         end))
         updateEnchantPara()
-        if not Remote.enchantAltar1 then
-            UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant remote not found"})
-            pcall(function() S.enchantToggle:Set(false) end)
-            return
-        end
         S.enchantThread = task.spawn(function()
+            local equipFailures = 0
             while Config.AutoEnchantReroll do
                 local rodUUID = nil
                 pcall(function()
@@ -3606,42 +3612,78 @@ do
                     pcall(function() S.enchantToggle:Set(false) end)
                     break
                 end
-                local stoneUUID,stoneId = nil,(STONE_ID[Config.EnchantType] or 10)
-                pcall(function()
-                    local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
-                    if not inv then return end
-                    for cat,items in pairs(inv) do
-                        if type(items)~="table" then continue end
-                        for _,s in ipairs(items) do
-                            local sRawId = s.Id or s.Identifier
-                            if tonumber(sRawId)==tonumber(stoneId) then
-                                local sd = Data.ItemUtility.GetItemDataFromItemType(cat, sRawId)
-                                if sd and sd.Data and sd.Data.Type=="Enchant Stones" and (tonumber(s.Quantity) or 1)>0 then
-                                    stoneUUID=s.UUID break
-                                end
-                            end
-                        end
-                        if stoneUUID then break end
-                    end
-                end)
+                local stoneId = STONE_ID[Config.EnchantType] or 10
+                local stoneUUID, stoneCountBefore = findEnchantStone(stoneId)
                 if not stoneUUID then
                     updateEnchantPara()
                     UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant stones exhausted"})
                     pcall(function() S.enchantToggle:Set(false) end)
                     break
                 end
-                if not equipAndHold(stoneUUID,"Enchant Stones") then task.wait(0.3) continue end
+                if not S.equipAndHold(stoneUUID,"Enchant Stones") then
+                    equipFailures = equipFailures + 1
+                    if equipFailures >= 3 then
+                        UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Unable to equip enchant stone"})
+                        pcall(function() S.enchantToggle:Set(false) end)
+                        break
+                    end
+                    task.wait(0.3)
+                    continue
+                end
+                equipFailures = 0
                 S.enchantPending = true
-                local isSecond = (STONE_ID[Config.EnchantType] == 246 or STONE_ID[Config.EnchantType] == 1098)
-                if isSecond then
-                    pcall(function() Remote.enchantAltar2:FireServer() end)
+                S.enchantExpectedStoneId = stoneId
+                S.enchantExpectedTarget = Config.TargetEnchant
+                local inventorySerialBefore = S.enchantInventorySerial
+                local sent
+                if stoneId == 246 or stoneId == 1098 then
+                    sent = pcall(function() Remote.enchantAltar2:FireServer() end)
                 else
-                    pcall(function() Remote.enchantAltar1:FireServer(rodUUID) end)
+                    sent = pcall(function() Remote.enchantAltar1:FireServer(rodUUID) end)
+                end
+                if not sent then
+                    S.enchantPending = false
+                    S.enchantExpectedStoneId = nil
+                    S.enchantExpectedTarget = nil
+                    UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Failed to start enchant"})
+                    pcall(function() S.enchantToggle:Set(false) end)
+                    break
                 end
                 local dl = os.clock()+12
                 while S.enchantPending and os.clock()<dl do task.wait(0.05) end
-                S.enchantPending = false
+                if S.enchantPending then
+                    S.enchantPending = false
+                    S.enchantExpectedStoneId = nil
+                    S.enchantExpectedTarget = nil
+                    UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant response timeout"})
+                    pcall(function() S.enchantToggle:Set(false) end)
+                    break
+                end
                 if not Config.AutoEnchantReroll then break end
+
+                local remaining = stoneCountBefore
+                local syncDeadline = os.clock()+1.5
+                local observedSerial = inventorySerialBefore
+                while Config.AutoEnchantReroll and os.clock()<syncDeadline do
+                    local currentSerial = S.enchantInventorySerial
+                    if currentSerial ~= observedSerial then
+                        observedSerial = currentSerial
+                        local _, currentCount = findEnchantStone(stoneId)
+                        remaining = currentCount
+                        if currentCount < stoneCountBefore then break end
+                    end
+                    task.wait(0.05)
+                end
+                if remaining == stoneCountBefore then
+                    local _, currentCount = findEnchantStone(stoneId)
+                    remaining = currentCount
+                end
+                if remaining <= 0 then
+                    updateEnchantPara()
+                    UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant stones exhausted"})
+                    pcall(function() S.enchantToggle:Set(false) end)
+                    break
+                end
                 task.wait(5.5)
             end
         end)
@@ -3670,40 +3712,24 @@ do
             if c then c.Text = content end
         end)
     end
-    local function equipAndHold(UUID, itemType)
-        local eq = Data.Player:Get("EquippedItems") or {}
-        local slot = table.find(eq, tostring(UUID))
-        if not slot then
-            pcall(function() Remote.equipItem:FireServer(UUID, itemType) end)
-            local dl = os.clock()+3
-            while not slot and os.clock()<dl do
-                eq = Data.Player:Get("EquippedItems") or {}
-                slot = table.find(eq, tostring(UUID))
-                if not slot then task.wait(0.05) end
+    local function inventoryHasFishUUID(UUID)
+        local found = false
+        local ok = pcall(function()
+            local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+            if not inv then return end
+            for cat, items in pairs(inv) do
+                if type(items) ~= "table" then continue end
+                for _, item in ipairs(items) do
+                    if tostring(item.UUID or "") == tostring(UUID) then
+                        local itemData = Data.ItemUtility.GetItemDataFromItemType(cat,item.Id or item.Identifier)
+                        found = itemData and itemData.Data and itemData.Data.Type == "Fish" or false
+                        return
+                    end
+                end
+                if found then return end
             end
-        end
-        if not slot then return false end
-        pcall(function() Remote.equipTool:FireServer(slot) end)
-        local dl2 = os.clock()+3
-        local equipped = false
-        while not equipped and os.clock()<dl2 do
-            local eType = Data.Player:Get("EquippedType")
-            local eId   = tostring(Data.Player:Get("EquippedId") or "")
-            if eType==itemType and eId==tostring(UUID) then
-                equipped = true
-            elseif eType~="" and eId~=tostring(UUID) then
-                -- Wrong item equipped (any type), unequip it then retry
-                pcall(function()
-                    if eId~="" then Remote.unequipItem:FireServer(eId) end
-                end)
-                task.wait(0.2)
-                local eq2 = Data.Player:Get("EquippedItems") or {}
-                local cs = table.find(eq2, tostring(UUID))
-                if cs then pcall(function() Remote.equipTool:FireServer(cs) end) end
-            end
-            if not equipped then task.wait(0.05) end
-        end
-        return equipped
+        end)
+        return not ok or found
     end
     local TranscendedSection = UI.Window:AddCollapsible(UI.AutomationTab,"Create Transcended Stone",false)
     S.transcendedPara = UI.Window:AddParagraph(TranscendedSection,"Status","Waiting")
@@ -3734,12 +3760,25 @@ do
         setPara(S.transcendedPara,"Fish List",#list.." types of secret fish found")
     end)
     UI.Window:AddInput(TranscendedSection,"Amount","","Enter amount...",function(v)
-        Config.TranscendedAmount = tonumber(v) or 1
+        Config.TranscendedAmount = math.max(1,math.floor(tonumber(v) or 1))
     end,"Input_Transcended Amount")
     S.transcendedToggle = UI.Window:AddToggle(TranscendedSection,"Enable Auto Create","",false,function(state)
+        if S.transcendedInventoryConn then
+            pcall(function() S.transcendedInventoryConn:Disconnect() end)
+            S.transcendedInventoryConn=nil
+        end
         if S.transcendedThread then pcall(task.cancel,S.transcendedThread) S.transcendedThread=nil end
         Config.AutoCreateTranscended = state
         if not state then return end
+        if not Remote.createTranscended then
+            setPara(S.transcendedPara,"Failed","Create Transcended remote not found")
+            pcall(function() S.transcendedToggle:Set(false) end)
+            return
+        end
+        S.transcendedInventorySerial = 0
+        S.transcendedInventoryConn = Data.Player:OnChange({"Inventory","Items"},function()
+            S.transcendedInventorySerial = S.transcendedInventorySerial + 1
+        end)
         S.transcendedThread = task.spawn(function()
             local fishName = string.match(Config.SelectedSecretFish or "","^x%d+ (.+)$")
             if not fishName then
@@ -3747,9 +3786,11 @@ do
                 pcall(function() S.transcendedToggle:Set(false) end)
                 return
             end
-            local amount = math.max(tonumber(Config.TranscendedAmount) or 1,1)
+            local amount = math.max(1,math.floor(tonumber(Config.TranscendedAmount) or 1))
             local created = 0
             local failed = 0
+            local stopReason = nil
+            local equipFailures = 0
             while created < amount and Config.AutoCreateTranscended do
                 local fishUUID = nil
                 pcall(function()
@@ -3769,20 +3810,32 @@ do
                     end
                 end)
                 if not fishUUID then
-                    setPara(S.transcendedPara,"Status","No "..fishName.." found")
+                    stopReason = "No "..fishName.." found"
                     break
                 end
                 setPara(S.transcendedPara,"Equipping",fishName)
-                if not equipAndHold(fishUUID,"Fish") then
+                if not S.equipAndHold(fishUUID,"Fish") then
                     failed=failed+1
+                    equipFailures=equipFailures+1
+                    if equipFailures >= 3 then
+                        stopReason = "Unable to equip "..fishName
+                        break
+                    end
                     task.wait(0.5)
                     continue
                 end
+                equipFailures=0
                 setPara(S.transcendedPara,"Sacrificing","Create "..(created+1).."/"..amount.." - Done: "..created.." | Fail: "..failed)
+                local inventorySerialBefore = S.transcendedInventorySerial
                 local done,result,errMsg = false,false,"Timeout"
                 local worker = task.spawn(function()
                     local ok,r,m = pcall(function() return Remote.createTranscended:InvokeServer() end)
-                    if ok then result=r errMsg=tostring(m or "") end
+                    if ok then
+                        result=r
+                        errMsg=tostring(m or "")
+                    else
+                        errMsg=tostring(r or "Create Transcended failed")
+                    end
                     done = true
                 end)
                 local dl = os.clock()+10
@@ -3792,14 +3845,37 @@ do
                     created = created+1
                     setPara(S.transcendedPara,"Sacrificing","Create "..created.."/"..amount.." - Done: "..created.." | Fail: "..failed)
                 else
-                    setPara(S.transcendedPara,"Failed",errMsg)
+                    stopReason = errMsg ~= "" and errMsg or "Create Transcended failed"
                     break
                 end
-                task.wait(0.7)
+
+                local syncDeadline = os.clock()+3
+                local observedSerial = inventorySerialBefore
+                local fishStillExists = true
+                while Config.AutoCreateTranscended and os.clock()<syncDeadline do
+                    local currentSerial = S.transcendedInventorySerial
+                    if currentSerial ~= observedSerial then
+                        observedSerial = currentSerial
+                        fishStillExists = inventoryHasFishUUID(fishUUID)
+                        if not fishStillExists then break end
+                    end
+                    task.wait(0.05)
+                end
+                if fishStillExists then
+                    fishStillExists = inventoryHasFishUUID(fishUUID)
+                end
+                if fishStillExists then
+                    stopReason = "Inventory sync timeout"
+                    break
+                end
+                task.wait(0.1)
             end
-            if Config.AutoCreateTranscended and created > 0 then
+            if Config.AutoCreateTranscended and created >= amount then
                 setPara(S.transcendedPara,"Complete","Done: "..created.." | Fail: "..failed)
                 UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Done! Created "..created.." Transcended Stones"})
+            elseif Config.AutoCreateTranscended and stopReason then
+                setPara(S.transcendedPara,"Stopped",stopReason.."\nDone: "..created.."/"..amount.." | Fail: "..failed)
+                UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content=stopReason})
             end
             pcall(function() S.transcendedToggle:Set(false) end)
         end)
