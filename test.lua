@@ -3546,6 +3546,7 @@ do
                 local d = Data.ItemUtility:GetEnchantData(enchantId)
                 if d and d.Data then enchantName = d.Data.Name end
             end)
+            task.delay(0.2, updateEnchantPara)
             if enchantName == Config.TargetEnchant then
                 pcall(function() S.enchantToggle:Set(false) end)
                 UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Got enchant: "..enchantName})
@@ -3610,7 +3611,7 @@ do
                 while S.enchantPending and os.clock()<dl do task.wait(0.05) end
                 S.enchantPending = false
                 if not Config.AutoEnchantReroll then break end
-                task.wait(0.3)
+                task.wait(5.5)
             end
         end)
     end,"Toggle_Auto Enchant Reroll")
