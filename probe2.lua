@@ -121,3 +121,92 @@ save()
 log("=== probe2 ready ===")
 log("Now manually: equip stone -> activate altar -> equip fish -> create transcended")
 save()
+-- === EXTRA LISTENERS ===
+
+-- Watch rod enchant changes (E1/E2)
+local IU = require(RS.Shared.ItemUtility)
+local function getRodEnchants()
+    local inv = PD:Get("Inventory") or {}
+    local eq = PD:Get("EquippedItems") or {}
+    local equippedSet = {}
+    for i = 1, #eq do equippedSet[tostring(eq[i])] = true end
+    for cat, items in pairs(inv) do
+        if type(items) == "table" then
+            for _, item in ipairs(items) do
+                if equippedSet[tostring(item.UUID)] then
+                    local d = IU.GetItemDataFromItemType(cat, item.Id)
+                    if d and d.Data and d.Data.Type == "Fishing Rods" then
+                        local e1, e2 = "none", "none"
+                        local meta = item.Metadata or {}
+                        if meta.EnchantId then
+                            local ok, ed = pcall(function() return IU:GetEnchantData(meta.EnchantId) end)
+                            if ok and ed and ed.Data then e1 = ed.Data.Name.." (id="..tostring(meta.EnchantId)..")" end
+                        end
+                        if meta.EnchantId2 then
+                            local ok, ed = pcall(function() return IU:GetEnchantData(meta.EnchantId2) end)
+                            if ok and ed and ed.Data then e2 = ed.Data.Name.." (id="..tostring(meta.EnchantId2)..")" end
+                        end
+                        return d.Data.Name, e1, e2
+                    end
+                end
+            end
+        end
+    end
+    return "?", "none", "none"
+end
+
+-- Log current rod state
+local rodName, e1, e2 = getRodEnchants()
+log("=== ROD STATE ===")
+log("Rod: "..rodName)
+log("E1: "..e1)
+log("E2: "..e2)
+log("=================")
+save()
+
+-- Watch Fishing Rods inventory changes
+PD:OnChange({"Inventory", "Fishing Rods"}, function()
+    local rn, re1, re2 = getRodEnchants()
+    log("[ROD CHANGE] " .. rn .. " | E1=" .. re1 .. " | E2=" .. re2)
+    save()
+end)
+
+-- Watch Enchant Stones inventory changes
+PD:OnChange({"Inventory", "Enchant Stones"}, function()
+    local inv = PD:Get("Inventory") or {}
+    local stones = inv["Enchant Stones"] or {}
+    local counts = {}
+    for _, s in ipairs(stones) do
+        local key = tostring(s.Id)
+        counts[key] = (counts[key] or 0) + 1
+    end
+    local parts = {}
+    for id, cnt in pairs(counts) do table.insert(parts, "id="..id.."x"..cnt) end
+    log("[STONE CHANGE] " .. table.concat(parts, ", "))
+    save()
+end)
+
+-- Watch Fish inventory changes  
+PD:OnChange({"Inventory", "Fish"}, function()
+    log("[FISH CHANGE] fish inventory updated")
+    save()
+end)
+
+-- Fix RollEnchant listener - capture ALL args correctly
+-- arg[1]=extra, arg[2]=enchantId, arg[3]=stoneId, arg[4]=isSpecial
+if remRollEnchant then
+    remRollEnchant.OnClientEvent:Connect(function(a1, a2, a3, a4)
+        local enchName = "?"
+        pcall(function()
+            local d = IU:GetEnchantData(a2)
+            if d and d.Data then enchName = d.Data.Name end
+        end)
+        log("[ROLL] extra="..tostring(a1).." enchantId="..tostring(a2).."("..enchName..") stoneId="..tostring(a3).." special="..tostring(a4))
+        save()
+    end)
+    log("Hooked RollEnchant (full args)")
+end
+
+log("Extra listeners active")
+save()
+
