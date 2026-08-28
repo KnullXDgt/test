@@ -3450,7 +3450,7 @@ do
         local rodName,e1,e2,stoneCount = "None","None","None",0
         pcall(function()
             local eq = Data.Player:Get("EquippedItems") or {}
-            local rodInv = Data.Player:Get({"Inventory","Fishing Rods"}) or {}
+            local rodInv = (Data.Player:Get("Inventory") or {})["Fishing Rods"] or {}
             for _,uuid in pairs(eq) do
                 for _,rod in ipairs(rodInv) do
                     if tostring(rod.UUID) == tostring(uuid) then
@@ -3470,9 +3470,9 @@ do
                 end
             end
             local stoneId = STONE_ID[Config.EnchantType] or 10
-            local stoneInv = Data.Player:Get({"Inventory","Enchant Stones"}) or {}
+            local stoneInv = (Data.Player:Get("Inventory") or {})["Enchant Stones"] or {}
             for _,s in ipairs(stoneInv) do
-                if s.Id == stoneId then stoneCount = stoneCount + 1 end
+                if tonumber(s.Id) == tonumber(stoneId) then stoneCount = stoneCount + 1 end
             end
         end)
         setPara(S.enchantPara,"Enchant Status",
@@ -3486,7 +3486,7 @@ do
     S.enchantPara = UI.Window:AddParagraph(EnchantSection,"Enchant Status","Current Rod: None\nEnchant 1: None\nEnchant 2: None\nEnchant Stones Left: 0")
     UI.Window:AddDropdown(EnchantSection,"Enchant Type","",STONE_LIST,false,"Enchant Stone",function(v)
         Config.EnchantType = v or "Enchant Stone"
-        updateEnchantPara()
+        if Config.AutoEnchantReroll then updateEnchantPara() end
     end,"Dropdown_Enchant Type")
     UI.Window:AddDropdown(EnchantSection,"Target Enchant","",TARGET_LIST,false,"Select Option",function(v)
         Config.TargetEnchant = v or "Select Option"
@@ -3523,7 +3523,7 @@ do
                 local rodUUID = nil
                 pcall(function()
                     local eq = Data.Player:Get("EquippedItems") or {}
-                    local rodInv = Data.Player:Get({"Inventory","Fishing Rods"}) or {}
+                    local rodInv = (Data.Player:Get("Inventory") or {})["Fishing Rods"] or {}
                     for _,uuid in pairs(eq) do
                         for _,rod in ipairs(rodInv) do
                             if tostring(rod.UUID)==tostring(uuid) then rodUUID=uuid break end
@@ -3534,9 +3534,9 @@ do
                 if not rodUUID then updateEnchantPara() break end
                 local stoneUUID,stoneId = nil,(STONE_ID[Config.EnchantType] or 10)
                 pcall(function()
-                    local inv = Data.Player:Get({"Inventory","Enchant Stones"}) or {}
+                    local inv = (Data.Player:Get("Inventory") or {})["Enchant Stones"] or {}
                     for _,s in ipairs(inv) do
-                        if s.Id==stoneId then stoneUUID=s.UUID break end
+                        if tonumber(s.Id)==tonumber(stoneId) then stoneUUID=s.UUID break end
                     end
                 end)
                 if not stoneUUID then updateEnchantPara() break end
@@ -3605,12 +3605,12 @@ do
         Config.SelectedSecretFish = v or "Select Option"
     end,"Dropdown_Select Secret Fish")
     UI.Window:AddButton(TranscendedSection,"Refresh Fish List","","rbxassetid://16932740082",function()
-        local fishInv = Data.Player:Get({"Inventory","Fish"}) or {}
+        local fishInv = (Data.Player:Get("Inventory") or {})["Fish"] or {}
         local counts,nameList = {},{}
         for _,item in ipairs(fishInv) do
             pcall(function()
                 local d = Data.ItemUtility.GetItemDataFromItemType("Fish",item.Id)
-                if d and d.Data and d.Data.Tier==7 then
+                if d and d.Data and tonumber(d.Data.Tier)==7 then
                     local name = d.Data.Name
                     if not counts[name] then counts[name]=0 table.insert(nameList,name) end
                     counts[name] = counts[name]+1
@@ -3643,10 +3643,10 @@ do
                 if not Config.AutoCreateTranscended then break end
                 local fishUUID = nil
                 pcall(function()
-                    local inv = Data.Player:Get({"Inventory","Fish"}) or {}
+                    local inv = (Data.Player:Get("Inventory") or {})["Fish"] or {}
                     for _,item in ipairs(inv) do
                         local d = Data.ItemUtility.GetItemDataFromItemType("Fish",item.Id)
-                        if d and d.Data and d.Data.Name==fishName and d.Data.Tier==7 then
+                        if d and d.Data and d.Data.Name==fishName and tonumber(d.Data.Tier)==7 then
                             fishUUID=item.UUID break
                         end
                     end
