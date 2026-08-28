@@ -3439,11 +3439,31 @@ do
         end
         if not slot then return false end
         pcall(function() Remote.equipTool:FireServer(slot) end)
-        local dl2 = os.clock() + 3
-        while Data.Player:Get("EquippedType") ~= itemType and os.clock() < dl2 do
-            task.wait(0.05)
+        local dl2 = os.clock()+3
+        local equipped = false
+        while not equipped and os.clock()<dl2 do
+            local eType = Data.Player:Get("EquippedType")
+            local eId   = tostring(Data.Player:Get("EquippedId") or "")
+            if eType==itemType and eId==tostring(UUID) then
+                equipped = true
+            elseif eType~="" and eId~=tostring(UUID) then
+                -- Wrong item equipped, unequip it then wait for removal + retry
+                pcall(function()
+                    if eId~="" then Remote.unequipItem:FireServer(eId) end
+                end)
+                local waitDl = os.clock()+1.5
+                while os.clock()<waitDl do
+                    local eq2 = Data.Player:Get("EquippedItems") or {}
+                    if not table.find(eq2, eId) then break end
+                    task.wait(0.05)
+                end
+                local eq2 = Data.Player:Get("EquippedItems") or {}
+                local cs = table.find(eq2, tostring(UUID))
+                if cs then pcall(function() Remote.equipTool:FireServer(cs) end) end
+            end
+            if not equipped then task.wait(0.05) end
         end
-        return Data.Player:Get("EquippedType") == itemType
+        return equipped
     end
     local function updateEnchantPara()
         if not S.enchantPara then return end
@@ -3760,7 +3780,8 @@ do
                 if not done then pcall(task.cancel,worker) end
                 if result then
                     created = created+1
-                    else
+                    setPara(S.transcendedPara,"Sacrificing","Create "..created.."/"..amount.." - Done: "..created.." | Fail: "..failed)
+                else
                     setPara(S.transcendedPara,"Failed",errMsg)
                     break
                 end
