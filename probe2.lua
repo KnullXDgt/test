@@ -43,7 +43,7 @@ for i = 1, #children - 1 do
         end
     end
 end
-log("Resolved "..tostring(#(function() local n=0 for _ in pairs(R) do n=n+1 end return n end)()).." remotes")
+local rCount=0; for _ in pairs(R) do rCount=rCount+1 end; log("Resolved "..rCount.." remotes")
 
 -- Replion state listener
 local Replion = require(RS.Packages.Replion)
