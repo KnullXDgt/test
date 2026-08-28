@@ -59,17 +59,34 @@ for key, remoteName in pairs({
 end
 Remote.cutscene = Remote.Net:WaitForChild("RE/ReplicateCutscene", 10)
 Remote.abilityVFX = Remote.Net:WaitForChild("RE/PlayAbilityVFX", 10)
-Remote.changeSetting = Remote.Net:WaitForChild("RE/ChangeSetting", 10)
 Remote.baitCast = Remote.Net:FindFirstChild("RE/BaitCastVisual")
-Remote.stopCutscene = Remote.Net:FindFirstChild("RE/StopCutscene")
 
 -- Support Features state
 local SupportState = {
-    cutsceneConns = {},
+    cutsceneConns = {
+        Blocked = {},
+        AttrWatcher = nil,
+        IgnoreWatcher = nil,
+        RootWatcher = nil,
+        Watcher = nil,
+    },
     abilityVFXConns = { Blocked = {} },
     hidePlayersConns = {},
-    skinEffectConns = { Active = false, Connections = {}, LocalEffectUntil = 0 },
-    weatherVFXConns = { Active = false, Connections = {} },
+    skinEffectConns = {
+        Active = false,
+        Connections = {},
+        Roots = setmetatable({}, { __mode = "k" }),
+        RodLines = setmetatable({}, { __mode = "k" }),
+    },
+    weatherVFXConns = {
+        Active = false,
+        Connections = {},
+        Roots = setmetatable({}, { __mode = "k" }),
+        RootNames = {},
+        FogRoots = setmetatable({}, { __mode = "k" }),
+        Brightness = nil,
+        BrightnessConn = nil,
+    },
     effectLocks = setmetatable({}, { __mode = "k" }),
     noFishAnimActive = false,
     autoEquipRodConn = nil,
@@ -120,6 +137,7 @@ local Config = {
     SellCount       = 10,
     DisableFishNotif = false,
     TeleportLocation = "Ancient Jungle",
+    RandomResults     = false,
     PerfectCast       = false,
     BlatantActive     = false,
     BlatantDelay      = 0,
@@ -155,6 +173,7 @@ local Config = {
 -- Shared runtime state. Kept in one table to stay light on Luau locals.
 local Runtime = {
     StableResult = false,
+    Random = Random.new(),
     Fishing = {
         Phase = "Idle",
         Owner = nil,
@@ -211,9 +230,54 @@ local FishingModes = {
             badgeCount = 0,
             badgeOverride = false,
             writingBadge = false,
+            refreshThread = nil,
+            refreshTicket = 0,
+            dirty = false,
+            maxCopies = 80,
+            cloneBatchSize = 12,
         },
     },
 }
+
+-- BaitCastVisual identifies the exact Beam(s) used as fishing line. Keep this
+-- whitelist separate from rod aura heuristics so every rod skin is supported.
+SupportState.releaseSkinLock = function(obj)
+    local lock = obj and SupportState.effectLocks[obj]
+    if not (lock and lock.Skin) then return end
+    lock.Skin = nil
+    if lock.Weather then
+        lock.Apply()
+        return
+    end
+    for _, connection in ipairs(lock.Connections or {}) do
+        pcall(function() connection:Disconnect() end)
+    end
+    pcall(function()
+        if obj.Parent and lock.Mode == "Enabled" then
+            obj.Enabled = lock.Original
+        end
+    end)
+    SupportState.effectLocks[obj] = nil
+end
+
+SupportState.trackRodLines = function(baitData)
+    if not baitData then return end
+    local equippedModel = baitData.EquippedToolModel
+    local connectingJoint = baitData.ConnectingJoint
+    if not equippedModel or connectingJoint == nil then return end
+    local handle = equippedModel:FindFirstChild("Handle")
+    if not handle then return end
+    local baseName = tostring(connectingJoint)
+    for index = 0, 5 do
+        local beamName = index == 0 and baseName
+            or string.format("%s.%d", baseName, index)
+        local beam = handle:FindFirstChild(beamName)
+        if beam and beam:IsA("Beam") then
+            SupportState.skinEffectConns.RodLines[beam] = true
+            SupportState.releaseSkinLock(beam)
+        end
+    end
+end
 
 -- ====== TELEPORT LOCATIONS ======
 local Catalog = {}
@@ -514,6 +578,10 @@ Runtime.requestConfiguredCast = function(mode)
     if not Runtime.Fishing.WaitReady(mode) then return false end
 
     local targetPower = Config.PerfectCast and 0.99 or 0.10
+    if Config.RandomResults and not Config.PerfectCast then
+        -- Uniform two-decimal result: 0.10, 0.11, ... 0.98, 0.99.
+        targetPower = Runtime.Random:NextInteger(10, 99) / 100
+    end
     -- Native ChargeFishingRod returns (accepted, authoritative start time).
     Runtime.Fishing.Phase = "Charging"
     local chargeCallOk, chargeAccepted, serverChargeStart = pcall(function()
@@ -612,10 +680,8 @@ FishingModes.V2.PendingDuration = nil
 
 if Remote.baitCast then
     Remote.baitCast.OnClientEvent:Connect(function(player, baitData)
+        SupportState.trackRodLines(baitData)
         if player ~= Service.LocalPlayer then return end
-        if SupportState.skinEffectConns.Active then
-            SupportState.skinEffectConns.LocalEffectUntil = os.clock() + 3
-        end
         if not FishingModes.V2.SnapReel then return end
         if not (baitData and baitData.CastPosition and baitData.Origin) then return end
         local power = baitData.Power or 0
@@ -667,7 +733,10 @@ if FishingModes.V2.CosmeticFolder then
         for obj, orig in pairs(hidden) do
             pcall(function()
                 if not obj.Parent then return end
-                if SupportState.skinEffectConns.Active and SupportState.isVisualEffect(obj) then
+                if SupportState.skinEffectConns.Active
+                    and SupportState.isVisualEffect(obj)
+                    and not SupportState.isRodLine(obj)
+                then
                     SupportState.lockEffect("Skin", obj)
                 elseif type(orig) == "number" then
                     obj.Transparency = orig
@@ -783,6 +852,9 @@ Runtime.Sell.Finish = function(ticket)
     Runtime.Sell.Worker = nil
     Runtime.Sell.Monitor = nil
     Runtime.Sell.CompletedAt = os.clock()
+    -- Fake Blatant inventory entries represent the sold batch and must not
+    -- survive into later sell cycles.
+    pcall(FishingModes.Blatant.Visual.clearInventoryVisuals)
     if worker and worker ~= coroutine.running() then pcall(task.cancel, worker) end
     if monitor and monitor ~= coroutine.running() then pcall(task.cancel, monitor) end
 end
@@ -1066,34 +1138,129 @@ do
         end
     end
 
-    local function getTileIdentity(tile)
-        if not tile:IsA("GuiObject") or tile:GetAttribute("OrvionVisualDuplicate") then
-            return nil, nil
+    local function metadataMatches(actual, expected)
+        if type(expected) ~= "table" then return true end
+        if type(actual) ~= "table" then return false end
+        for _, key in ipairs({ "VariantId", "Weight" }) do
+            local wanted = expected[key]
+            if wanted ~= nil then
+                local value = actual[key]
+                if type(wanted) == "number" and type(value) == "number" then
+                    if math.abs(value - wanted) > 0.000001 then return false end
+                elseif value ~= wanted then
+                    return false
+                end
+            end
         end
-        local vector = tile:FindFirstChild("Vector", true)
-        local itemName = tile:FindFirstChild("ItemName", true)
-        local icon = vector and (vector:IsA("ImageLabel") or vector:IsA("ImageButton"))
-            and vector.Image or nil
-        local name = itemName and (itemName:IsA("TextLabel") or itemName:IsA("TextButton"))
-            and itemName.Text or nil
-        return icon, name
+        return true
+    end
+
+    local function metadataKey(itemId, metadata)
+        local variant = type(metadata) == "table" and metadata.VariantId or nil
+        local weight = type(metadata) == "table" and metadata.Weight or nil
+        if type(weight) == "number" then
+            weight = string.format("%.6f", weight)
+        end
+        return table.concat({
+            tostring(itemId),
+            tostring(variant or ""),
+            tostring(weight or ""),
+        }, "\31")
+    end
+
+    local function resolveCaughtItemUUIDs(serials)
+        local inventory = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+        local items = inventory and inventory.Items
+        if type(items) ~= "table" then return end
+
+        local inventoryUUIDs = {}
+        local exactBuckets = {}
+        local idBuckets = {}
+        -- Inventory items are appended newest-last. Build newest-first buckets
+        -- once instead of scanning the complete inventory for every clone.
+        for index = #items, 1, -1 do
+            local item = items[index]
+            local uuid = type(item) == "table" and item.UUID or nil
+            if type(item) == "table" and uuid ~= nil then
+                uuid = tostring(uuid)
+                inventoryUUIDs[uuid] = true
+                local entry = { UUID = uuid, Metadata = item.Metadata }
+                local exactKey = metadataKey(item.Id, item.Metadata)
+                local idKey = tostring(item.Id)
+                exactBuckets[exactKey] = exactBuckets[exactKey] or {}
+                idBuckets[idKey] = idBuckets[idKey] or {}
+                table.insert(exactBuckets[exactKey], entry)
+                table.insert(idBuckets[idKey], entry)
+            end
+        end
+
+        -- Preserve UUIDs already resolved, but release stale/sold entries.
+        local claimed = {}
+        for _, serial in ipairs(serials) do
+            local descriptor = FishingModes.Blatant.Visual.copies[serial]
+            if descriptor and descriptor.UUID then
+                descriptor.UUID = tostring(descriptor.UUID)
+                if inventoryUUIDs[descriptor.UUID] then
+                    claimed[descriptor.UUID] = true
+                else
+                    descriptor.UUID = nil
+                end
+            end
+        end
+
+        -- Serials are newest-first, so identical catches receive the newest
+        -- available UUID first. Exact metadata is the normal O(1) path.
+        local cursors = {}
+        for _, serial in ipairs(serials) do
+            local descriptor = FishingModes.Blatant.Visual.copies[serial]
+            if descriptor and not descriptor.UUID then
+                local exactKey = metadataKey(descriptor.ItemId, descriptor.Metadata)
+                local bucket = exactBuckets[exactKey]
+                local cursor = cursors[exactKey] or 1
+                while bucket and bucket[cursor]
+                    and claimed[bucket[cursor].UUID]
+                do
+                    cursor = cursor + 1
+                end
+
+                local entry = bucket and bucket[cursor]
+                if entry then
+                    cursors[exactKey] = cursor + 1
+                else
+                    -- Rare compatibility fallback for incomplete FishCaught
+                    -- metadata. It still requires the same item id/metadata.
+                    for _, candidate in ipairs(
+                        idBuckets[tostring(descriptor.ItemId)] or {}
+                    ) do
+                        if not claimed[candidate.UUID]
+                            and metadataMatches(candidate.Metadata, descriptor.Metadata)
+                        then
+                            entry = candidate
+                            break
+                        end
+                    end
+                end
+
+                if entry then
+                    descriptor.UUID = entry.UUID
+                    claimed[entry.UUID] = true
+                end
+            end
+        end
     end
 
     local function findSourceInventoryTile(descriptor)
         local grid = resolveInventoryGrid()
         if not grid then return nil end
-        local fallback = nil
-        for _, child in ipairs(grid:GetChildren()) do
-            local icon, name = getTileIdentity(child)
-            if (icon or name) and not fallback then fallback = child end
-            if descriptor.Icon ~= "" and icon == descriptor.Icon then return child end
-            if descriptor.Name ~= "" and type(name) == "string"
-                and string.find(name, descriptor.Name, 1, true)
-            then
-                return child
-            end
+        local uuid = descriptor.UUID
+        if not uuid then return nil end
+        local source = grid:FindFirstChild(uuid)
+        if source and source:IsA("GuiObject")
+            and not source:GetAttribute("OrvionVisualDuplicate")
+        then
+            return source
         end
-        return fallback
+        return nil
     end
 
     local function makeVisualTileInert(tile)
@@ -1112,65 +1279,160 @@ do
         end
     end
 
-    local function refreshVisualInventoryTiles()
+    local function inventoryIsOpen()
+        local inventoryGui = FishingModes.Blatant.Visual.inventoryGui
+        return inventoryGui and inventoryGui.Parent and inventoryGui.Enabled == true
+    end
+
+    local requestInventoryVisualRefresh
+
+    local function refreshStillValid(ticket, grid)
+        return ticket == FishingModes.Blatant.Visual.refreshTicket
+            and Config.BlatantActive
+            and inventoryIsOpen()
+            and grid
+            and grid.Parent ~= nil
+    end
+
+    local function refreshVisualInventoryTiles(ticket)
+        if ticket ~= FishingModes.Blatant.Visual.refreshTicket
+            or not inventoryIsOpen()
+        then return end
         local grid = resolveInventoryGrid()
         if not grid then return end
-        removeVisualInventoryTiles()
-        for serial, descriptor in pairs(FishingModes.Blatant.Visual.copies) do
-            local source = findSourceInventoryTile(descriptor)
-            if source then
-                local clone = source:Clone()
-                clone.Name = source.Name .. "_OrvionVisual_" .. tostring(serial)
-                clone:SetAttribute("OrvionVisualDuplicate", true)
-                clone.LayoutOrder = source.LayoutOrder + 1
-                clone.Visible = true
 
-                local vector = clone:FindFirstChild("Vector", true)
-                if vector and (vector:IsA("ImageLabel") or vector:IsA("ImageButton")) then
-                    vector.Image = descriptor.Icon
+        local serials = {}
+        for serial in pairs(FishingModes.Blatant.Visual.copies) do
+            table.insert(serials, serial)
+        end
+        table.sort(serials, function(a, b) return a > b end)
+        resolveCaughtItemUUIDs(serials)
+
+        -- Keep valid clones made by an earlier batch/catch. Only orphaned
+        -- clones are removed, so retries never rebuild successful work.
+        local existing = {}
+        for _, child in ipairs(grid:GetChildren()) do
+            if child:GetAttribute("OrvionVisualDuplicate") then
+                local serial = tonumber(child:GetAttribute("OrvionVisualSerial"))
+                local descriptor = serial
+                    and FishingModes.Blatant.Visual.copies[serial]
+                if descriptor
+                    and descriptor.UUID
+                    and child:GetAttribute("OrvionVisualUUID") == descriptor.UUID
+                then
+                    existing[serial] = true
+                else
+                    pcall(function() child:Destroy() end)
                 end
-                local itemName = clone:FindFirstChild("ItemName", true)
-                if itemName and (itemName:IsA("TextLabel") or itemName:IsA("TextButton")) then
-                    itemName.RichText = false
-                    itemName.Text = descriptor.Name
-                end
-                makeVisualTileInert(clone)
-                clone.Parent = grid
             end
         end
-    end
 
-    local function scheduleInventoryVisualRefresh()
-        for _, delayTime in ipairs({ 0, 0.05, 0.2, 0.6 }) do
-            task.delay(delayTime, function()
-                if Config.BlatantActive then
-                    refreshVisualInventoryTiles()
-                end
-                refreshInventoryBadge()
-            end)
+        local pending = {}
+        for _, serial in ipairs(serials) do
+            if not existing[serial] then table.insert(pending, serial) end
         end
+
+        for attempt = 1, 3 do
+            if #pending == 0 or not refreshStillValid(ticket, grid) then break end
+            local unresolved = {}
+            local processed = 0
+            for _, serial in ipairs(pending) do
+                if not refreshStillValid(ticket, grid) then return end
+                local descriptor = FishingModes.Blatant.Visual.copies[serial]
+                local source = descriptor and findSourceInventoryTile(descriptor)
+                if source then
+                    local clone = source:Clone()
+                    clone.Name = source.Name .. "_OrvionVisual_" .. tostring(serial)
+                    clone:SetAttribute("OrvionVisualDuplicate", true)
+                    clone:SetAttribute("OrvionVisualSerial", serial)
+                    clone:SetAttribute("OrvionVisualUUID", descriptor.UUID)
+                    clone.LayoutOrder = source.LayoutOrder + 1
+                    clone.Visible = true
+                    makeVisualTileInert(clone)
+                    if refreshStillValid(ticket, grid)
+                        and FishingModes.Blatant.Visual.copies[serial] == descriptor
+                    then
+                        clone.Parent = grid
+                    else
+                        clone:Destroy()
+                        return
+                    end
+                else
+                    table.insert(unresolved, serial)
+                end
+
+                processed = processed + 1
+                if processed % FishingModes.Blatant.Visual.cloneBatchSize == 0 then
+                    Service.RunService.Heartbeat:Wait()
+                    if not refreshStillValid(ticket, grid) then return end
+                end
+            end
+            pending = unresolved
+            if #pending > 0 and attempt < 3 then
+                task.wait(0.15)
+                if not refreshStillValid(ticket, grid) then return end
+                resolveCaughtItemUUIDs(serials)
+            end
+        end
+        FishingModes.Blatant.Visual.dirty = #pending > 0
     end
 
-    local function registerVisualInventoryCopy(fishItemId, fishName, badgeBaseline)
-        local itemData = nil
-        pcall(function()
-            itemData = Data.ItemUtility.GetItemDataFromItemType("Fish", fishItemId)
+    requestInventoryVisualRefresh = function(delayTime)
+        FishingModes.Blatant.Visual.dirty = true
+        if not inventoryIsOpen() then return end
+        FishingModes.Blatant.Visual.refreshTicket =
+            FishingModes.Blatant.Visual.refreshTicket + 1
+        local ticket = FishingModes.Blatant.Visual.refreshTicket
+        if FishingModes.Blatant.Visual.refreshThread then
+            pcall(task.cancel, FishingModes.Blatant.Visual.refreshThread)
+        end
+        FishingModes.Blatant.Visual.refreshThread = task.delay(delayTime or 0.1, function()
+            if ticket ~= FishingModes.Blatant.Visual.refreshTicket then return end
+            if Config.BlatantActive
+                and FishingModes.Blatant.Visual.dirty
+                and inventoryIsOpen()
+            then
+                local ok, err = pcall(refreshVisualInventoryTiles, ticket)
+                if not ok then
+                    warn("[Orvion] inventory visual refresh failed:", err)
+                end
+            end
+            if ticket == FishingModes.Blatant.Visual.refreshTicket then
+                FishingModes.Blatant.Visual.refreshThread = nil
+            end
         end)
+    end
+
+    local function registerVisualInventoryCopy(fishItemId, fishMetadata, badgeBaseline)
         FishingModes.Blatant.Visual.copySerial = FishingModes.Blatant.Visual.copySerial + 1
-        FishingModes.Blatant.Visual.copies[FishingModes.Blatant.Visual.copySerial] = {
-            Icon = itemData and itemData.Data and itemData.Data.Icon or "",
-            Name = fishName or (itemData and itemData.Data and itemData.Data.Name) or "Fish",
+        local serial = FishingModes.Blatant.Visual.copySerial
+        FishingModes.Blatant.Visual.copies[serial] = {
+            ItemId = fishItemId,
+            Metadata = type(fishMetadata) == "table" and fishMetadata or nil,
+            UUID = nil,
         }
+        FishingModes.Blatant.Visual.copies[
+            serial - FishingModes.Blatant.Visual.maxCopies
+        ] = nil
         if not FishingModes.Blatant.Visual.badgeOverride then
             FishingModes.Blatant.Visual.badgeCount = tonumber(badgeBaseline) or 0
             FishingModes.Blatant.Visual.badgeOverride = true
         end
         FishingModes.Blatant.Visual.badgeCount = FishingModes.Blatant.Visual.badgeCount + 2
-        scheduleInventoryVisualRefresh()
+        requestInventoryVisualRefresh(0.12)
+        task.defer(refreshInventoryBadge)
     end
 
     FishingModes.Blatant.Visual.clearInventoryVisuals = function()
+        FishingModes.Blatant.Visual.refreshTicket =
+            FishingModes.Blatant.Visual.refreshTicket + 1
+        if FishingModes.Blatant.Visual.refreshThread then
+            pcall(task.cancel, FishingModes.Blatant.Visual.refreshThread)
+            FishingModes.Blatant.Visual.refreshThread = nil
+        end
+        FishingModes.Blatant.Visual.dirty = false
         table.clear(FishingModes.Blatant.Visual.copies)
+        FishingModes.Blatant.Visual.copySerial = 0
         removeVisualInventoryTiles()
     end
 
@@ -1197,15 +1459,24 @@ do
         end
         if FishingModes.Blatant.Visual.inventoryGui then
             FishingModes.Blatant.Visual.inventoryGui:GetPropertyChangedSignal("Enabled"):Connect(function()
-                if FishingModes.Blatant.Visual.inventoryGui.Enabled
-                    and FishingModes.Blatant.Visual.badgeOverride
-                then
-                    -- Release ownership; the game's native claim performs reset.
-                    FishingModes.Blatant.Visual.badgeCount = 0
-                    FishingModes.Blatant.Visual.badgeOverride = false
-                    if Config.BlatantActive then
-                        scheduleInventoryVisualRefresh()
+                if FishingModes.Blatant.Visual.inventoryGui.Enabled then
+                    if FishingModes.Blatant.Visual.badgeOverride then
+                        -- Release ownership; the game's native claim performs reset.
+                        FishingModes.Blatant.Visual.badgeCount = 0
+                        FishingModes.Blatant.Visual.badgeOverride = false
                     end
+                    if Config.BlatantActive then
+                        requestInventoryVisualRefresh(0.08)
+                    end
+                else
+                    FishingModes.Blatant.Visual.refreshTicket =
+                        FishingModes.Blatant.Visual.refreshTicket + 1
+                    if FishingModes.Blatant.Visual.refreshThread then
+                        pcall(task.cancel, FishingModes.Blatant.Visual.refreshThread)
+                        FishingModes.Blatant.Visual.refreshThread = nil
+                    end
+                    FishingModes.Blatant.Visual.dirty = true
+                    removeVisualInventoryTiles()
                 end
             end)
         end
@@ -1226,9 +1497,6 @@ do
         Remote.fishCaught.OnClientEvent:Connect(function(fishName, fishMetadata, _, _, visualData)
             Runtime.Fishing.CatchSerial = Runtime.Fishing.CatchSerial + 1
             Runtime.Fishing.LastCatchAt = os.clock()
-            if SupportState.skinEffectConns.Active then
-                SupportState.skinEffectConns.LocalEffectUntil = os.clock() + 3
-            end
             -- Manual/native fishing has no custom loop boundary, so process its
             -- queued sell after Replion receives the newly caught item.
             task.delay(0.15, function()
@@ -1252,7 +1520,7 @@ do
             end
 
             if isBlatantCatch then
-                registerVisualInventoryCopy(fishItemId, fishName, badgeBaseline)
+                registerVisualInventoryCopy(fishItemId, fishMetadata, badgeBaseline)
             elseif FishingModes.Blatant.Visual.badgeOverride then
                 FishingModes.Blatant.Visual.badgeCount = FishingModes.Blatant.Visual.badgeCount + 1
                 task.defer(refreshInventoryBadge)
@@ -1340,75 +1608,112 @@ SupportState.setAutoEquipRod = function(state)
     end
 end
 
--- Disable Cutscenes - hook module Play + block connection + InCutscene watcher
+-- Disable every replicated cutscene on this client, regardless of owner/tier.
 SupportState.ensureCutsceneHook = function()
-    if SupportState.cutsceneHookDone then return end
-    SupportState.cutsceneHookDone = true
-    pcall(function()
+    if SupportState.cutsceneHookDone then return true end
+    local ok, hooked = pcall(function()
         local CutsceneCtrl = require(Service.ReplicatedStorage.Controllers.CutsceneController)
-        if not CutsceneCtrl then return end
+        if not CutsceneCtrl then return false end
         local origPlay = CutsceneCtrl.Play
-        if type(origPlay) ~= "function" then return end
+        if type(origPlay) ~= "function" then return false end
         CutsceneCtrl.Play = function(self, ...)
             if SupportState.disableCutsceneActive then return end
             return origPlay(self, ...)
         end
+        return true
     end)
+    SupportState.cutsceneHookDone = ok and hooked == true
+    return SupportState.cutsceneHookDone
+end
+
+SupportState.stopLocalCutscene = function()
+    local cutsceneActive = Service.LocalPlayer:GetAttribute("InCutscene") == true
+        or Service.LocalPlayer:GetAttribute("IgnoreFOV") == true
+        or workspace:FindFirstChild("CutsceneStuff") ~= nil
+    if not cutsceneActive then return end
+    pcall(function()
+        local CutsceneCtrl = require(Service.ReplicatedStorage.Controllers.CutsceneController)
+        if CutsceneCtrl and type(CutsceneCtrl.Stop) == "function" then
+            CutsceneCtrl:Stop()
+        end
+    end)
+    pcall(function() Service.LocalPlayer:SetAttribute("InCutscene", false) end)
+    pcall(function() Service.LocalPlayer:SetAttribute("IgnoreFOV", false) end)
+end
+
+SupportState.blockCutsceneConnections = function()
+    if not getconnections or not Remote.cutscene then return end
+    for _, conn in pairs(getconnections(Remote.cutscene.OnClientEvent)) do
+        if not table.find(SupportState.cutsceneConns.Blocked, conn) then
+            local disabled = pcall(function() conn:Disable() end)
+            if disabled then
+                table.insert(SupportState.cutsceneConns.Blocked, conn)
+            end
+        end
+    end
 end
 
 SupportState.setDisableCutscenes = function(state)
     if state then
         SupportState.disableCutsceneActive = true
         SupportState.ensureCutsceneHook()
+        SupportState.blockCutsceneConnections()
+        SupportState.stopLocalCutscene()
 
-        -- block connection yang sudah ada
-        if Remote.cutscene then
-            local conns = getconnections(Remote.cutscene.OnClientEvent)
-            for _, conn in pairs(conns) do
-                conn:Disable()
-                table.insert(SupportState.cutsceneConns, conn)
-            end
+        if SupportState.cutsceneConns.Watcher then
+            pcall(task.cancel, SupportState.cutsceneConns.Watcher)
         end
-
-        -- re-check 3x (1s, 2s, 3s) untuk connection yang dibuat belakangan
-        task.spawn(function()
-            for i = 1, 3 do
-                task.wait(1)
-                if not SupportState.disableCutsceneActive then return end
-                if Remote.cutscene then
-                    local conns = getconnections(Remote.cutscene.OnClientEvent)
-                    for _, conn in pairs(conns) do
-                        if not table.find(SupportState.cutsceneConns, conn) then
-                            conn:Disable()
-                            table.insert(SupportState.cutsceneConns, conn)
-                        end
-                    end
-                end
+        SupportState.cutsceneConns.Watcher = task.spawn(function()
+            while SupportState.disableCutsceneActive do
+                SupportState.ensureCutsceneHook()
+                SupportState.blockCutsceneConnections()
+                task.wait(0.5)
             end
         end)
 
-        -- InCutscene watcher (fire stop backup + kill attribute)
         if not SupportState.cutsceneConns.AttrWatcher then
             SupportState.cutsceneConns.AttrWatcher = Service.LocalPlayer:GetAttributeChangedSignal("InCutscene"):Connect(function()
                 if SupportState.disableCutsceneActive and Service.LocalPlayer:GetAttribute("InCutscene") then
-                    if Remote.stopCutscene then
-                        pcall(function() Remote.stopCutscene:FireServer() end)
-                    end
-                    Service.LocalPlayer:SetAttribute("InCutscene", false)
-                    pcall(function() Service.LocalPlayer:SetAttribute("IgnoreFOV", false) end)
+                    SupportState.stopLocalCutscene()
+                end
+            end)
+        end
+        if not SupportState.cutsceneConns.IgnoreWatcher then
+            SupportState.cutsceneConns.IgnoreWatcher = Service.LocalPlayer:GetAttributeChangedSignal("IgnoreFOV"):Connect(function()
+                if SupportState.disableCutsceneActive and Service.LocalPlayer:GetAttribute("IgnoreFOV") then
+                    SupportState.stopLocalCutscene()
+                end
+            end)
+        end
+        if not SupportState.cutsceneConns.RootWatcher then
+            SupportState.cutsceneConns.RootWatcher = workspace.ChildAdded:Connect(function(child)
+                if SupportState.disableCutsceneActive and child.Name == "CutsceneStuff" then
+                    task.defer(SupportState.stopLocalCutscene)
                 end
             end)
         end
     else
         SupportState.disableCutsceneActive = false
-        for _, conn in pairs(SupportState.cutsceneConns) do
-            if typeof(conn) == "userdata" then conn:Enable() end
+        if SupportState.cutsceneConns.Watcher then
+            pcall(task.cancel, SupportState.cutsceneConns.Watcher)
+            SupportState.cutsceneConns.Watcher = nil
         end
+        for _, conn in ipairs(SupportState.cutsceneConns.Blocked) do
+            pcall(function() conn:Enable() end)
+        end
+        table.clear(SupportState.cutsceneConns.Blocked)
         if SupportState.cutsceneConns.AttrWatcher then
             SupportState.cutsceneConns.AttrWatcher:Disconnect()
             SupportState.cutsceneConns.AttrWatcher = nil
         end
-        SupportState.cutsceneConns = {}
+        if SupportState.cutsceneConns.IgnoreWatcher then
+            SupportState.cutsceneConns.IgnoreWatcher:Disconnect()
+            SupportState.cutsceneConns.IgnoreWatcher = nil
+        end
+        if SupportState.cutsceneConns.RootWatcher then
+            SupportState.cutsceneConns.RootWatcher:Disconnect()
+            SupportState.cutsceneConns.RootWatcher = nil
+        end
     end
 end
 
@@ -1472,45 +1777,113 @@ SupportState.isVisualEffect = function(obj)
         or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles")
         or obj:IsA("Light") or obj:IsA("Highlight") or obj:IsA("PostEffect")
         or obj:IsA("Atmosphere") or obj:IsA("Clouds")
+        or obj:IsA("Decal") or obj:IsA("Texture")
+end
+
+SupportState.isWeatherPart = function(obj)
+    if not obj:IsA("BasePart") then return false end
+    if string.lower(obj.Name) == "screeneffect" then return true end
+    if obj.Anchored and not obj.CanCollide and obj.Material == Enum.Material.Ice then
+        local mesh = obj:FindFirstChildOfClass("BlockMesh")
+        if mesh and (mesh.Scale.X >= 1000 or mesh.Scale.Z >= 1000) then
+            return true
+        end
+    end
+    return false
 end
 
 SupportState.lockEffect = function(tag, obj)
-    if not obj or not SupportState.isVisualEffect(obj) then return end
+    if not obj then return end
+    if not SupportState.isVisualEffect(obj)
+        and not (tag == "Weather" and SupportState.isWeatherPart(obj))
+    then return end
     local lock = SupportState.effectLocks[obj]
     if not lock then
         if obj:IsA("Atmosphere") then
             lock = { Mode = "Atmosphere", Density = obj.Density, Haze = obj.Haze, Glare = obj.Glare }
         elseif obj:IsA("Clouds") then
             lock = { Mode = "Clouds", Cover = obj.Cover, Density = obj.Density }
+        elseif obj:IsA("Decal") or obj:IsA("Texture") then
+            lock = { Mode = "Transparency", Original = obj.Transparency }
+        elseif obj:IsA("BasePart") then
+            lock = {
+                Mode = "PartTransparency",
+                Transparency = obj.Transparency,
+                LocalTransparencyModifier = obj.LocalTransparencyModifier,
+            }
         else
             local ok, enabled = pcall(function() return obj.Enabled end)
             if not ok then return end
             lock = { Mode = "Enabled", Original = enabled }
         end
+        lock.Connections = {}
+        lock.Apply = function()
+            if not lock.Skin and not lock.Weather then return end
+            pcall(function()
+                if lock.Mode == "Atmosphere" then
+                    if obj.Density ~= 0 then obj.Density = 0 end
+                    if obj.Haze ~= 0 then obj.Haze = 0 end
+                    if obj.Glare ~= 0 then obj.Glare = 0 end
+                elseif lock.Mode == "Clouds" then
+                    if obj.Cover ~= 0 then obj.Cover = 0 end
+                    if obj.Density ~= 0 then obj.Density = 0 end
+                elseif lock.Mode == "Transparency" then
+                    if obj.Transparency ~= 1 then obj.Transparency = 1 end
+                elseif lock.Mode == "PartTransparency" then
+                    if obj.Transparency ~= 1 then obj.Transparency = 1 end
+                    if obj.LocalTransparencyModifier ~= 1 then
+                        obj.LocalTransparencyModifier = 1
+                    end
+                elseif obj.Enabled ~= false then
+                    obj.Enabled = false
+                end
+            end)
+        end
         SupportState.effectLocks[obj] = lock
+        local properties
+        if lock.Mode == "Atmosphere" then
+            properties = { "Density", "Haze", "Glare" }
+        elseif lock.Mode == "Clouds" then
+            properties = { "Cover", "Density" }
+        elseif lock.Mode == "Transparency" then
+            properties = { "Transparency" }
+        elseif lock.Mode == "PartTransparency" then
+            properties = { "Transparency", "LocalTransparencyModifier" }
+        else
+            properties = { "Enabled" }
+        end
+        for _, property in ipairs(properties) do
+            local ok, signal = pcall(function()
+                return obj:GetPropertyChangedSignal(property)
+            end)
+            if ok and signal then
+                table.insert(lock.Connections, signal:Connect(lock.Apply))
+            end
+        end
     end
     lock[tag] = true
-    pcall(function()
-        if lock.Mode == "Atmosphere" then
-            obj.Density, obj.Haze, obj.Glare = 0, 0, 0
-        elseif lock.Mode == "Clouds" then
-            obj.Cover, obj.Density = 0, 0
-        else
-            obj.Enabled = false
-        end
-    end)
+    lock.Apply()
 end
 
 SupportState.releaseEffects = function(tag)
     for obj, lock in pairs(SupportState.effectLocks) do
         lock[tag] = nil
         if not lock.Skin and not lock.Weather then
+            for _, connection in ipairs(lock.Connections or {}) do
+                pcall(function() connection:Disconnect() end)
+            end
+            table.clear(lock.Connections or {})
             pcall(function()
                 if not obj.Parent then return end
                 if lock.Mode == "Atmosphere" then
                     obj.Density, obj.Haze, obj.Glare = lock.Density, lock.Haze, lock.Glare
                 elseif lock.Mode == "Clouds" then
                     obj.Cover, obj.Density = lock.Cover, lock.Density
+                elseif lock.Mode == "Transparency" then
+                    obj.Transparency = lock.Original
+                elseif lock.Mode == "PartTransparency" then
+                    obj.Transparency = lock.Transparency
+                    obj.LocalTransparencyModifier = lock.LocalTransparencyModifier
                 else
                     obj.Enabled = lock.Original
                 end
@@ -1525,98 +1898,111 @@ SupportState.clearVFXConnections = function(bucket)
         pcall(function() connection:Disconnect() end)
     end
     table.clear(bucket.Connections)
+    if bucket.Roots then
+        bucket.Roots = setmetatable({}, { __mode = "k" })
+    end
 end
 
 SupportState.watchVFXRoot = function(bucket, tag, root, predicate)
-    if not root then return end
+    if not root or (bucket.Roots and bucket.Roots[root]) then return end
+    if bucket.Roots then bucket.Roots[root] = true end
     for _, obj in ipairs(root:GetDescendants()) do
-        if SupportState.isVisualEffect(obj) and predicate(obj) then
+        if (SupportState.isVisualEffect(obj)
+            or (tag == "Weather" and SupportState.isWeatherPart(obj)))
+            and predicate(obj)
+        then
             SupportState.lockEffect(tag, obj)
         end
     end
     table.insert(bucket.Connections, root.DescendantAdded:Connect(function(obj)
-        if bucket.Active and SupportState.isVisualEffect(obj) and predicate(obj) then
+        if bucket.Active
+            and (SupportState.isVisualEffect(obj)
+                or (tag == "Weather" and SupportState.isWeatherPart(obj)))
+            and predicate(obj)
+        then
             SupportState.lockEffect(tag, obj)
         end
     end))
 end
 
-SupportState.isNearCharacter = function(obj, radius)
-    local root = Service.LocalPlayer.Character
-    root = root and root:FindFirstChild("HumanoidRootPart")
-    if not root then return false end
-    local cursor = obj
-    for _ = 1, 7 do
+SupportState.isRodLine = function(obj)
+    if not obj:IsA("Beam") then return false end
+    if SupportState.skinEffectConns.RodLines[obj] then return true end
+    if obj:GetAttribute("FishingLine") == true
+        or obj:GetAttribute("RodLine") == true
+    then return true end
+    local lowerName = string.lower(obj.Name)
+    if lowerName == "rodline" or lowerName == "fishingline"
+        or lowerName == "fishing line" or lowerName == "rope"
+    then return true end
+    if not string.match(obj.Name, "^%d+%.?%d*$") then return false end
+    local cursor = obj.Parent
+    for _ = 1, 6 do
         if not cursor then break end
-        if cursor:IsA("Attachment") and cursor.Parent and cursor.Parent:IsA("BasePart") then
-            return (cursor.Parent.Position - root.Position).Magnitude <= radius
-        elseif cursor:IsA("BasePart") then
-            return (cursor.Position - root.Position).Magnitude <= radius
-        end
+        if cursor.Name == "Handle" then return true end
         cursor = cursor.Parent
     end
     return false
 end
 
--- Disable only the local player's rod-skin, bait-cast and catch effects.
+SupportState.isSkinEffect = function(obj)
+    if SupportState.isRodLine(obj) then return false end
+    local cosmetic = workspace:FindFirstChild("CosmeticFolder")
+    if cosmetic and obj:IsDescendantOf(cosmetic) then return true end
+    local cursor = obj
+    for _ = 1, 12 do
+        if not cursor then break end
+        if cursor.Name == "!!!FISHING_VIEW_MODEL!!!"
+            or cursor.Name == "!!!EQUIPPED_TOOL!!!"
+        then return true end
+        cursor = cursor.Parent
+    end
+    return false
+end
+
+-- Disable fishing skin/bait/catch effects for every player, preserving rod lines.
 SupportState.setDisableSkinEffect = function(state)
     local bucket = SupportState.skinEffectConns
     SupportState.clearVFXConnections(bucket)
     bucket.Active = state
-    bucket.LocalEffectUntil = 0
     if not state then
         SupportState.releaseEffects("Skin")
         return
     end
 
-    local function isLocalSkinEffect(obj)
-        local char = Service.LocalPlayer.Character
-        if char and obj:IsDescendantOf(char) then
-            local tool = char:FindFirstChild("!!!FISHING_VIEW_MODEL!!!")
-                or char:FindFirstChild("!!!EQUIPPED_TOOL!!!")
-            if tool and obj:IsDescendantOf(tool) then return true end
-        end
-        local cosmetic = workspace:FindFirstChild("CosmeticFolder")
-        local cursor = obj
-        if cosmetic then
-            while cursor and cursor.Parent ~= cosmetic do cursor = cursor.Parent end
-            if cursor and cursor.Name == tostring(Service.LocalPlayer.UserId) then return true end
-        end
-        return os.clock() <= bucket.LocalEffectUntil
-            and SupportState.isNearCharacter(obj, 45)
-    end
-
     local function attachCharacter(char)
         if bucket.Active and char then
-            SupportState.watchVFXRoot(bucket, "Skin", char, isLocalSkinEffect)
+            SupportState.watchVFXRoot(bucket, "Skin", char, SupportState.isSkinEffect)
+        end
+    end
+    local function attachPlayer(player)
+        if player.Character then attachCharacter(player.Character) end
+        table.insert(bucket.Connections, player.CharacterAdded:Connect(attachCharacter))
+    end
+    local function attachCosmetic(cosmetic)
+        if bucket.Active and cosmetic then
+            SupportState.watchVFXRoot(bucket, "Skin", cosmetic, SupportState.isSkinEffect)
         end
     end
 
-    attachCharacter(Service.LocalPlayer.Character)
-    local cosmetic = workspace:FindFirstChild("CosmeticFolder")
-    if cosmetic then
-        local owned = cosmetic:FindFirstChild(tostring(Service.LocalPlayer.UserId))
-        if owned then SupportState.watchVFXRoot(bucket, "Skin", owned, isLocalSkinEffect) end
-        table.insert(bucket.Connections, cosmetic.ChildAdded:Connect(function(child)
-            if bucket.Active and child.Name == tostring(Service.LocalPlayer.UserId) then
-                SupportState.watchVFXRoot(bucket, "Skin", child, isLocalSkinEffect)
-            end
-        end))
+    for _, player in ipairs(Service.Players:GetPlayers()) do
+        attachPlayer(player)
     end
-    table.insert(bucket.Connections, workspace.DescendantAdded:Connect(function(obj)
-        if bucket.Active and SupportState.isVisualEffect(obj)
-            and os.clock() <= bucket.LocalEffectUntil
-            and SupportState.isNearCharacter(obj, 45)
-        then
-            SupportState.lockEffect("Skin", obj)
+    table.insert(bucket.Connections, Service.Players.PlayerAdded:Connect(attachPlayer))
+
+    attachCosmetic(workspace:FindFirstChild("CosmeticFolder"))
+    table.insert(bucket.Connections, workspace.ChildAdded:Connect(function(child)
+        if bucket.Active and child.Name == "CosmeticFolder" then
+            attachCosmetic(child)
         end
     end))
-    table.insert(bucket.Connections, Service.LocalPlayer.CharacterAdded:Connect(attachCharacter))
 end
 
 -- Disable weather emitters attached to the avatar and weather containers nearby.
-Catalog.WeatherNames = { "Fog", "Wind", "Radiant", "Storm", "Snow", "Galaxy Storm", "Galaxy", "Meteor Shower", "Admin - Frostmoon" }
-Catalog.WeatherKeywords = { "weather", "fog", "wind", "radiant", "storm", "snow", "galaxy", "meteor", "frostmoon", "rain" }
+Catalog.WeatherKeywords = {
+    "weather", "fog", "wind", "radiant", "storm", "snow", "galaxy",
+    "meteor", "frostmoon", "frost", "rain", "aurora",
+}
 
 SupportState.isWeatherEffect = function(obj)
     local cursor = obj
@@ -1636,21 +2022,107 @@ SupportState.isWeatherEffect = function(obj)
     return false
 end
 
+SupportState.collectWeatherRootNames = function()
+    local bucket = SupportState.weatherVFXConns
+    table.clear(bucket.RootNames)
+    pcall(function()
+        local controller = Service.ReplicatedStorage.Controllers:FindFirstChild("WeatherController")
+        if not controller then return end
+        for _, folderName in ipairs({ "Weather", "Assets" }) do
+            local folder = controller:FindFirstChild(folderName)
+            if folder then
+                for _, child in ipairs(folder:GetChildren()) do
+                    bucket.RootNames[string.lower(child.Name)] = true
+                end
+            end
+        end
+    end)
+end
+
+SupportState.isWeatherRoot = function(root)
+    if not root then return false end
+    local lowerName = string.lower(root.Name)
+    if SupportState.weatherVFXConns.RootNames[lowerName] then return true end
+    if string.find(lowerName, "fogeffect", 1, true) then return true end
+    return SupportState.isWeatherEffect(root)
+end
+
+SupportState.updateWeatherBrightness = function()
+    local bucket = SupportState.weatherVFXConns
+    local hasFog = false
+    if bucket.Active then
+        for root in pairs(bucket.FogRoots) do
+            if root and root.Parent then
+                hasFog = true
+                break
+            end
+        end
+    end
+
+    if hasFog then
+        if bucket.Brightness == nil then
+            local current = Service.Lighting.Brightness
+            bucket.Brightness = current > 0 and current or 4
+        end
+        if not bucket.BrightnessConn then
+            bucket.BrightnessConn = Service.Lighting:GetPropertyChangedSignal("Brightness"):Connect(function()
+                if not bucket.Active then return end
+                local target = bucket.Brightness
+                if target and Service.Lighting.Brightness ~= target then
+                    Service.Lighting.Brightness = target
+                end
+            end)
+        end
+        if Service.Lighting.Brightness ~= bucket.Brightness then
+            Service.Lighting.Brightness = bucket.Brightness
+        end
+    else
+        if bucket.BrightnessConn then
+            bucket.BrightnessConn:Disconnect()
+            bucket.BrightnessConn = nil
+        end
+        if bucket.Brightness ~= nil then
+            Service.Lighting.Brightness = bucket.Brightness
+            bucket.Brightness = nil
+        end
+    end
+end
+
 SupportState.setDisableWeatherVFX = function(state)
     local bucket = SupportState.weatherVFXConns
     SupportState.clearVFXConnections(bucket)
     bucket.Active = state
+    bucket.FogRoots = setmetatable({}, { __mode = "k" })
     if not state then
+        SupportState.updateWeatherBrightness()
         SupportState.releaseEffects("Weather")
         return
     end
 
-    local function matches(obj)
-        return (obj:IsA("Atmosphere") or obj:IsA("Clouds") or SupportState.isWeatherEffect(obj))
-            and (obj:IsDescendantOf(Service.Lighting)
-                or obj:IsDescendantOf(workspace.Terrain)
-                or (workspace.CurrentCamera and obj:IsDescendantOf(workspace.CurrentCamera))
-                or SupportState.isNearCharacter(obj, 140))
+    SupportState.collectWeatherRootNames()
+
+    local function matchesServiceEffect(obj)
+        return obj:IsA("Atmosphere") or obj:IsA("Clouds")
+            or SupportState.isWeatherEffect(obj)
+    end
+    local function attachWeatherRoot(root)
+        if not bucket.Active or not root then return end
+        if SupportState.isWeatherPart(root) then
+            SupportState.lockEffect("Weather", root)
+            return
+        end
+        if not SupportState.isWeatherRoot(root) then return end
+        local lowerName = string.lower(root.Name)
+        if string.find(lowerName, "fog", 1, true) then
+            bucket.FogRoots[root] = true
+            SupportState.updateWeatherBrightness()
+        end
+        if SupportState.isVisualEffect(root) then
+            SupportState.lockEffect("Weather", root)
+        end
+        SupportState.watchVFXRoot(bucket, "Weather", root, function()
+            return true
+        end)
     end
     local function attachCharacter(char)
         if bucket.Active and char then
@@ -1659,25 +2131,30 @@ SupportState.setDisableWeatherVFX = function(state)
     end
     local function attachCamera()
         if bucket.Active and workspace.CurrentCamera then
-            SupportState.watchVFXRoot(bucket, "Weather", workspace.CurrentCamera, matches)
+            SupportState.watchVFXRoot(
+                bucket,
+                "Weather",
+                workspace.CurrentCamera,
+                matchesServiceEffect
+            )
         end
     end
 
     attachCharacter(Service.LocalPlayer.Character)
     attachCamera()
-    SupportState.watchVFXRoot(bucket, "Weather", Service.Lighting, matches)
-    SupportState.watchVFXRoot(bucket, "Weather", workspace.Terrain, matches)
+    SupportState.watchVFXRoot(bucket, "Weather", Service.Lighting, matchesServiceEffect)
+    SupportState.watchVFXRoot(bucket, "Weather", workspace.Terrain, matchesServiceEffect)
     for _, root in ipairs(workspace:GetChildren()) do
-        if root ~= Service.LocalPlayer.Character
-            and root ~= workspace.CurrentCamera
-            and SupportState.isWeatherEffect(root)
-        then
-            SupportState.watchVFXRoot(bucket, "Weather", root, matches)
+        if root ~= Service.LocalPlayer.Character and root ~= workspace.CurrentCamera then
+            attachWeatherRoot(root)
         end
     end
-    table.insert(bucket.Connections, workspace.DescendantAdded:Connect(function(obj)
-        if bucket.Active and SupportState.isVisualEffect(obj) and matches(obj) then
-            SupportState.lockEffect("Weather", obj)
+
+    table.insert(bucket.Connections, workspace.ChildAdded:Connect(attachWeatherRoot))
+    table.insert(bucket.Connections, workspace.ChildRemoved:Connect(function(root)
+        if bucket.FogRoots[root] then
+            bucket.FogRoots[root] = nil
+            SupportState.updateWeatherBrightness()
         end
     end))
     table.insert(bucket.Connections, Service.LocalPlayer.CharacterAdded:Connect(attachCharacter))
@@ -2171,6 +2648,11 @@ UI.Window:AddToggle(UI.StableSection, "Stable Result", "", false, function(state
         end)
     end
 end, "Toggle_Stable Result")
+
+UI.Window:AddToggle(UI.StableSection, "Random Results", "", false, function(state)
+    Config.RandomResults = state
+end, "Toggle_Random Results")
+
 UI.Window:AddToggle(UI.StableSection, "Auto Perfect", "", false, function(state)
     Config.PerfectCast = state
 end, "Toggle_Auto Perfect")
@@ -2774,7 +3256,6 @@ S.findTotemUUID = function(totemName)
 end
 
 S.spawnTotem = nil -- forward declare
-S.lastSpawnedUUID = nil  -- track UUID milik kita
 
 S.scheduleRespawn = function()
     if not Config.AutoSpawnTotem then return end
