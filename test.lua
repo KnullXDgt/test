@@ -2422,13 +2422,12 @@ UI.execName = "Unknown"
 pcall(function() UI.execName = getexecutorname() end)
 
 -- ====== PING TIMER UI ======
-do
+local function createPingUI()
     local UIS = game:GetService("UserInputService")
     local pingGui = Instance.new("ScreenGui")
     pingGui.Name = "PingTimerUI"
     pingGui.ResetOnSpawn = false
     pingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    pingGui.Enabled = false
     pingGui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
     UI.pingGui = pingGui
 
@@ -2448,15 +2447,13 @@ do
     label.TextColor3 = Color3.fromRGB(255, 255, 255)
     label.TextSize = 18
     label.Text = "Ping: -- ms | 0:00:00"
+    UI.pingLabel = label
 
-    -- Drag logic
     local dragging, dragStart, startPos = false, nil, nil
     pcall(function() frame.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = frame.Position
+            dragging = true; dragStart = input.Position; startPos = frame.Position
         end
     end) end)
     pcall(function() UIS.InputChanged:Connect(function(input)
@@ -2474,8 +2471,6 @@ do
             dragging = false
         end
     end) end)
-
-    UI.pingLabel = label
 end
 
 UI.Window = UI.Library:CreateWindow({
@@ -2503,12 +2498,12 @@ UI.FishingTab = UI.Window:CreateTab("Main", "rbxassetid://117906088481880")
 UI.SupportSection = UI.Window:AddCollapsible(UI.FishingTab, "Support Features", false)
 
 UI.Window:AddToggle(UI.SupportSection, "Show Real-Ping", "", false, function(state)
-    if not UI.pingGui then return end
-    UI.pingGui.Enabled = state
     if state then
+        if UI.pingTimerThread then pcall(task.cancel, UI.pingTimerThread) UI.pingTimerThread = nil end
+        createPingUI()
         local startTime = os.time()
         UI.pingTimerThread = task.spawn(function()
-            while UI.pingGui and UI.pingGui.Enabled do
+            while UI.pingGui and UI.pingGui.Parent do
                 task.wait(1)
                 local ok, ping = pcall(function()
                     return math.floor(Service.Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
@@ -2524,11 +2519,8 @@ UI.Window:AddToggle(UI.SupportSection, "Show Real-Ping", "", false, function(sta
             end
         end)
     else
-        if UI.pingTimerThread then
-            task.cancel(UI.pingTimerThread)
-            UI.pingTimerThread = nil
-        end
-        if UI.pingLabel then UI.pingLabel.Text = "Ping: -- ms | 0:00:00" end
+        if UI.pingTimerThread then pcall(task.cancel, UI.pingTimerThread) UI.pingTimerThread = nil end
+        if UI.pingGui then pcall(function() UI.pingGui:Destroy() end) UI.pingGui = nil UI.pingLabel = nil end
     end
 end, "Toggle_Show Real-Ping")
 UI.Window:AddToggle(UI.SupportSection, "Disable Obtained Fish", "", false, function(state)
@@ -3472,6 +3464,7 @@ do
                             local ok3,ed = pcall(function() return Data.ItemUtility:GetEnchantData(meta.EnchantId2) end)
                             if ok3 and ed and ed.Data then e2 = ed.Data.Name end
                         end
+                        break
                     end
                 end
             end
@@ -3519,6 +3512,11 @@ do
             S.enchantPending = false
         end))
         updateEnchantPara()
+        if not Remote.enchantAltar1 then
+            UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant remote not found"})
+            pcall(function() S.enchantToggle:Set(false) end)
+            return
+        end
         S.enchantThread = task.spawn(function()
             while Config.AutoEnchantReroll do
                 local rodUUID = nil
@@ -3672,9 +3670,9 @@ do
                 end
                 task.wait(0.3)
             end
-            if Config.AutoCreateTranscended and created>=amount then
-                setPara(S.transcendedPara,"Complete","Create "..amount.."/"..amount)
-                UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Done! Created "..amount.." Transcended Stones"})
+            if Config.AutoCreateTranscended and created > 0 then
+                setPara(S.transcendedPara,"Complete","Create "..created.."/"..amount)
+                UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Done! Created "..created.." Transcended Stones"})
             end
             pcall(function() S.transcendedToggle:Set(false) end)
         end)
