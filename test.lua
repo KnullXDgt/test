@@ -3600,7 +3600,12 @@ do
                         if rodUUID then break end
                     end
                 end)
-                if not rodUUID then updateEnchantPara() break end
+                if not rodUUID then
+                    updateEnchantPara()
+                    UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="No rod equipped"})
+                    pcall(function() S.enchantToggle:Set(false) end)
+                    break
+                end
                 local stoneUUID,stoneId = nil,(STONE_ID[Config.EnchantType] or 10)
                 pcall(function()
                     local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
@@ -3619,7 +3624,12 @@ do
                         if stoneUUID then break end
                     end
                 end)
-                if not stoneUUID then updateEnchantPara() break end
+                if not stoneUUID then
+                    updateEnchantPara()
+                    UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant stones exhausted"})
+                    pcall(function() S.enchantToggle:Set(false) end)
+                    break
+                end
                 if not equipAndHold(stoneUUID,"Enchant Stones") then task.wait(0.3) continue end
                 S.enchantPending = true
                 local isSecond = (STONE_ID[Config.EnchantType] == 246 or STONE_ID[Config.EnchantType] == 1098)
