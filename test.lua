@@ -3462,7 +3462,7 @@ do
                     local d = Data.ItemUtility.GetItemDataFromItemType(cat, rawId)
                     if not (d and d.Data) then continue end
                     if d.Data.Type == "Enchant Stones" and tonumber(rawId)==tonumber(stoneId) then
-                        stoneCount = stoneCount+1
+                        stoneCount = stoneCount+(tonumber(item.Quantity) or 1)
                     end
                     if d.Data.Type == "Fishing Rods" and equippedSet[tostring(item.UUID)] then
                         rodName = d.Data.Name or rodName
@@ -3549,7 +3549,7 @@ do
             task.delay(0.2, updateEnchantPara)
             if enchantName == Config.TargetEnchant then
                 pcall(function() S.enchantToggle:Set(false) end)
-                UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Got enchant: "..enchantName})
+                UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant Completed â¢ "..enchantName})
             end
             S.enchantPending = false
         end))
@@ -3590,7 +3590,7 @@ do
                             local sRawId = s.Id or s.Identifier
                             if tonumber(sRawId)==tonumber(stoneId) then
                                 local sd = Data.ItemUtility.GetItemDataFromItemType(cat, sRawId)
-                                if sd and sd.Data and sd.Data.Type=="Enchant Stones" then
+                                if sd and sd.Data and sd.Data.Type=="Enchant Stones" and (tonumber(s.Quantity) or 1)>0 then
                                     stoneUUID=s.UUID break
                                 end
                             end
@@ -3601,7 +3601,7 @@ do
                 if not stoneUUID then updateEnchantPara() break end
                 if not equipAndHold(stoneUUID,"Enchant Stones") then task.wait(0.3) continue end
                 S.enchantPending = true
-                local isSecond = (STONE_ID[Config.EnchantType] == 246)
+                local isSecond = (STONE_ID[Config.EnchantType] == 246 or STONE_ID[Config.EnchantType] == 1098)
                 if isSecond then
                     pcall(function() Remote.enchantAltar2:FireServer() end)
                 else
@@ -3654,8 +3654,20 @@ do
         if not slot then return false end
         pcall(function() Remote.equipTool:FireServer(slot) end)
         local dl2 = os.clock()+3
-        while Data.Player:Get("EquippedType")~=itemType and os.clock()<dl2 do task.wait(0.05) end
-        return Data.Player:Get("EquippedType")==itemType
+        local equipped = false
+        while not equipped and os.clock()<dl2 do
+            local eType = Data.Player:Get("EquippedType")
+            local eId   = tostring(Data.Player:Get("EquippedId") or "")
+            if eType==itemType and eId==tostring(UUID) then
+                equipped = true
+            elseif eType==itemType and eId~=tostring(UUID) then
+                local eq2 = Data.Player:Get("EquippedItems") or {}
+                local cs = table.find(eq2, tostring(UUID))
+                if cs then pcall(function() Remote.equipTool:FireServer(cs) end) end
+            end
+            if not equipped then task.wait(0.05) end
+        end
+        return equipped
     end
     local TranscendedSection = UI.Window:AddCollapsible(UI.AutomationTab,"Create Transcended Stone",false)
     S.transcendedPara = UI.Window:AddParagraph(TranscendedSection,"Status","Waiting")
@@ -3701,6 +3713,7 @@ do
             end
             local amount = math.max(tonumber(Config.TranscendedAmount) or 1,1)
             local created = 0
+            local failed = 0
             for i=1,amount do
                 if not Config.AutoCreateTranscended then break end
                 local fishUUID = nil
@@ -3725,8 +3738,12 @@ do
                     break
                 end
                 setPara(S.transcendedPara,"Equipping",fishName)
-                if not equipAndHold(fishUUID,"Fish") then task.wait(0.5) continue end
-                setPara(S.transcendedPara,"Crafting","Create "..i.."/"..amount)
+                if not equipAndHold(fishUUID,"Fish") then
+                    failed=failed+1
+                    task.wait(0.5)
+                    continue
+                end
+                setPara(S.transcendedPara,"Sacrificing","Create "..i.."/"..amount.." Â· Done: "..created.." | Fail: "..failed)
                 local done,result,errMsg = false,false,"Timeout"
                 local worker = task.spawn(function()
                     local ok,r,m = pcall(function() return Remote.createTranscended:InvokeServer() end)
@@ -3745,7 +3762,7 @@ do
                 task.wait(0.7)
             end
             if Config.AutoCreateTranscended and created > 0 then
-                setPara(S.transcendedPara,"Complete","Created "..created.." Transcended Stones")
+                setPara(S.transcendedPara,"Complete","Done: "..created.." | Fail: "..failed)
                 UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Done! Created "..created.." Transcended Stones"})
             end
             pcall(function() S.transcendedToggle:Set(false) end)
