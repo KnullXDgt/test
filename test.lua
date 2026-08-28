@@ -3458,6 +3458,11 @@ do
             for cat, items in pairs(inv) do
                 if type(items) ~= "table" then continue end
                 for _, item in ipairs(items) do
+                    -- stone count: check by Id only, no d needed
+                    if tonumber(item.Id) == tonumber(stoneId) then
+                        stoneCount = stoneCount + 1
+                    end
+                    -- rod: needs item data
                     local d = Data.ItemUtility.GetItemDataFromItemType(cat, item.Id)
                     if not (d and d.Data) then continue end
                     if d.Data.Type == "Fishing Rods" and equippedSet[tostring(item.UUID)] then
@@ -3471,9 +3476,6 @@ do
                             local ok3,ed = pcall(function() return Data.ItemUtility:GetEnchantData(meta.EnchantId2) end)
                             if ok3 and ed and ed.Data then e2 = ed.Data.Name end
                         end
-                    end
-                    if tonumber(item.Id) == tonumber(stoneId) then
-                        stoneCount = stoneCount + 1
                     end
                 end
             end
