@@ -3550,7 +3550,7 @@ do
             task.delay(0.2, updateEnchantPara)
             if enchantName == Config.TargetEnchant then
                 pcall(function() S.enchantToggle:Set(false) end)
-                UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant Completed â¢ "..enchantName})
+                UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant Completed - "..enchantName})
             end
             S.enchantPending = false
         end))
@@ -3748,7 +3748,7 @@ do
                     task.wait(0.5)
                     continue
                 end
-                setPara(S.transcendedPara,"Sacrificing","Create "..(created+1).."/"..amount.." Â· Done: "..created.." | Fail: "..failed)
+                setPara(S.transcendedPara,"Sacrificing","Create "..(created+1).."/"..amount.." - Done: "..created.." | Fail: "..failed)
                 local done,result,errMsg = false,false,"Timeout"
                 local worker = task.spawn(function()
                     local ok,r,m = pcall(function() return Remote.createTranscended:InvokeServer() end)
