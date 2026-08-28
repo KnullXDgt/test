@@ -61,6 +61,7 @@ Remote.cutscene = Remote.Net:WaitForChild("RE/ReplicateCutscene", 10)
 Remote.abilityVFX = Remote.Net:WaitForChild("RE/PlayAbilityVFX", 10)
 Remote.baitCast = Remote.Net:FindFirstChild("RE/BaitCastVisual")
 Remote.enchantAltar1 = Remote.Resolve("RE/ActivateEnchantingAltar")
+Remote.enchantAltar2 = Remote.Resolve("RE/ActivateSecondEnchantingAltar")
 Remote.enchantRoll = Remote.Resolve("RE/RollEnchant")
 Remote.createTranscended = Remote.Resolve("RF/CreateTranscendedStone")
 
@@ -3541,7 +3542,12 @@ do
                 if not stoneUUID then updateEnchantPara() break end
                 if not equipAndHold(stoneUUID,"Enchant Stones") then task.wait(0.3) continue end
                 S.enchantPending = true
-                pcall(function() Remote.enchantAltar1:FireServer(rodUUID) end)
+                local isSecond = (STONE_ID[Config.EnchantType] == 246)
+                if isSecond then
+                    pcall(function() Remote.enchantAltar2:FireServer() end)
+                else
+                    pcall(function() Remote.enchantAltar1:FireServer(rodUUID) end)
+                end
                 local dl = os.clock()+12
                 while S.enchantPending and os.clock()<dl do task.wait(0.05) end
                 S.enchantPending = false
