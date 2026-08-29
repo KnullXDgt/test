@@ -1,6 +1,7 @@
 -- ====================================================================
 --                 INSTANT FISHING V2 - CLEAN
 --          Fishing + AutoSell + Auto Small Notification
+--       Quest Planner + Elemental Event build: 20260829-R3
 -- ====================================================================
 
 -- ====== SERVICES ======
@@ -9,8 +10,10 @@ local Service = {
     ReplicatedStorage = game:GetService("ReplicatedStorage"),
     HttpService = game:GetService("HttpService"),
     RunService = game:GetService("RunService"),
+    CollectionService = game:GetService("CollectionService"),
     Lighting = game:GetService("Lighting"),
     Stats = game:GetService("Stats"),
+    TextService = game:GetService("TextService"),
 }
 Service.LocalPlayer = Service.Players.LocalPlayer
 
@@ -54,6 +57,10 @@ for key, remoteName in pairs({
     spawnTotem = "RE/SpawnTotem",
     totemCreated = "RE/TotemCreated",
     totemSpawned = "RE/TotemSpawned",
+    placeLever = "RE/PlaceLeverItem",
+    placePressure = "RE/PlacePressureItem",
+    dialogueEnded = "RE/DialogueEnded",
+    claimItem = "RF/ClaimItem",
 }) do
     Remote[key] = Remote.Resolve(remoteName)
 end
@@ -61,6 +68,7 @@ Remote.cutscene = Remote.Net:WaitForChild("RE/ReplicateCutscene", 10)
 Remote.abilityVFX = Remote.Net:WaitForChild("RE/PlayAbilityVFX", 10)
 Remote.baitCast = Remote.Net:FindFirstChild("RE/BaitCastVisual")
 Remote.enchantAltar1 = Remote.Resolve("RE/ActivateEnchantingAltar")
+Remote.unequipItem = Remote.Resolve("RE/UnequipItem")
 Remote.enchantAltar2 = Remote.Resolve("RE/ActivateSecondEnchantingAltar")
 Remote.enchantRoll = Remote.Resolve("RE/RollEnchant")
 Remote.createTranscended = Remote.Resolve("RF/CreateTranscendedStone")
@@ -75,7 +83,15 @@ local SupportState = {
         Watcher = nil,
     },
     abilityVFXConns = { Blocked = {} },
-    hidePlayersConns = {},
+    hidePlayers = {
+        Active = false,
+        Session = 0,
+        GlobalConnections = {},
+        PlayerConnections = setmetatable({}, { __mode = "k" }),
+        CharacterConnections = setmetatable({}, { __mode = "k" }),
+        Characters = setmetatable({}, { __mode = "k" }),
+        Original = setmetatable({}, { __mode = "k" }),
+    },
     skinEffectConns = {
         Active = false,
         Connections = {},
@@ -99,8 +115,11 @@ local SupportState = {
     walkPlatform = nil,
     walkOnWaterConn = nil,
     walkOnWaterCharConn = nil,
+    lockPositionActive = false,
+    lockPositionSession = 0,
     lockPosConn = nil,
-    lockedCFrame = nil,
+    lockRoot = nil,
+    lockOriginalAnchored = nil,
     animCtrlPatched = false,
     snDisplay = nil,
 }
@@ -211,6 +230,25 @@ local Runtime = {
         Start = function() end,
         Stop = function() end,
     },
+    Quest = {
+        ActiveJob = nil,
+        Generation = 0,
+        PlannerGeneration = 0,
+        PlannerThread = nil,
+        Enabled = {},
+        RetryAt = {},
+        EventPause = false,
+        FishingHold = false,
+        SellHold = false,
+        CatchReview = false,
+        ForcePerfect = false,
+        Panels = {},
+        LastLocation = nil,
+        OnFishCaught = function() end,
+        RefreshPanels = function() end,
+        Start = function() return false end,
+        Stop = function() end,
+    },
 }
 
 -- Automation/shop state is declared once; feature logic fills its fields.
@@ -285,6 +323,9 @@ end
 -- ====== TELEPORT LOCATIONS ======
 local Catalog = {}
 Catalog.Locations = {
+    ["Elemental Blizzard"]       = CFrame.new(-981.890015,45.8336372,5302.85986,-0.855183363,-1.00189254e-07,0.518325567,-7.92015129e-08,1,6.26197831e-08,-0.518325567,1.24992239e-08,-0.855183363),
+    ["Elemental Storm"]          = CFrame.new(-936.080017,54.3766861,5238.54004,-0.82114917,1.24735946e-08,-0.57071358,2.52029881e-08,1,-1.44062087e-08,0.57071358,-2.62133337e-08,-0.82114917),
+    ["Elemental Volcano"]        = CFrame.new(-729.789978,107.056473,5347.83008,-0.639170587,2.26108412e-08,0.769065022,1.3202623e-08,1,-1.8427718e-08,-0.769065022,-1.62477964e-09,-0.639170587),
     ["Fisherman Island"]         = CFrame.new(-32.0142937, 9.53156853, 2714.27515, 0.363515794, -3.19144746e-08, 0.931588054, 4.9133412e-08, 1, 1.50857478e-08, -0.931588054, 4.02881888e-08, 0.363515794),
     ["Ancient Jungle"]           = CFrame.new(1467.427, 7.57433128, -327.696991, -0.300987154, 1.26613644e-08, -0.953628182, 1.90450802e-08, 1, 7.26597627e-09, 0.953628182, -1.597496e-08, -0.300987154),
     ["Ancient Ruin"]             = CFrame.new(6045.40186, -588.600952, 4608.93799, -0.995750964, 9.74889502e-09, -0.09208709, 1.08396971e-08, 1, -1.13451657e-08, 0.09208709, -1.2295156e-08, -0.995750964),
@@ -336,9 +377,41 @@ local Navigation = {
     eventWaterConn = nil,
     eventWaterCharConn = nil,
     eventWatcherConn = nil,
+    eventReplionConns = {},
+    eventResolveRevision = 0,
+    eventTargetKey = nil,
+    eventTargetUsesWater = false,
     eventTeleportActive = false,
     npcInitList = nil,
+    positionLockNoticeAt = 0,
 }
+
+Navigation.notifyPositionLocked = function()
+    local now = os.clock()
+    if now - Navigation.positionLockNoticeAt < 2 then return end
+    Navigation.positionLockNoticeAt = now
+    UI.Library:Notify({
+        Title = "Orvion", Subtitle = "Hub",
+        Content = "Teleport blocked - Lock Position is enabled",
+        Color = Color3.fromRGB(150,150,170), Delay = 2,
+    })
+end
+
+-- Single position-write gate for every Orvion character teleport.
+Navigation.tryMoveRoot = function(root, targetCFrame, notifyLocked)
+    if SupportState.lockPositionActive then
+        if notifyLocked then Navigation.notifyPositionLocked() end
+        return false, "POSITION_LOCKED"
+    end
+    if not root or not root.Parent or typeof(targetCFrame) ~= "CFrame" then
+        return false, "INVALID_TARGET"
+    end
+    local ok = pcall(function()
+        root.CFrame = targetCFrame
+    end)
+    if ok then return true end
+    return false, "MOVE_FAILED"
+end
 
 Navigation.getNPCNames = function()
     local names = {}
@@ -381,17 +454,12 @@ Navigation.saveCurrentLocation = function()
 end
 
 -- ====== UTILITIES ======
-Navigation.teleportToSaved = function()
+Navigation.teleportToSaved = function(notifyLocked)
     local cf = Navigation.getSavedLocation()
     if not cf then return false end
-    pcall(function()
-        local char = Service.LocalPlayer.Character
-        if not char then return end
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        root.CFrame = cf
-    end)
-    return cf ~= nil
+    local char = Service.LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    return Navigation.tryMoveRoot(root, cf, notifyLocked)
 end
 
 Navigation.setAutoTeleportOnSpawn = function(state)
@@ -422,6 +490,7 @@ Navigation.getPlayerList = function()
 end
 
 Catalog.LocationNames = {
+    "Elemental Blizzard", "Elemental Storm", "Elemental Volcano",
     "Ancient Jungle", "Ancient Ruin", "Aquarium",
     "Copper Canyon [SPOT 1]", "Copper Canyon [SPOT 2]", "Copper Canyon Mines",
     "Coral Reefs", "Crater Island", "Crater Island [TOP]", "Crystal Depths",
@@ -438,22 +507,18 @@ Catalog.LocationNames = {
     "Volcanic Cavern", "Weather Machine"
 }
 
-Navigation.teleportTo = function(name)
+Navigation.teleportTo = function(name, notifyLocked)
     local cf = Catalog.Locations[name]
-    if not cf then return end
-    pcall(function()
-        local char = Service.LocalPlayer.Character
-        if not char then return end
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        root.CFrame = cf
-    end)
+    if not cf then return false end
+    local char = Service.LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    return Navigation.tryMoveRoot(root, cf, notifyLocked)
 end
 
-Navigation.teleportToBM = function(cf)
+Navigation.teleportToBM = function(cf, notifyLocked)
     local root = Service.LocalPlayer.Character
         and Service.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if root then root.CFrame = cf end
+    return Navigation.tryMoveRoot(root, cf, notifyLocked)
 end
 
 -- ====== CAST QUALITY HELPER ======
@@ -494,12 +559,17 @@ end
 
 Runtime.Fishing.WaitReady = function(mode)
     while Runtime.Fishing.IsModeActive(mode) do
-        if Runtime.Fishing.Owner and Runtime.Fishing.Owner ~= mode then
+        if Runtime.Quest.FishingHold then
+            task.wait(0.05)
+        elseif Runtime.Fishing.Owner and Runtime.Fishing.Owner ~= mode then
             task.wait(0.05)
         else
             local character = Service.LocalPlayer.Character
             if character and character:GetAttribute("SellAll") == true then
                 Runtime.Sell.Wait(Runtime.Sell.Ticket)
+                -- Sell.Wait yields. Re-enter the coordinator gate because a
+                -- Quest transaction or another fishing owner may have begun.
+                continue
             end
             if not Runtime.Fishing.IsBlocked() then
                 Runtime.Fishing.Owner = mode
@@ -580,8 +650,9 @@ end
 Runtime.requestConfiguredCast = function(mode)
     if not Runtime.Fishing.WaitReady(mode) then return false end
 
-    local targetPower = Config.PerfectCast and 0.99 or 0.10
-    if Config.RandomResults and not Config.PerfectCast then
+    local forcePerfect = Config.PerfectCast or Runtime.Quest.ForcePerfect
+    local targetPower = forcePerfect and 0.99 or 0.10
+    if Config.RandomResults and not forcePerfect then
         -- Uniform two-decimal result: 0.10, 0.11, ... 0.98, 0.99.
         targetPower = Runtime.Random:NextInteger(10, 99) / 100
     end
@@ -885,6 +956,11 @@ Runtime.Sell.Wait = function(ticket)
 end
 
 Runtime.Sell.Execute = function()
+    if Runtime.Quest.SellHold or Runtime.Quest.CatchReview then
+        Runtime.Sell.Pending = true
+        Runtime.Sell.Reason = Runtime.Sell.Reason or "QuestHold"
+        return false
+    end
     if Runtime.Sell.Busy or Runtime.Sell.Phase ~= "Idle" then return false end
     if os.clock() - Runtime.Sell.LastCall < 0.25 then return false end
     if not Remote.sell then return false end
@@ -1500,6 +1576,7 @@ do
         Remote.fishCaught.OnClientEvent:Connect(function(fishName, fishMetadata, _, _, visualData)
             Runtime.Fishing.CatchSerial = Runtime.Fishing.CatchSerial + 1
             Runtime.Fishing.LastCatchAt = os.clock()
+            pcall(Runtime.Quest.OnFishCaught, fishName, fishMetadata)
             -- Manual/native fishing has no custom loop boundary, so process its
             -- queued sell after Replion receives the newly caught item.
             task.delay(0.15, function()
@@ -2166,36 +2243,103 @@ end
 
 -- Hide Other Players
 SupportState.setHideOtherPlayers = function(state)
-    for _, conn in pairs(SupportState.hidePlayersConns) do conn:Disconnect() end
-    SupportState.hidePlayersConns = {}
+    local bucket = SupportState.hidePlayers
+    bucket.Active = false
+    bucket.Session = bucket.Session + 1
 
-    local function hidePlayer(player)
-        if player == Service.LocalPlayer then return end
-        local char = player.Character
-        if char then
-            for _, obj in ipairs(char:GetDescendants()) do
-                if obj:IsA("BasePart") or obj:IsA("MeshPart") then
-                        obj.Transparency = state and 1 or 0
-                end
-                if obj:IsA("Decal") then
-                    obj.Transparency = state and 1 or 0
-                end
-            end
+    for _, conn in ipairs(bucket.GlobalConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    for _, conn in pairs(bucket.PlayerConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    for _, conn in pairs(bucket.CharacterConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(bucket.GlobalConnections)
+    bucket.PlayerConnections = setmetatable({}, { __mode = "k" })
+    bucket.CharacterConnections = setmetatable({}, { __mode = "k" })
+    bucket.Characters = setmetatable({}, { __mode = "k" })
+
+    for obj, original in pairs(bucket.Original) do
+        if obj and obj.Parent then
+            pcall(function()
+                obj[original[1]] = original[2]
+            end)
         end
     end
+    bucket.Original = setmetatable({}, { __mode = "k" })
+    if not state then return end
 
-    if state then
-        for _, p in ipairs(Service.Players:GetPlayers()) do
-            hidePlayer(p)
+    bucket.Active = true
+    local session = bucket.Session
+
+    local function hideObject(obj)
+        if not bucket.Active or bucket.Session ~= session or bucket.Original[obj] then return end
+        local property, hidden
+        if obj:IsA("BasePart") then
+            property, hidden = "LocalTransparencyModifier", 1
+        elseif obj:IsA("Decal") or obj:IsA("Texture") then
+            property, hidden = "Transparency", 1
+        elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
+            or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles")
+            or obj:IsA("Highlight") or obj:IsA("BillboardGui")
+            or obj:IsA("SurfaceGui") or obj:IsA("PointLight")
+            or obj:IsA("SpotLight") or obj:IsA("SurfaceLight")
+        then
+            property, hidden = "Enabled", false
+        else
+            return
         end
-        table.insert(SupportState.hidePlayersConns, Service.Players.PlayerAdded:Connect(function(p)
-            p.CharacterAdded:Connect(function() task.wait(0.5) hidePlayer(p) end)
-        end))
-    else
-        for _, p in ipairs(Service.Players:GetPlayers()) do
-            hidePlayer(p)  -- state = false -> transparencyModifier = 0 = show
-        end
+        local ok, original = pcall(function() return obj[property] end)
+        if not ok then return end
+        bucket.Original[obj] = { property, original }
+        pcall(function() obj[property] = hidden end)
     end
+
+    local function detachCharacter(player)
+        local char = bucket.Characters[player]
+        local conn = char and bucket.CharacterConnections[char]
+        if conn then pcall(function() conn:Disconnect() end) end
+        if char then bucket.CharacterConnections[char] = nil end
+        bucket.Characters[player] = nil
+    end
+
+    local function attachCharacter(player, char)
+        if player == Service.LocalPlayer or not char
+            or not bucket.Active or bucket.Session ~= session
+        then
+            return
+        end
+        detachCharacter(player)
+        bucket.Characters[player] = char
+        for _, obj in ipairs(char:GetDescendants()) do hideObject(obj) end
+        bucket.CharacterConnections[char] = char.DescendantAdded:Connect(hideObject)
+    end
+
+    local function detachPlayer(player)
+        detachCharacter(player)
+        local conn = bucket.PlayerConnections[player]
+        if conn then pcall(function() conn:Disconnect() end) end
+        bucket.PlayerConnections[player] = nil
+    end
+
+    local function attachPlayer(player)
+        if player == Service.LocalPlayer or not bucket.Active
+            or bucket.Session ~= session
+        then
+            return
+        end
+        detachPlayer(player)
+        bucket.PlayerConnections[player] = player.CharacterAdded:Connect(function(char)
+            attachCharacter(player, char)
+        end)
+        if player.Character then attachCharacter(player, player.Character) end
+    end
+
+    for _, player in ipairs(Service.Players:GetPlayers()) do attachPlayer(player) end
+    table.insert(bucket.GlobalConnections, Service.Players.PlayerAdded:Connect(attachPlayer))
+    table.insert(bucket.GlobalConnections, Service.Players.PlayerRemoving:Connect(detachPlayer))
 end
 
 SupportState.setWalkOnWater = function(state)
@@ -2293,24 +2437,53 @@ SupportState.setWalkOnWater = function(state)
 end
 
 -- Lock Position
-SupportState.setLockPosition = function(state)
-    if SupportState.lockPosConn then SupportState.lockPosConn:Disconnect() SupportState.lockPosConn = nil end
-    if state then
-        local char = Service.LocalPlayer.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if root then
-            SupportState.lockedCFrame = root.CFrame
-            -- Anchored = true -> tidak bisa di-fling, tidak BAC (pure client)
-            pcall(function() root.Anchored = true end)
-        end
-    else
-        SupportState.lockedCFrame = nil
-        local char = Service.LocalPlayer.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if root then
-            pcall(function() root.Anchored = false end)
-        end
+SupportState.releaseLockRoot = function()
+    local root = SupportState.lockRoot
+    local original = SupportState.lockOriginalAnchored
+    SupportState.lockRoot = nil
+    SupportState.lockOriginalAnchored = nil
+    if root and root.Parent and original ~= nil then
+        pcall(function() root.Anchored = original end)
     end
+end
+
+SupportState.setLockPosition = function(state)
+    SupportState.lockPositionActive = false
+    SupportState.lockPositionSession = SupportState.lockPositionSession + 1
+    if SupportState.lockPosConn then
+        pcall(function() SupportState.lockPosConn:Disconnect() end)
+        SupportState.lockPosConn = nil
+    end
+    SupportState.releaseLockRoot()
+    if not state then return end
+
+    SupportState.lockPositionActive = true
+    local session = SupportState.lockPositionSession
+
+    local function attachCharacter(char)
+        task.spawn(function()
+            local root = char and char:WaitForChild("HumanoidRootPart", 5)
+            if not root or not SupportState.lockPositionActive
+                or SupportState.lockPositionSession ~= session
+                or Service.LocalPlayer.Character ~= char
+                or SupportState.lockRoot == root
+            then
+                return
+            end
+            SupportState.releaseLockRoot()
+            if not SupportState.lockPositionActive
+                or SupportState.lockPositionSession ~= session
+            then
+                return
+            end
+            SupportState.lockRoot = root
+            SupportState.lockOriginalAnchored = root.Anchored
+            pcall(function() root.Anchored = true end)
+        end)
+    end
+
+    SupportState.lockPosConn = Service.LocalPlayer.CharacterAdded:Connect(attachCharacter)
+    if Service.LocalPlayer.Character then attachCharacter(Service.LocalPlayer.Character) end
 end
 
 -- Bypass Radar
@@ -2381,6 +2554,9 @@ SupportState.ensureAnimPatch()
 
 -- ====== CONSTANTS ======
 Catalog.EventList = {
+    "Blizzard Elemental Event",
+    "Storm Elemental Event",
+    "Volcano Elemental Event",
     "Admin - 1x1x1 Rage",
     "Admin - 2025 Anniversary",
     "Admin - 2025 Christmas",
@@ -2570,6 +2746,9 @@ end, "Toggle_Auto Equip Diving Gear")
 
 UI.Window:AddToggle(UI.SupportSection, "Lock Position", "", false, function(state)
     SupportState.setLockPosition(state)
+    if not state and Navigation.scheduleEventResolve then
+        Navigation.scheduleEventResolve()
+    end
 end, "Toggle_Lock Position")
 UI.Window:AddToggle(UI.SupportSection, "Anti AFK", "", true, function(state)
     if state then
@@ -2788,177 +2967,248 @@ end
 
 
 UI.TpTab = UI.Window:CreateTab("Teleport", "rbxassetid://6723742952")
-UI.TpSection = UI.Window:AddCollapsible(UI.TpTab, "Teleport to Island", false)
+UI.TpSection = UI.Window:AddCollapsible(UI.TpTab, "Teleport to Location", false)
 
-UI.Window:AddDropdown(UI.TpSection, "Select Island", "", Catalog.LocationNames, false, "Ancient Jungle", function(value)
+UI.Window:AddDropdown(UI.TpSection, "Select Location", "", Catalog.LocationNames, false, "Ancient Jungle", function(value)
     Config.TeleportLocation = value
 end, "Dropdown_Select Map")
 
 UI.Window:AddButton(UI.TpSection, "Teleport", "", "", function()
-    Navigation.teleportTo(Config.TeleportLocation)
-    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. Config.TeleportLocation, Color=Color3.fromRGB(150,150,170), Delay=2 })
+    if Navigation.teleportTo(Config.TeleportLocation, true) then
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. Config.TeleportLocation, Color=Color3.fromRGB(150,150,170), Delay=2 })
+    end
 end)
 
 
 -- Teleport to Event
-Navigation.getBestEventPos = function()
-    local priority = Config.PriorityEvent
-    local selectEv = Config.SelectEvent
-    if priority and priority ~= "Select Option" then
-        local pos = Navigation.findEventPosition(priority)
-        if pos then return pos, "priority" end
+Catalog.ElementalEventRoutes = {
+    ["Blizzard Elemental Event"] = "Elemental Blizzard",
+    ["Storm Elemental Event"] = "Elemental Storm",
+    ["Volcano Elemental Event"] = "Elemental Volcano",
+}
+
+Navigation.ensureEventsReplion = function()
+    if Data.Events and not Data.Events.Destroyed then return Data.Events end
+    local ok, replion = pcall(function()
+        return Data.Replion.Client:WaitReplion("Events")
+    end)
+    if ok then Data.Events = replion end
+    return Data.Events
+end
+
+Navigation.isElementalEventActive = function(eventName)
+    if not Catalog.ElementalEventRoutes[eventName] then return false end
+    local events = Navigation.ensureEventsReplion()
+    if not events or events.Destroyed then return false end
+    local ok, found = pcall(function()
+        return events:Find("Events", eventName)
+    end)
+    return ok and found ~= nil
+end
+
+Navigation.getEventTarget = function(eventName, source)
+    if not eventName or eventName == "Select Option" then return nil end
+    local locationName = Catalog.ElementalEventRoutes[eventName]
+    if locationName then
+        if not Navigation.isElementalEventActive(eventName) then return nil end
+        return {
+            CFrame = Catalog.Locations[locationName],
+            Key = source .. ":elemental:" .. eventName,
+            UsesWater = false,
+        }
     end
-    if selectEv and selectEv ~= "Select Option" then
-        local pos = Navigation.findEventPosition(selectEv)
-        if pos then return pos, "select" end
+    local pos = Navigation.findEventPosition(eventName)
+    if not pos then return nil end
+    return {
+        CFrame = CFrame.new(pos + Vector3.new(0, 6, 0)),
+        Key = source .. ":world:" .. eventName,
+        UsesWater = true,
+    }
+end
+
+Navigation.getBestEventTarget = function()
+    local target = Navigation.getEventTarget(Config.PriorityEvent, "priority")
+    if target then return target end
+    return Navigation.getEventTarget(Config.SelectEvent, "select")
+end
+
+Navigation.pauseQuestForEvent = function(state)
+    if Runtime.Quest.EventPause == state then return end
+    Runtime.Quest.EventPause = state
+    if state and Runtime.Quest.ActiveJob then
+        Runtime.Quest.Generation = Runtime.Quest.Generation + 1
+        Runtime.Quest.ActiveJob = nil
+        Runtime.Quest.ForcePerfect = false
+        Runtime.Quest.LastLocation = nil
+        task.defer(function()
+            if Runtime.Quest.EventPause
+                and S.Quest and S.Quest.releaseTransaction
+            then
+                S.Quest.releaseTransaction()
+            end
+        end)
+    elseif not state and S.Quest and S.Quest.startPlanner then
+        S.Quest.startPlanner()
     end
-    return nil, nil
+end
+
+Navigation.applyEventTarget = function(target)
+    if not Navigation.eventTeleportActive then return end
+    if target and Navigation.eventTargetKey == target.Key then return end
+
+    local character = Service.LocalPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    if not target then
+        if not Navigation.eventTargetKey then return end
+        Navigation.eventTargetKey = nil
+        Navigation.eventTargetUsesWater = false
+        Navigation.stopEventWalkOnWater()
+        local returnCFrame = Navigation.preEventCFrame
+        Navigation.preEventCFrame = nil
+        if returnCFrame then Navigation.tryMoveRoot(root, returnCFrame) end
+        Navigation.pauseQuestForEvent(false)
+        return
+    end
+
+    -- Lock Position owns movement. Keep the event listener alive and retry
+    -- only when the lock is released; do not repeatedly cancel Quest jobs.
+    if SupportState.lockPositionActive then return end
+
+    if not Navigation.preEventCFrame then
+        Navigation.preEventCFrame = root.CFrame
+    end
+    Navigation.pauseQuestForEvent(true)
+    local moved = Navigation.tryMoveRoot(root, target.CFrame)
+    if not moved then
+        if not Navigation.eventTargetKey then
+            Navigation.preEventCFrame = nil
+            Navigation.pauseQuestForEvent(false)
+        end
+        return
+    end
+
+    Navigation.eventTargetKey = target.Key
+    Navigation.eventTargetUsesWater = target.UsesWater == true
+    if Navigation.eventTargetUsesWater then
+        Navigation.startEventWalkOnWater()
+    else
+        Navigation.stopEventWalkOnWater()
+    end
+end
+
+Navigation.scheduleEventResolve = function()
+    if not Navigation.eventTeleportActive then return end
+    Navigation.eventResolveRevision = Navigation.eventResolveRevision + 1
+    local revision = Navigation.eventResolveRevision
+    task.defer(function()
+        if not Navigation.eventTeleportActive
+            or revision ~= Navigation.eventResolveRevision
+        then
+            return
+        end
+        Navigation.applyEventTarget(Navigation.getBestEventTarget())
+    end)
+end
+
+Navigation.clearEventListeners = function()
+    if Navigation.eventWatcherConn then
+        pcall(function() Navigation.eventWatcherConn:Disconnect() end)
+        Navigation.eventWatcherConn = nil
+    end
+    for _, connection in ipairs(Navigation.eventReplionConns) do
+        pcall(function() connection:Disconnect() end)
+    end
+    table.clear(Navigation.eventReplionConns)
+end
+
+Navigation.startEventListeners = function()
+    Navigation.clearEventListeners()
+    table.insert(Navigation.eventReplionConns,
+        Service.LocalPlayer.CharacterAdded:Connect(function()
+            Navigation.eventTargetKey = nil
+            Navigation.preEventCFrame = nil
+            task.wait(1)
+            Navigation.scheduleEventResolve()
+        end))
+    local events = Navigation.ensureEventsReplion()
+    if events and not events.Destroyed then
+        local function onElementalChanged(_, eventName)
+            if Catalog.ElementalEventRoutes[eventName] then
+                Navigation.scheduleEventResolve()
+            end
+        end
+        local okInsert, insertConnection = pcall(function()
+            return events:OnArrayInsert("Events", onElementalChanged)
+        end)
+        if okInsert and insertConnection then
+            table.insert(Navigation.eventReplionConns, insertConnection)
+        end
+        local okRemove, removeConnection = pcall(function()
+            return events:OnArrayRemove("Events", onElementalChanged)
+        end)
+        if okRemove and removeConnection then
+            table.insert(Navigation.eventReplionConns, removeConnection)
+        end
+    end
+
+    -- Normal hunt/admin events still expose workspace models. Elemental
+    -- events are resolved exclusively by the Replion listeners above.
+    Navigation.eventWatcherConn = workspace.DescendantRemoving:Connect(function(obj)
+        if obj:IsA("Model") then Navigation.scheduleEventResolve() end
+    end)
+    task.spawn(function()
+        while Navigation.eventTeleportActive do
+            task.wait(2)
+            if not Navigation.eventTeleportActive then break end
+            local priorityNormal = Config.PriorityEvent
+                and Config.PriorityEvent ~= "Select Option"
+                and not Catalog.ElementalEventRoutes[Config.PriorityEvent]
+            local selectedNormal = Config.SelectEvent
+                and Config.SelectEvent ~= "Select Option"
+                and not Catalog.ElementalEventRoutes[Config.SelectEvent]
+            if priorityNormal or selectedNormal then
+                Navigation.scheduleEventResolve()
+            end
+        end
+    end)
+end
+
+Navigation.stopAutoEvent = function(returnToOrigin)
+    Navigation.eventTeleportActive = false
+    Navigation.eventResolveRevision = Navigation.eventResolveRevision + 1
+    Navigation.clearEventListeners()
+    Navigation.stopEventWalkOnWater()
+    local returnCFrame = Navigation.preEventCFrame
+    Navigation.preEventCFrame = nil
+    Navigation.eventTargetKey = nil
+    Navigation.eventTargetUsesWater = false
+    if returnToOrigin and returnCFrame then
+        local character = Service.LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        Navigation.tryMoveRoot(root, returnCFrame)
+    end
+    Navigation.pauseQuestForEvent(false)
 end
 
 UI.TpEventSection = UI.Window:AddCollapsible(UI.TpTab, "Teleport to Event", false)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 UI.Window:AddDropdown(UI.TpEventSection, "Priority Event", "", Catalog.EventList, false, "Select Option", function(value)
     Config.PriorityEvent = value
-    if Navigation.eventTeleportActive then
-        local pos = Navigation.getBestEventPos()
-        if pos then
-            pcall(function()
-                local ch = Service.LocalPlayer.Character
-                local rt = ch and ch:FindFirstChild("HumanoidRootPart")
-                if rt then rt.CFrame = CFrame.new(pos + Vector3.new(0, 6, 0)) end
-            end)
-            Navigation.startEventWalkOnWater()
-        end
-    end
+    Navigation.scheduleEventResolve()
 end)
 UI.Window:AddDropdown(UI.TpEventSection, "Select Event", "", Catalog.EventList, false, "Select Option", function(value)
     Config.SelectEvent = value
-    if Navigation.eventTeleportActive then
-        local pos = Navigation.getBestEventPos()
-        if pos then
-            pcall(function()
-                local ch = Service.LocalPlayer.Character
-                local rt = ch and ch:FindFirstChild("HumanoidRootPart")
-                if rt then rt.CFrame = CFrame.new(pos + Vector3.new(0, 6, 0)) end
-            end)
-            Navigation.startEventWalkOnWater()
-        end
-    end
+    Navigation.scheduleEventResolve()
 end)
 UI.Window:AddToggle(UI.TpEventSection, "Start Auto Event", "", false, function(state)
     if state then
-        local char = Service.LocalPlayer.Character
-        local root = char and char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        Navigation.preEventCFrame = root.CFrame
         Navigation.eventTeleportActive = true
-        local initPos, initSource = Navigation.getBestEventPos()
-        local wasFound = initPos ~= nil
-        local currentSource = initSource
-        if initPos then
-            pcall(function() root.CFrame = CFrame.new(initPos + Vector3.new(0, 6, 0)) end)
-            Navigation.startEventWalkOnWater()
-        end
-        Navigation.eventWatcherConn = workspace.DescendantRemoving:Connect(function(removed)
-            if not Navigation.eventTeleportActive or not wasFound then return end
-            if not removed:IsA("Model") then return end
-            local eventName = (currentSource == "priority") and Config.PriorityEvent or Config.SelectEvent
-            if not eventName or eventName == "Select Option" then return end
-            local lowerName = eventName:lower()
-            local strippedName = lowerName:gsub("%s*hunt%s*$", "")
-            local removedLower = removed.Name:lower()
-            if removedLower ~= lowerName and removedLower ~= strippedName then return end
-            task.defer(function()
-                    if not Navigation.eventTeleportActive then return end
-                    local pos, source = Navigation.getBestEventPos()
-                    if pos then
-                        if currentSource ~= source then
-                            wasFound = true
-                            currentSource = source
-                            pcall(function()
-                                local ch = Service.LocalPlayer.Character
-                                local rt = ch and ch:FindFirstChild("HumanoidRootPart")
-                                if rt then rt.CFrame = CFrame.new(pos + Vector3.new(0, 6, 0)) end
-                            end)
-                            Navigation.startEventWalkOnWater()
-                        end
-                    else
-                        wasFound = false
-                        currentSource = nil
-                        Navigation.stopEventWalkOnWater()
-                        if Navigation.preEventCFrame then
-                            pcall(function()
-                                local ch = Service.LocalPlayer.Character
-                                local rt = ch and ch:FindFirstChild("HumanoidRootPart")
-                                if rt then rt.CFrame = Navigation.preEventCFrame end
-                            end)
-                        end
-                    end
-                end)
-        end)
-        task.spawn(function()
-            while Navigation.eventTeleportActive do
-                task.wait(2)
-                if not Navigation.eventTeleportActive then break end
-                local pos, source = Navigation.getBestEventPos()
-                if pos then
-                    if not wasFound or currentSource ~= source then
-                        wasFound = true
-                        currentSource = source
-                        pcall(function()
-                            local ch = Service.LocalPlayer.Character
-                            local rt = ch and ch:FindFirstChild("HumanoidRootPart")
-                            if rt then rt.CFrame = CFrame.new(pos + Vector3.new(0, 6, 0)) end
-                        end)
-                        Navigation.startEventWalkOnWater()
-                    end
-                else
-                    if wasFound then
-                        wasFound = false
-                        currentSource = nil
-                        Navigation.stopEventWalkOnWater()
-                        if Navigation.preEventCFrame then
-                            pcall(function()
-                                local ch = Service.LocalPlayer.Character
-                                local rt = ch and ch:FindFirstChild("HumanoidRootPart")
-                                if rt then rt.CFrame = Navigation.preEventCFrame end
-                            end)
-                        end
-                    end
-                end
-            end
-        end)
+        Navigation.startEventListeners()
+        Navigation.scheduleEventResolve()
     else
-        Navigation.eventTeleportActive = false
-        if Navigation.eventWatcherConn then Navigation.eventWatcherConn:Disconnect(); Navigation.eventWatcherConn = nil end
-        Navigation.stopEventWalkOnWater()
-        if Navigation.preEventCFrame then
-            pcall(function()
-                local char = Service.LocalPlayer.Character
-                local root = char and char:FindFirstChild("HumanoidRootPart")
-                if root then root.CFrame = Navigation.preEventCFrame end
-            end)
-            Navigation.preEventCFrame = nil
-        end
+        Navigation.stopAutoEvent(true)
     end
 end, "Toggle_Start Auto Event")
 
@@ -2974,6 +3224,7 @@ UI.Window:AddButtonGrid(UI.TpNpcSection,
     { Title = "Teleport", Callback = function()
     local name = Config.TeleportNPC
     if not name or name == "" then return end
+    if SupportState.lockPositionActive then Navigation.notifyPositionLocked() return end
     local teleported = false
     pcall(function()
         local char = Service.LocalPlayer.Character
@@ -2984,8 +3235,9 @@ UI.Window:AddButtonGrid(UI.TpNpcSection,
         if not npcFolder then return end
         for _, model in ipairs(npcFolder:GetChildren()) do
             if model:IsA("Model") and model.Name == name then
-                root.CFrame = model:GetPivot() * CFrame.new(0, 0, 4)
-                teleported = true
+                teleported = Navigation.tryMoveRoot(
+                    root, model:GetPivot() * CFrame.new(0, 0, 4), true
+                )
                 return
             end
         end
@@ -3013,6 +3265,8 @@ UI.Window:AddButtonGrid(UI.TpPlayerSection,
     { Title = "Teleport", Callback = function()
         local target = Config.TeleportPlayer
         if not target or target == "" then return end
+        if SupportState.lockPositionActive then Navigation.notifyPositionLocked() return end
+        local teleported = false
         pcall(function()
             local char = Service.LocalPlayer.Character
             if not char then return end
@@ -3024,9 +3278,11 @@ UI.Window:AddButtonGrid(UI.TpPlayerSection,
             if not tc then return end
             local tr = tc:FindFirstChild("HumanoidRootPart")
             if not tr then return end
-            root.CFrame = tr.CFrame + Vector3.new(3, 0, 0)
+            teleported = Navigation.tryMoveRoot(root, tr.CFrame + Vector3.new(3, 0, 0), true)
         end)
-        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. tostring(Config.TeleportPlayer), Color=Color3.fromRGB(150,150,170), Delay=2 })
+        if teleported then
+            UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. tostring(Config.TeleportPlayer), Color=Color3.fromRGB(150,150,170), Delay=2 })
+        end
     end},
     { Title = "Refresh", Callback = function()
         local pl = Navigation.getPlayerList(); UI.SelectPlayerDropdown:Refresh(pl, pl[1] or "Select Player")
@@ -3041,9 +3297,14 @@ UI.Window:AddButton(UI.SavedLocSection, "Save Current Location", "", "rbxassetid
     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=msg, Color=Color3.fromRGB(150,150,170), Delay=2 })
 end)
 UI.Window:AddButton(UI.SavedLocSection, "Teleport to Saved", "", "rbxassetid://16932740082", function()
-    local ok, result = pcall(Navigation.teleportToSaved)
-    local msg = (ok and result) and "Teleported to saved!" or "No saved location."
-    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content=msg, Color=Color3.fromRGB(150,150,170), Delay=2 })
+    local ok, result, reason = pcall(function()
+        return Navigation.teleportToSaved(true)
+    end)
+    if ok and result then
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to saved!", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    elseif reason ~= "POSITION_LOCKED" then
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="No saved location.", Color=Color3.fromRGB(150,150,170), Delay=2 })
+    end
 end)
 UI.Window:AddButton(UI.SavedLocSection, "Reset Saved Location", "", "rbxassetid://16932740082", function()
     pcall(function()
@@ -3381,28 +3642,45 @@ end)
 -- Helper: update paragraph text, support both old (Frame) dan new (table:Set) library
 S.setParagraphText = function(para, text)
     if not para then return end
+    text = tostring(text or "")
     if type(para) == "table" and para.Set then
         pcall(function() para:Set(text) end)
     else
         pcall(function()
             local label = para:FindFirstChild("ParagraphContent")
-            if label then label.Text = tostring(text) end
+            if not label then return end
+            label.Text = text
+
+            -- CreateParagraph measures only its initial content. Recalculate
+            -- after every dynamic update so multiline Quest panels keep a
+            -- real bottom gap instead of clipping against the background.
+            local width = label.AbsoluteSize.X
+            if width <= 0 then
+                width = math.max(220, para.AbsoluteSize.X - 20)
+            end
+            local bounds = Service.TextService:GetTextSize(
+                text, label.TextSize, label.Font,
+                Vector2.new(width, 10000))
+            local contentHeight = math.max(16, math.ceil(bounds.Y) + 2)
+            label.AutomaticSize = Enum.AutomaticSize.None
+            label.Size = UDim2.new(1, -20, 0, contentHeight)
+            para.AutomaticSize = Enum.AutomaticSize.None
+            para.Size = UDim2.new(1, 0, 0, math.max(52, 29 + contentHeight + 14))
         end)
     end
 end
 
--- Equip an inventory item and wait until the server confirms it is held.
--- Switching held tools only needs EquipToolFromHotbar; UnequipItem would
--- unnecessarily change the player's hotbar layout.
-S.equipAndHold = function(UUID, itemType)
+-- Equip an inventory item and work around hotbar slots that refuse to switch.
+S.equipAndHold = function(UUID, itemType, shouldContinue)
     local uuid = tostring(UUID or "")
-    if uuid == "" or not Remote.equipItem or not Remote.equipTool then
+    if uuid == "" or not Remote.equipItem or not Remote.equipTool or not Remote.unequipItem then
         return false
     end
 
     local equippedItems = Data.Player:Get("EquippedItems") or {}
     local slot = table.find(equippedItems, uuid)
     if not slot then
+        if shouldContinue and not shouldContinue() then return false end
         local sent = pcall(function()
             Remote.equipItem:FireServer(UUID, itemType)
         end)
@@ -3410,6 +3688,7 @@ S.equipAndHold = function(UUID, itemType)
 
         local equipDeadline = os.clock() + 3
         while not slot and os.clock() < equipDeadline do
+            if shouldContinue and not shouldContinue() then return false end
             task.wait(0.05)
             equippedItems = Data.Player:Get("EquippedItems") or {}
             slot = table.find(equippedItems, uuid)
@@ -3417,19 +3696,45 @@ S.equipAndHold = function(UUID, itemType)
     end
     if not slot then return false end
 
-    local sent = pcall(function()
-        Remote.equipTool:FireServer(slot)
-    end)
-    if not sent then return false end
+    for _ = 1, 3 do
+        if shouldContinue and not shouldContinue() then return false end
+        equippedItems = Data.Player:Get("EquippedItems") or {}
+        slot = table.find(equippedItems, uuid)
+        if not slot then return false end
 
-    local holdDeadline = os.clock() + 3
-    while os.clock() < holdDeadline do
-        local equippedType = Data.Player:Get("EquippedType")
-        local equippedId = tostring(Data.Player:Get("EquippedId") or "")
-        if equippedType == itemType and equippedId == uuid then
-            return true
+        local sent = pcall(function()
+            Remote.equipTool:FireServer(slot)
+        end)
+        if not sent then return false end
+
+        -- Allow normal replication first; only remove a blocker that persists.
+        local graceDeadline = os.clock() + 0.35
+        while os.clock() < graceDeadline do
+            if shouldContinue and not shouldContinue() then return false end
+            local equippedType = Data.Player:Get("EquippedType")
+            local equippedId = tostring(Data.Player:Get("EquippedId") or "")
+            if equippedType == itemType and equippedId == uuid then
+                return true
+            end
+            task.wait(0.05)
         end
-        task.wait(0.05)
+
+        local blockingId = tostring(Data.Player:Get("EquippedId") or "")
+        if blockingId ~= "" and blockingId ~= uuid then
+            pcall(function()
+                Remote.unequipItem:FireServer(blockingId)
+            end)
+
+            local removalDeadline = os.clock() + 1.5
+            while os.clock() < removalDeadline do
+                if shouldContinue and not shouldContinue() then return false end
+                equippedItems = Data.Player:Get("EquippedItems") or {}
+                if not table.find(equippedItems, blockingId) then break end
+                task.wait(0.05)
+            end
+        else
+            task.wait(0.1)
+        end
     end
     return false
 end
@@ -3491,6 +3796,25 @@ do
         end)
         return firstUUID, total
     end
+    S.rodHasEnchant = function(rodUUID, enchantId)
+        local matched = false
+        pcall(function()
+            local inv = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+            if not inv then return end
+            for _, items in pairs(inv) do
+                if type(items) ~= "table" then continue end
+                for _, item in ipairs(items) do
+                    if tostring(item.UUID or "") == tostring(rodUUID or "") then
+                        local meta = item.Metadata or {}
+                        matched = tostring(meta.EnchantId or "") == tostring(enchantId or "")
+                            or tostring(meta.EnchantId2 or "") == tostring(enchantId or "")
+                        return
+                    end
+                end
+            end
+        end)
+        return matched
+    end
     local function updateEnchantPara()
         if not S.enchantPara then return end
         local rodName,e1,e2,stoneCount = "None","None","None",0
@@ -3543,11 +3867,15 @@ do
         Config.TargetEnchant = v or "Select Option"
     end,"Dropdown_Target Enchant")
     S.enchantToggle = UI.Window:AddToggle(EnchantSection,"Auto Enchant Reroll","",false,function(state)
+        S.enchantSession = (S.enchantSession or 0) + 1
         for _,conn in ipairs(S.enchantConns) do pcall(function() conn:Disconnect() end) end
         S.enchantConns = {}
         S.enchantPending = false
+        S.enchantStopRequested = not state
         S.enchantExpectedStoneId = nil
         S.enchantExpectedTarget = nil
+        S.enchantExpectedRodUUID = nil
+        S.enchantRequestInventorySerial = nil
         if S.enchantThread then pcall(task.cancel,S.enchantThread) S.enchantThread = nil end
         Config.AutoEnchantReroll = state
         if not state then return end
@@ -3562,7 +3890,8 @@ do
             updateEnchantPara()
         end))
         table.insert(S.enchantConns,Remote.enchantRoll.OnClientEvent:Connect(function(_, enchantId, eventStoneId)
-            if not S.enchantPending then return end
+            if not S.enchantPending or S.enchantStopRequested then return end
+            local eventSession = S.enchantSession
             if eventStoneId ~= nil and S.enchantExpectedStoneId ~= nil
                 and tonumber(eventStoneId) ~= tonumber(S.enchantExpectedStoneId)
             then
@@ -3573,21 +3902,55 @@ do
                 local d = Data.ItemUtility:GetEnchantData(enchantId)
                 if d and d.Data then enchantName = d.Data.Name end
             end)
-            task.delay(0.2, function()
-                if Config.AutoEnchantReroll then updateEnchantPara() end
-            end)
             if enchantName == S.enchantExpectedTarget then
-                pcall(function() S.enchantToggle:Set(false) end)
-                UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant Completed - "..enchantName})
+                -- Stop permission is revoked immediately; UI turns off only
+                -- after the final rod metadata has reached the paragraph.
+                S.enchantStopRequested = true
+                S.enchantPending = false
+                local targetRodUUID = S.enchantExpectedRodUUID
+                local targetEnchantId = enchantId
+                local observedSerial = S.enchantRequestInventorySerial or S.enchantInventorySerial
+                S.enchantExpectedStoneId = nil
+                S.enchantExpectedTarget = nil
+                S.enchantExpectedRodUUID = nil
+                S.enchantRequestInventorySerial = nil
+
+                task.spawn(function()
+                    local replicated = S.rodHasEnchant(targetRodUUID,targetEnchantId)
+                    local deadline = os.clock()+1.5
+                    while Config.AutoEnchantReroll and S.enchantSession == eventSession
+                        and not replicated and os.clock()<deadline
+                    do
+                        local currentSerial = S.enchantInventorySerial
+                        if currentSerial ~= observedSerial then
+                            observedSerial = currentSerial
+                            replicated = S.rodHasEnchant(targetRodUUID,targetEnchantId)
+                        end
+                        task.wait(0.05)
+                    end
+                    if not Config.AutoEnchantReroll or S.enchantSession ~= eventSession then return end
+                    updateEnchantPara()
+                    if S.enchantSession ~= eventSession then return end
+                    pcall(function() S.enchantToggle:Set(false) end)
+                    UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant Completed - "..enchantName})
+                end)
+                return
             end
+            task.delay(0.2, function()
+                if Config.AutoEnchantReroll and S.enchantSession == eventSession then
+                    updateEnchantPara()
+                end
+            end)
             S.enchantPending = false
             S.enchantExpectedStoneId = nil
             S.enchantExpectedTarget = nil
+            S.enchantExpectedRodUUID = nil
+            S.enchantRequestInventorySerial = nil
         end))
         updateEnchantPara()
         S.enchantThread = task.spawn(function()
             local equipFailures = 0
-            while Config.AutoEnchantReroll do
+            while Config.AutoEnchantReroll and not S.enchantStopRequested do
                 local rodUUID = nil
                 pcall(function()
                     local eq = Data.Player:Get("EquippedItems") or {}
@@ -3634,7 +3997,9 @@ do
                 S.enchantPending = true
                 S.enchantExpectedStoneId = stoneId
                 S.enchantExpectedTarget = Config.TargetEnchant
+                S.enchantExpectedRodUUID = rodUUID
                 local inventorySerialBefore = S.enchantInventorySerial
+                S.enchantRequestInventorySerial = inventorySerialBefore
                 local sent
                 if stoneId == 246 or stoneId == 1098 then
                     sent = pcall(function() Remote.enchantAltar2:FireServer() end)
@@ -3645,16 +4010,21 @@ do
                     S.enchantPending = false
                     S.enchantExpectedStoneId = nil
                     S.enchantExpectedTarget = nil
+                    S.enchantExpectedRodUUID = nil
+                    S.enchantRequestInventorySerial = nil
                     UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Failed to start enchant"})
                     pcall(function() S.enchantToggle:Set(false) end)
                     break
                 end
                 local dl = os.clock()+12
                 while S.enchantPending and os.clock()<dl do task.wait(0.05) end
+                if S.enchantStopRequested then break end
                 if S.enchantPending then
                     S.enchantPending = false
                     S.enchantExpectedStoneId = nil
                     S.enchantExpectedTarget = nil
+                    S.enchantExpectedRodUUID = nil
+                    S.enchantRequestInventorySerial = nil
                     UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Enchant response timeout"})
                     pcall(function() S.enchantToggle:Set(false) end)
                     break
@@ -3692,12 +4062,12 @@ do
         {Title="Teleport to Altar 1",Callback=function()
             local char=Service.LocalPlayer.Character
             local root=char and char:FindFirstChild("HumanoidRootPart")
-            if root then pcall(function() root.CFrame=CFrame.new(3246.00122,-1300.65588,1395.11926,-0.430797249,0,0.902448714,0,1,0,-0.902448714,0,-0.430797249) end) end
+            Navigation.tryMoveRoot(root,CFrame.new(3246.00122,-1300.65588,1395.11926,-0.430797249,0,0.902448714,0,1,0,-0.902448714,0,-0.430797249),true)
         end},
         {Title="Teleport to Altar 2",Callback=function()
             local char=Service.LocalPlayer.Character
             local root=char and char:FindFirstChild("HumanoidRootPart")
-            if root then pcall(function() root.CFrame=CFrame.new(1478.63489,130.679703,-609.361938,-0.996601522,2.26994281e-08,-0.0823735297,2.58843453e-08,1,-3.7596422e-08,0.0823735297,-3.96008382e-08,-0.996601522) end) end
+            Navigation.tryMoveRoot(root,CFrame.new(1478.63489,130.679703,-609.361938,-0.996601522,2.26994281e-08,-0.0823735297,2.58843453e-08,1,-3.7596422e-08,0.0823735297,-3.96008382e-08,-0.996601522),true)
         end}
     )
 end
@@ -3997,7 +4367,13 @@ S.startAutoBuyBM = function()
         local root = Service.LocalPlayer.Character
             and Service.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
         local preBMCF = root and root.CFrame
-        Navigation.teleportToBM(S.BM_CF)
+        local moved = Navigation.teleportToBM(S.BM_CF, true)
+        if not moved then
+            Config.AutoBuyBM = false
+            S.autoBuyBMThread = nil
+            if S.bmToggleFunc then task.defer(function() pcall(function() S.bmToggleFunc:Set(false) end) end) end
+            return
+        end
         task.wait(1.5)
         local bought = {}
         for _, name in ipairs(Config.SelectedBMItems) do
@@ -4006,7 +4382,7 @@ S.startAutoBuyBM = function()
             end
         end
         task.wait(0.5)
-        if preBMCF and root then root.CFrame = preBMCF end
+        if preBMCF and root then Navigation.tryMoveRoot(root, preBMCF) end
         Config.AutoBuyBM = false
         S.autoBuyBMThread = nil
         if S.bmToggleFunc then task.defer(function() pcall(function() S.bmToggleFunc:Set(false) end) end) end
@@ -4285,6 +4661,1014 @@ S.merchantToggleFunc = UI.Window:AddToggle(S.MerchantSection, "Buy Merchant Item
         Config.AutoBuyMerchant = false
     end
 end, "Toggle_Buy Merchant Item")
+
+-- ==========================================
+-- QUEST FEATURES
+-- One coordinator owns all temporary listeners and fishing/sell holds.
+-- Quest toggles are intentionally not persisted: executing the script only
+-- reads progress and never starts movement or remote calls by itself.
+-- ==========================================
+do
+    S.Quest = {
+        Goals = {
+            DeepSea = {
+                { Goal=300, Text="Catch 300 Rare/Epic fish at Treasure Room" },
+                { Goal=3, Text="Catch 3 Mythic fish at Sisyphus Statue" },
+                { Goal=1, Text="Catch 1 SECRET fish at Sisyphus Statue" },
+                { Goal=1000000, Text="Earn 1M Coins" },
+            },
+            Element = {
+                { Goal=1, Text="Own Ghostfinn Rod" },
+                { Goal=1, Text="Catch 1 SECRET fish at Ancient Jungle" },
+                { Goal=1, Text="Catch 1 SECRET fish at Sacred Temple" },
+                { Goal=3, Text="Create 3 Transcended Stones" },
+            },
+            Diamond = {
+                { Goal=1, Text="Own an Element Rod" },
+                { Goal=1, Text="Catch a SECRET fish at Coral Reefs" },
+                { Goal=1, Text="Catch a SECRET fish at Tropical Grove" },
+                { Goal=1, Text="Bring Lary a mutated Gemstone Ruby" },
+                { Goal=1, Text="Bring Lary a Lochness Monster" },
+                { Goal=1000, Text="Catch 1,000 fish using PERFECT! throw" },
+            },
+        },
+        Artifacts = {
+            { Type="Arrow Artifact", CFrame=CFrame.new(875,3.58514142,-368,-4.37113883e-08,0,1,0,1,0,-1,0,-4.37113883e-08) },
+            { Type="Hourglass Diamond Artifact", CFrame=CFrame.new(1487,2.85159993,-842,-1,0,-8.74227766e-08,0,1,0,8.74227766e-08,0,-1) },
+            { Type="Crescent Artifact", CFrame=CFrame.new(1403,3.16851091,123,-1,0,-8.74227766e-08,0,1,0,8.74227766e-08,0,-1) },
+            { Type="Diamond Artifact", CFrame=CFrame.new(1844,2.85966992,-287,-4.37113883e-08,0,-1,0,1,0,1,0,-4.37113883e-08) },
+        },
+        Pressure = {
+            { Type="Rare", Name="Freshwater Piranha" },
+            { Type="Epic", Name="Goliath Tiger" },
+            { Type="Legendary", Name="Sacred Guardian Squid" },
+            { Type="Mythic", Name="Crocodile" },
+        },
+        DiamondDoor = CFrame.new(
+            -1766.77087,-222.635422,23936.8965,
+            -0.703928888,-9.02597677e-08,0.710270464,
+            -9.39578726e-08,1,3.39590471e-08,
+            -0.710270464,-4.28307452e-08,-0.703928888),
+        ItemTypes = {"Fish", "Gears", "Fishing Rods", "Enchant Stones"},
+        ItemDataCache = {},
+        KnownIds = {
+            ["Arrow Artifact"]=265, ["Crescent Artifact"]=266,
+            ["Diamond Artifact"]=267, ["Hourglass Diamond Artifact"]=271,
+            ["Ghostfinn Rod"]=169, ["Element Rod"]=257,
+            ["Diamond Key"]=574, ["Diamond Rod"]=559,
+        },
+        Runners = {},
+    }
+
+    S.Quest.get = function(path)
+        local value = nil
+        pcall(function() value = Data.Player:Get(path) end)
+        return value
+    end
+
+    S.Quest.getMainline = function(name)
+        local state = S.Quest.get({"Quests","Mainline",name})
+        if state ~= nil then return state end
+        local quests = S.Quest.get("Quests")
+        return quests and quests.Mainline and quests.Mainline[name] or nil
+    end
+
+    S.Quest.isCompleted = function(name)
+        local completed = S.Quest.get("CompletedQuests") or {}
+        if table.find(completed, name) then return true end
+        return completed[name] == true
+    end
+
+    S.Quest.progress = function(name, index, goal)
+        if S.Quest.isCompleted(name) then return goal end
+        local state = S.Quest.getMainline(name)
+        local objective = state and state.Objectives and state.Objectives[index]
+        return math.clamp(tonumber(objective and objective.Progress) or 0, 0, goal)
+    end
+
+    S.Quest.eachInventoryItem = function(callback)
+        local inventory = S.Quest.get("Inventory") or Data.Player.Data.Inventory
+        if type(inventory) ~= "table" then return nil end
+        for category, items in pairs(inventory) do
+            if type(items) == "table" then
+                for _, item in ipairs(items) do
+                    if type(item) == "table" and item.Id ~= nil then
+                        local cacheKey = tostring(item.Id)
+                        local itemData = S.Quest.ItemDataCache[cacheKey]
+                        if itemData == nil then
+                            pcall(function()
+                                itemData = Data.ItemUtility.GetItemDataFromItemType(category, item.Id)
+                            end)
+                            for _, itemType in ipairs(S.Quest.ItemTypes) do
+                                if itemData then break end
+                                pcall(function()
+                                    itemData = Data.ItemUtility.GetItemDataFromItemType(itemType, item.Id)
+                                end)
+                                if itemData then
+                                    category = itemType
+                                end
+                            end
+                            S.Quest.ItemDataCache[cacheKey] = itemData or false
+                        elseif itemData == false then
+                            itemData = nil
+                        end
+                        local data = itemData and itemData.Data or nil
+                        local result = callback(item, category, data)
+                        if result ~= nil then return result end
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    S.Quest.findItem = function(predicate)
+        return S.Quest.eachInventoryItem(function(item, category, data)
+            if predicate(item, category, data) then
+                return { Item=item, Category=category, Data=data }
+            end
+        end)
+    end
+
+    S.Quest.findById = function(id, category, variant)
+        local inventory = S.Quest.get("Inventory") or Data.Player.Data.Inventory
+        local items = inventory and inventory.Items or {}
+        for _, item in ipairs(items) do
+            if type(item) == "table" and tonumber(item.Id) == tonumber(id) then
+                local metadata = item.Metadata or {}
+                if not variant or metadata.Variant == variant
+                    or metadata.VariantId == variant
+                then
+                    return { Item=item, Category=category }
+                end
+            end
+        end
+        return nil
+    end
+
+    S.Quest.findByName = function(name)
+        local id = S.Quest.KnownIds[name]
+        local resolvedType = nil
+        if not id then
+            for _, itemType in ipairs(S.Quest.ItemTypes) do
+                local itemData = nil
+                pcall(function()
+                    itemData = Data.ItemUtility.GetItemDataFromItemType(itemType, name)
+                end)
+                if itemData and itemData.Data then
+                    id = itemData.Data.Id
+                    resolvedType = itemType
+                    S.Quest.KnownIds[name] = id
+                    break
+                end
+            end
+        end
+        return id and S.Quest.findById(id, resolvedType) or nil
+    end
+
+    S.Quest.findFish = function(id, variant)
+        return S.Quest.findById(id, "Fish", variant)
+    end
+
+    S.Quest.findSecret = function()
+        return S.Quest.findItem(function(_, _, data)
+            return data and data.Type == "Fish" and tonumber(data.Tier) == 7
+        end)
+    end
+
+    S.Quest.hasUUID = function(uuid)
+        local inventory = S.Quest.get("Inventory") or Data.Player.Data.Inventory
+        local items = inventory and inventory.Items or {}
+        for _, item in ipairs(items) do
+            if type(item) == "table"
+                and tostring(item.UUID or "") == tostring(uuid or "")
+            then
+                return true
+            end
+        end
+        return false
+    end
+
+    S.Quest.owns = function(name)
+        return S.Quest.findByName(name) ~= nil
+    end
+
+    S.Quest.isActive = function(job, generation)
+        return Runtime.Quest.ActiveJob == job
+            and Runtime.Quest.Generation == generation
+            and Runtime.Quest.Enabled[job] == true
+            and not Runtime.Quest.EventPause
+    end
+
+    S.Quest.waitUntil = function(job, generation, predicate, timeout, interval)
+        local deadline = timeout and (os.clock() + timeout) or nil
+        while S.Quest.isActive(job, generation) do
+            local ok, result = pcall(predicate)
+            if ok and result then return true end
+            if deadline and os.clock() >= deadline then return false end
+            task.wait(interval or 0.1)
+        end
+        return false
+    end
+
+    S.Quest.moveTo = function(key, destination)
+        if Runtime.Quest.EventPause then return false end
+        if Runtime.Quest.LastLocation == key then return true end
+        local moved = false
+        if typeof(destination) == "CFrame" then
+            local character = Service.LocalPlayer.Character
+            local root = character and character:FindFirstChild("HumanoidRootPart")
+            moved = Navigation.tryMoveRoot(root, destination, false)
+        else
+            moved = Navigation.teleportTo(destination, false)
+        end
+        if moved then Runtime.Quest.LastLocation = key end
+        return moved
+    end
+
+    S.Quest.acquireTransaction = function(job, generation, timeout)
+        Runtime.Quest.FishingHold = true
+        Runtime.Quest.SellHold = true
+        local ready = S.Quest.waitUntil(job, generation, function()
+            return Runtime.Fishing.Phase == "Idle"
+                and Runtime.Fishing.Owner == nil
+                and not Runtime.Sell.Busy
+        end, timeout or 8, 0.05)
+        return ready
+    end
+
+    S.Quest.releaseTransaction = function()
+        Runtime.Quest.FishingHold = false
+        Runtime.Quest.SellHold = false
+        Runtime.Quest.CatchReview = false
+        task.defer(function()
+            if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle"
+                and not Runtime.Quest.SellHold
+                and not Runtime.Quest.CatchReview
+            then
+                Runtime.Sell.Flush()
+            end
+        end)
+    end
+
+    S.Quest.cancelActive = function(job)
+        if job and Runtime.Quest.ActiveJob ~= job then return end
+        Runtime.Quest.Generation = Runtime.Quest.Generation + 1
+        Runtime.Quest.ActiveJob = nil
+        Runtime.Quest.ForcePerfect = false
+        Runtime.Quest.LastLocation = nil
+        S.Quest.releaseTransaction()
+    end
+
+    S.Quest.JobOrder = {
+        "DeepSea", "Artifact", "Element", "Diamond", "Crystalline",
+    }
+
+    S.Quest.anyEnabled = function()
+        for _, job in ipairs(S.Quest.JobOrder) do
+            if Runtime.Quest.Enabled[job] == true then return true end
+        end
+        return false
+    end
+
+    S.Quest.jobComplete = function(job)
+        if job == "DeepSea" then
+            return S.Quest.owns("Ghostfinn Rod")
+        elseif job == "Artifact" then
+            local levers = S.Quest.get("TempleLevers") or {}
+            for _, definition in ipairs(S.Quest.Artifacts) do
+                if levers[definition.Type] ~= true then return false end
+            end
+            return true
+        elseif job == "Element" then
+            return S.Quest.owns("Element Rod")
+        elseif job == "Diamond" then
+            return S.Quest.owns("Diamond Rod")
+        elseif job == "Crystalline" then
+            local plates = S.Quest.get("RuinPressurePlates") or {}
+            for _, definition in ipairs(S.Quest.Pressure) do
+                if plates[definition.Type] ~= true then return false end
+            end
+            return true
+        end
+        return false
+    end
+
+    -- Dependencies only decide which enabled worker can currently run. They
+    -- never turn on another Quest and never mutate a user's toggle.
+    S.Quest.jobEligible = function(job)
+        if job == "DeepSea" then
+            return S.Quest.getMainline("Deep Sea Quest") ~= nil
+                or S.Quest.isCompleted("Deep Sea Quest")
+                or S.Quest.owns("Ghostfinn Rod")
+        elseif job == "Artifact" or job == "Crystalline" then
+            return true
+        elseif job == "Element" then
+            local hasGhostfinn = S.Quest.progress("Element Quest", 1, 1) >= 1
+                or S.Quest.owns("Ghostfinn Rod")
+            return hasGhostfinn
+                and (S.Quest.getMainline("Element Quest") ~= nil
+                    or S.Quest.isCompleted("Element Quest")
+                    or S.Quest.owns("Element Rod"))
+        elseif job == "Diamond" then
+            return S.Quest.owns("Element Rod")
+                or S.Quest.progress("Diamond Researcher", 1, 1) >= 1
+                or S.Quest.owns("Diamond Key")
+                or S.Quest.owns("Diamond Rod")
+        end
+        return false
+    end
+
+    S.Quest.chooseJob = function()
+        local now = os.clock()
+        for _, job in ipairs(S.Quest.JobOrder) do
+            if Runtime.Quest.Enabled[job] == true
+                and not S.Quest.jobComplete(job)
+                and S.Quest.jobEligible(job)
+                and (Runtime.Quest.RetryAt[job] or 0) <= now
+            then
+                return job
+            end
+        end
+        return nil
+    end
+
+    S.Quest.startPlanner = function()
+        if Runtime.Quest.PlannerThread then return end
+        Runtime.Quest.PlannerGeneration = Runtime.Quest.PlannerGeneration + 1
+        local plannerGeneration = Runtime.Quest.PlannerGeneration
+        Runtime.Quest.PlannerThread = task.spawn(function()
+            while Runtime.Quest.PlannerGeneration == plannerGeneration
+                and S.Quest.anyEnabled()
+            do
+                if Runtime.Quest.EventPause or SupportState.lockPositionActive then
+                    task.wait(0.2)
+                    continue
+                end
+
+                local job = S.Quest.chooseJob()
+                local runner = job and S.Quest.Runners[job] or nil
+                if not runner then
+                    Runtime.Quest.ActiveJob = nil
+                    task.wait(1)
+                    continue
+                end
+
+                Runtime.Quest.Generation = Runtime.Quest.Generation + 1
+                local generation = Runtime.Quest.Generation
+                Runtime.Quest.ActiveJob = job
+                Runtime.Quest.LastLocation = nil
+                local ok, completed = pcall(runner, generation)
+                if Runtime.Quest.ActiveJob == job
+                    and Runtime.Quest.Generation == generation
+                then
+                    Runtime.Quest.ActiveJob = nil
+                    Runtime.Quest.ForcePerfect = false
+                    Runtime.Quest.LastLocation = nil
+                    S.Quest.releaseTransaction()
+                    if not ok or completed ~= true then
+                        Runtime.Quest.RetryAt[job] = os.clock() + 1
+                    else
+                        Runtime.Quest.RetryAt[job] = nil
+                    end
+                    Runtime.Quest.RefreshPanels()
+                end
+                task.wait(0.1)
+            end
+            if Runtime.Quest.PlannerGeneration == plannerGeneration then
+                Runtime.Quest.ActiveJob = nil
+                Runtime.Quest.PlannerThread = nil
+                Runtime.Quest.ForcePerfect = false
+                Runtime.Quest.LastLocation = nil
+                S.Quest.releaseTransaction()
+            end
+        end)
+    end
+
+    Runtime.Quest.Start = function(job)
+        if not S.Quest.Runners[job] then return false end
+        Runtime.Quest.Enabled[job] = true
+        Runtime.Quest.RetryAt[job] = nil
+        S.Quest.startPlanner()
+        return true
+    end
+
+    Runtime.Quest.Stop = function(job, silent)
+        if job then
+            Runtime.Quest.Enabled[job] = false
+            Runtime.Quest.RetryAt[job] = nil
+            if Runtime.Quest.ActiveJob == job then
+                S.Quest.cancelActive(job)
+            end
+        else
+            for _, name in ipairs(S.Quest.JobOrder) do
+                Runtime.Quest.Enabled[name] = false
+                Runtime.Quest.RetryAt[name] = nil
+            end
+            Runtime.Quest.PlannerGeneration = Runtime.Quest.PlannerGeneration + 1
+            S.Quest.cancelActive()
+            Runtime.Quest.PlannerThread = nil
+        end
+        if not silent then Runtime.Quest.RefreshPanels() end
+    end
+
+    S.Quest.placeStateItem = function(job, generation, remote, stateKey, typeName)
+        if not S.Quest.acquireTransaction(job, generation, 8) then
+            S.Quest.releaseTransaction()
+            return false, "Unable to pause fishing/sell safely"
+        end
+        local sent = remote and pcall(function() remote:FireServer(typeName) end)
+        if not sent then
+            S.Quest.releaseTransaction()
+            return false, "Placement remote failed"
+        end
+        local acknowledged = S.Quest.waitUntil(job, generation, function()
+            local state = S.Quest.get(stateKey) or {}
+            return state[typeName] == true
+        end, 10, 0.1)
+        S.Quest.releaseTransaction()
+        if not acknowledged then return false, typeName .. " placement timeout" end
+        return true
+    end
+
+    S.Quest.exchangeItem = function(job, generation, questName, objectiveId, args)
+        local before = S.Quest.progress(questName, objectiveId, 1)
+        if not S.Quest.acquireTransaction(job, generation, 8) then
+            S.Quest.releaseTransaction()
+            return false, "Unable to pause fishing/sell safely"
+        end
+        local sent = Remote.dialogueEnded and pcall(function()
+            Remote.dialogueEnded:FireServer(table.unpack(args))
+        end)
+        if not sent then
+            S.Quest.releaseTransaction()
+            return false, "Quest exchange remote failed"
+        end
+        local acknowledged = S.Quest.waitUntil(job, generation, function()
+            return S.Quest.progress(questName, objectiveId, 1) > before
+                or S.Quest.isCompleted(questName)
+        end, 10, 0.1)
+        S.Quest.releaseTransaction()
+        if not acknowledged then return false, "Quest exchange acknowledgement timeout" end
+        return true
+    end
+
+    S.Quest.createTranscended = function(job, generation, entry)
+        local uuid = entry and entry.Item and entry.Item.UUID
+        if not uuid then return false, "Secret fish UUID not found" end
+        if not Remote.createTranscended then
+            return false, "Create Transcended remote not found"
+        end
+        if not S.Quest.acquireTransaction(job, generation, 8) then
+            S.Quest.releaseTransaction()
+            return false, "Unable to pause fishing/sell safely"
+        end
+        if not S.equipAndHold(uuid, "Fish", function()
+            return S.Quest.isActive(job, generation)
+        end) then
+            S.Quest.releaseTransaction()
+            return false, "Unable to equip Secret fish"
+        end
+        local done, result, errorText = false, false, "Create Transcended timeout"
+        local invokeThread = task.spawn(function()
+            local ok, response, message = pcall(function()
+                return Remote.createTranscended:InvokeServer()
+            end)
+            result = ok and response == true
+            errorText = ok and tostring(message or "Create Transcended failed")
+                or tostring(response or "Create Transcended failed")
+            done = true
+        end)
+        local callDeadline = os.clock() + 10
+        while S.Quest.isActive(job, generation) and not done
+            and os.clock() < callDeadline
+        do
+            task.wait(0.05)
+        end
+        if not done then pcall(task.cancel, invokeThread) end
+        if not done or not result then
+            S.Quest.releaseTransaction()
+            return false, errorText
+        end
+        local consumed = S.Quest.waitUntil(job, generation, function()
+            return not S.Quest.hasUUID(uuid)
+        end, 4, 0.05)
+        S.Quest.releaseTransaction()
+        if not consumed then return false, "Transcended inventory sync timeout" end
+        return true
+    end
+
+    S.Quest.openAndClaimDiamond = function(job, generation, keyEntry)
+        local uuid = keyEntry and keyEntry.Item and keyEntry.Item.UUID
+        if not uuid then return false, "Diamond Key UUID not found" end
+        if not S.Quest.acquireTransaction(job, generation, 8) then
+            S.Quest.releaseTransaction()
+            return false, "Unable to pause fishing/sell safely"
+        end
+        if not S.Quest.moveTo("Diamond:KeyDoor", S.Quest.DiamondDoor) then
+            S.Quest.releaseTransaction()
+            return false, "Position Lock blocked Diamond Key Door teleport"
+        end
+        if not S.equipAndHold(uuid, "Gears", function()
+            return S.Quest.isActive(job, generation)
+        end) then
+            S.Quest.releaseTransaction()
+            return false, "Unable to equip Diamond Key"
+        end
+
+        local prompt = nil
+        local promptReady = S.Quest.waitUntil(job, generation, function()
+            local doors = Service.CollectionService:GetTagged("DiamondDoor")
+            local door = doors[1]
+            local input = door and door:FindFirstChild("InputPart")
+            prompt = input and input:FindFirstChildOfClass("ProximityPrompt")
+            return prompt and prompt.Enabled
+        end, 4, 0.05)
+        if not promptReady or type(fireproximityprompt) ~= "function" then
+            S.Quest.releaseTransaction()
+            return false, "Diamond door prompt is unavailable"
+        end
+        local opened = pcall(fireproximityprompt, prompt)
+        if not opened then
+            S.Quest.releaseTransaction()
+            return false, "Diamond door activation failed"
+        end
+        S.Quest.waitUntil(job, generation, function()
+            return prompt.Parent == nil or prompt.Enabled == false
+        end, 2, 0.05)
+
+        local done, claimed = false, false
+        local claimThread = task.spawn(function()
+            local ok, result = pcall(function()
+                return Remote.claimItem:InvokeServer("Diamond Rod")
+            end)
+            claimed = ok and result ~= false
+            done = true
+        end)
+        local claimDeadline = os.clock() + 10
+        while S.Quest.isActive(job, generation) and not done
+            and os.clock() < claimDeadline
+        do
+            task.wait(0.05)
+        end
+        if not done then pcall(task.cancel, claimThread) end
+        if not done or not claimed then
+            S.Quest.releaseTransaction()
+            return false, "Diamond Rod claim failed"
+        end
+        local received = S.Quest.waitUntil(job, generation, function()
+            return S.Quest.owns("Diamond Rod")
+        end, 8, 0.1)
+        S.Quest.releaseTransaction()
+        if not received then return false, "Diamond Rod inventory sync timeout" end
+        return true
+    end
+
+    S.Quest.Runners.Artifact = function(generation)
+        while S.Quest.isActive("Artifact", generation) do
+            local levers = S.Quest.get("TempleLevers") or {}
+            local remaining, acted = 0, false
+            for _, definition in ipairs(S.Quest.Artifacts) do
+                if levers[definition.Type] ~= true then
+                    remaining = remaining + 1
+                    local item = S.Quest.findByName(definition.Type)
+                    if item then
+                        local ok, message = S.Quest.placeStateItem(
+                            "Artifact", generation, Remote.placeLever,
+                            "TempleLevers", definition.Type)
+                        if not ok then return false, message end
+                        acted = true
+                        break
+                    elseif not S.Quest.moveTo(definition.Type, definition.CFrame) then
+                        return false, "Position Lock blocked Artifact teleport"
+                    end
+                end
+            end
+            Runtime.Quest.RefreshPanels()
+            if remaining == 0 then
+                return true, "Artifact Lever completed"
+            end
+            if not acted then task.wait(0.4) end
+        end
+        return false
+    end
+
+    S.Quest.Runners.DeepSea = function(generation)
+        if not S.Quest.getMainline("Deep Sea Quest")
+            and not S.Quest.isCompleted("Deep Sea Quest")
+            and not S.Quest.owns("Ghostfinn Rod")
+        then
+            return false, "Deep Sea Quest is not active"
+        end
+        while S.Quest.isActive("DeepSea", generation) do
+            local ghostfinn = S.Quest.findByName("Ghostfinn Rod")
+            if ghostfinn then
+                local uuid = ghostfinn.Item and ghostfinn.Item.UUID
+                if not uuid then return false, "Ghostfinn Rod UUID not found" end
+                if not S.Quest.acquireTransaction("DeepSea", generation, 8) then
+                    S.Quest.releaseTransaction()
+                    return false, "Unable to pause fishing/sell safely"
+                end
+                local equipped = S.equipAndHold(uuid, "Fishing Rods", function()
+                    return S.Quest.isActive("DeepSea", generation)
+                end)
+                S.Quest.releaseTransaction()
+                if not equipped then return false, "Unable to equip Ghostfinn Rod" end
+                return true, "Deep Sea Quest completed"
+            end
+            local objective = nil
+            for index, definition in ipairs(S.Quest.Goals.DeepSea) do
+                if S.Quest.progress("Deep Sea Quest", index, definition.Goal) < definition.Goal then
+                    objective = index
+                    break
+                end
+            end
+            if objective == 1 then
+                if not S.Quest.moveTo("DeepSea:Treasure", "Treasure Room") then
+                    return false, "Position Lock blocked Treasure Room teleport"
+                end
+            elseif objective == 2 or objective == 3 then
+                if not S.Quest.moveTo("DeepSea:Sisyphus", "Sisyphus Statue") then
+                    return false, "Position Lock blocked Sisyphus teleport"
+                end
+            end
+            Runtime.Quest.RefreshPanels()
+            task.wait(0.5)
+        end
+        return false
+    end
+
+    S.Quest.Runners.Element = function(generation)
+        if not S.Quest.getMainline("Element Quest")
+            and not S.Quest.isCompleted("Element Quest")
+            and not S.Quest.owns("Element Rod")
+        then
+            return false, "Element Quest is not active"
+        end
+        while S.Quest.isActive("Element", generation) do
+            if S.Quest.owns("Element Rod") then
+                return true, "Element Quest completed"
+            end
+            if S.Quest.progress("Element Quest", 1, 1) < 1
+                and not S.Quest.owns("Ghostfinn Rod")
+            then
+                return false, "Ghostfinn Rod is required first"
+            elseif S.Quest.progress("Element Quest", 2, 1) < 1 then
+                if not S.Quest.moveTo("Element:AncientJungle", "Ancient Jungle") then
+                    return false, "Position Lock blocked Ancient Jungle teleport"
+                end
+            elseif S.Quest.progress("Element Quest", 3, 1) < 1 then
+                if S.Quest.get("UnlockedTemple") == true then
+                    if not S.Quest.moveTo("Element:SacredTemple", "Sacred Temple") then
+                        return false, "Position Lock blocked Sacred Temple teleport"
+                    end
+                else
+                    if not S.Quest.moveTo("Element:TempleLocked", "Ancient Jungle") then
+                        return false, "Position Lock blocked Ancient Jungle teleport"
+                    end
+                end
+            elseif S.Quest.progress("Element Quest", 4, 3) < 3 then
+                local level = tonumber(S.Quest.get("Level")) or 0
+                if level < 200 then
+                    if S.Quest.get("UnlockedTemple") == true then
+                        if not S.Quest.moveTo("Element:Leveling", "Sacred Temple") then
+                            return false, "Position Lock blocked Sacred Temple teleport"
+                        end
+                    end
+                else
+                    local secret = S.Quest.findSecret()
+                    if secret then
+                        local ok, message = S.Quest.createTranscended(
+                            "Element", generation, secret)
+                        if not ok then return false, message end
+                    else
+                    end
+                end
+            end
+            Runtime.Quest.RefreshPanels()
+            task.wait(0.35)
+        end
+        return false
+    end
+
+    S.Quest.Runners.Diamond = function(generation)
+        if not S.Quest.owns("Element Rod")
+            and S.Quest.progress("Diamond Researcher", 1, 1) < 1
+            and not S.Quest.owns("Diamond Key")
+            and not S.Quest.owns("Diamond Rod")
+        then
+            return false, "Element Rod is required first"
+        end
+        if not S.Quest.getMainline("Diamond Researcher")
+            and not S.Quest.isCompleted("Diamond Researcher")
+            and not S.Quest.owns("Diamond Key")
+        then
+            if not Remote.dialogueEnded then
+                return false, "Diamond quest remote not found"
+            end
+            pcall(function()
+                Remote.dialogueEnded:FireServer("Diamond Researcher", 1, 2)
+            end)
+            local activated = S.Quest.waitUntil("Diamond", generation, function()
+                return S.Quest.getMainline("Diamond Researcher") ~= nil
+                    or S.Quest.owns("Diamond Key")
+            end, 6, 0.1)
+            if not activated then return false, "Diamond Researcher quest did not activate" end
+        end
+        while S.Quest.isActive("Diamond", generation) do
+            if S.Quest.owns("Diamond Rod") then
+                return true, "Diamond Rod obtained"
+            end
+            -- CompletedQuests can replicate one frame before the reward item.
+            -- Claim only after the actual Diamond Key is visible in inventory.
+            if S.Quest.owns("Diamond Key") then
+                Runtime.Quest.ForcePerfect = false
+                if not Remote.claimItem then return false, "Claim Item remote not found" end
+                local key = S.Quest.findByName("Diamond Key")
+                local claimed, message = S.Quest.openAndClaimDiamond(
+                    "Diamond", generation, key)
+                if not claimed then return false, message end
+                return true, "Diamond Rod obtained"
+            elseif S.Quest.progress("Diamond Researcher", 2, 1) < 1 then
+                Runtime.Quest.ForcePerfect = false
+                if not S.Quest.moveTo("Diamond:Coral", "Coral Reefs") then
+                    return false, "Position Lock blocked Coral Reefs teleport"
+                end
+            elseif S.Quest.progress("Diamond Researcher", 3, 1) < 1 then
+                Runtime.Quest.ForcePerfect = false
+                if not S.Quest.moveTo("Diamond:Tropical", "Tropical Grove") then
+                    return false, "Position Lock blocked Tropical Grove teleport"
+                end
+            elseif S.Quest.progress("Diamond Researcher", 4, 1) < 1 then
+                Runtime.Quest.ForcePerfect = false
+                local ruby = S.Quest.findFish(243, "Gemstone")
+                if ruby then
+                    local ok, message = S.Quest.exchangeItem(
+                        "Diamond", generation, "Diamond Researcher", 4,
+                        {"Diamond Researcher", 2, 1})
+                    if not ok then return false, message end
+                else
+                    if not S.Quest.moveTo("Diamond:Ruby", "Treasure Room") then
+                        return false, "Position Lock blocked Treasure Room teleport"
+                    end
+                end
+            elseif S.Quest.progress("Diamond Researcher", 5, 1) < 1 then
+                Runtime.Quest.ForcePerfect = false
+                local lochness = S.Quest.findFish(228)
+                if lochness then
+                    local ok, message = S.Quest.exchangeItem(
+                        "Diamond", generation, "Diamond Researcher", 5,
+                        {"Diamond Researcher", 2, 2})
+                    if not ok then return false, message end
+                else
+                    if not S.Quest.moveTo("Diamond:Kohana", "Kohana") then
+                        return false, "Position Lock blocked Kohana teleport"
+                    end
+                end
+            elseif S.Quest.progress("Diamond Researcher", 6, 1000) < 1000 then
+                Runtime.Quest.ForcePerfect = true
+            end
+            Runtime.Quest.RefreshPanels()
+            task.wait(0.4)
+        end
+        return false
+    end
+
+    S.Quest.Runners.Crystalline = function(generation)
+        while S.Quest.isActive("Crystalline", generation) do
+            local plates = S.Quest.get("RuinPressurePlates") or {}
+            local remaining, acted = 0, false
+            for _, definition in ipairs(S.Quest.Pressure) do
+                if plates[definition.Type] ~= true then
+                    remaining = remaining + 1
+                    local item = S.Quest.findByName(definition.Name)
+                    if item then
+                        local ok, message = S.Quest.placeStateItem(
+                            "Crystalline", generation, Remote.placePressure,
+                            "RuinPressurePlates", definition.Type)
+                        if not ok then return false, message end
+                        acted = true
+                        break
+                    end
+                end
+            end
+            Runtime.Quest.RefreshPanels()
+            if remaining == 0 then
+                return true, "Crystalline Passage completed"
+            end
+            if not acted then task.wait(0.25) end
+        end
+        return false
+    end
+
+    Runtime.Quest.OnFishCaught = function(fishName, metadata)
+        local job = Runtime.Quest.ActiveJob
+        if job ~= "Crystalline" and job ~= "Diamond" then return end
+        Runtime.Quest.CatchReview = true
+        local targetType, protectDiamond = nil, false
+        if job == "Crystalline" then
+            local plates = S.Quest.get("RuinPressurePlates") or {}
+            for _, definition in ipairs(S.Quest.Pressure) do
+                if definition.Name == fishName and plates[definition.Type] ~= true then
+                    targetType = definition.Type
+                    break
+                end
+            end
+        else
+            local variant = type(metadata) == "table"
+                and (metadata.Variant or metadata.VariantId) or nil
+            protectDiamond = (S.Quest.progress("Diamond Researcher", 4, 1) < 1
+                    and fishName == "Ruby" and variant == "Gemstone")
+                or (S.Quest.progress("Diamond Researcher", 5, 1) < 1
+                    and fishName == "Lochness Monster")
+        end
+        if targetType or protectDiamond then
+            Runtime.Quest.FishingHold = true
+            Runtime.Quest.SellHold = true
+        else
+            Runtime.Quest.CatchReview = false
+        end
+    end
+
+    S.Quest.formatQuestPanel = function(questName, goals, rewardName, completedText)
+        if S.Quest.isCompleted(questName) or S.Quest.owns(rewardName) then
+            return "✅ " .. completedText
+        end
+        local lines = {}
+        for index, definition in ipairs(goals) do
+            local current = S.Quest.progress(questName, index, definition.Goal)
+            table.insert(lines, string.format(
+                "%d. %s: %s/%s", index, definition.Text,
+                tostring(current), tostring(definition.Goal)))
+        end
+        return table.concat(lines, "\n")
+    end
+
+    S.Quest.refreshArtifactPanel = function()
+        local state = S.Quest.get("TempleLevers") or {}
+        local lines, allActive = {}, true
+        for _, definition in ipairs(S.Quest.Artifacts) do
+            local active = state[definition.Type] == true
+            allActive = allActive and active
+            table.insert(lines, definition.Type .. ": " .. (active and "Active" or "Inactive"))
+        end
+        S.setParagraphText(Runtime.Quest.Panels.Artifact,
+            allActive and "✅ ALL ARTIFACTS ACTIVE\n" .. table.concat(lines, "\n")
+                or table.concat(lines, "\n"))
+    end
+
+    S.Quest.refreshRuinPanel = function()
+        local state = S.Quest.get("RuinPressurePlates") or {}
+        local lines, allActive = {}, true
+        for _, definition in ipairs(S.Quest.Pressure) do
+            local active = state[definition.Type] == true
+            allActive = allActive and active
+            table.insert(lines, definition.Type .. ": "
+                .. (active and "Enabled" or "Disabled"))
+        end
+        S.setParagraphText(Runtime.Quest.Panels.Crystalline,
+            allActive and "✅ ALL ANCIENT RUIN PLATES ACTIVE\n" .. table.concat(lines, "\n")
+                or table.concat(lines, "\n"))
+    end
+
+    Runtime.Quest.RefreshPanels = function()
+        S.Quest.refreshArtifactPanel()
+        S.setParagraphText(Runtime.Quest.Panels.DeepSea, S.Quest.formatQuestPanel(
+            "Deep Sea Quest", S.Quest.Goals.DeepSea, "Ghostfinn Rod",
+            "All Deep Sea Quest Completed..."))
+        S.setParagraphText(Runtime.Quest.Panels.Element, S.Quest.formatQuestPanel(
+            "Element Quest", S.Quest.Goals.Element, "Element Rod",
+            "All Quest Element Completed..."))
+        S.setParagraphText(Runtime.Quest.Panels.Diamond, S.Quest.formatQuestPanel(
+            "Diamond Researcher", S.Quest.Goals.Diamond, "Diamond Rod",
+            "All Quest Diamond Rod Completed..."))
+        S.Quest.refreshRuinPanel()
+    end
+
+    S.Quest.toggleCallback = function(job, state)
+        if state then
+            Runtime.Quest.Start(job)
+        else
+            Runtime.Quest.Stop(job)
+        end
+    end
+
+    S.Quest.fallback = function(key, destination)
+        Runtime.Quest.LastLocation = nil
+        if typeof(destination) == "CFrame" then
+            local character = Service.LocalPlayer.Character
+            local root = character and character:FindFirstChild("HumanoidRootPart")
+            Navigation.tryMoveRoot(root, destination, true)
+        else
+            Navigation.teleportTo(destination, true)
+        end
+        Runtime.Quest.LastLocation = nil
+    end
+
+    S.Quest.teleportNPC = function()
+        local npcFolder = workspace:FindFirstChild("NPC")
+        local npc = npcFolder and npcFolder:FindFirstChild("Diamond Researcher")
+        local character = Service.LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not npc or not root then return end
+        local target = npc:GetPivot() * CFrame.new(0, 0, 4)
+        Navigation.tryMoveRoot(root, target, true)
+    end
+
+    -- Shop is created first; Quest is therefore placed immediately after it.
+    UI.QuestTab = UI.Window:CreateTab("Quest", "rbxassetid://13436029894")
+
+    S.Quest.ArtifactSection = UI.Window:AddCollapsible(
+        UI.QuestTab, "Artifact Lever Location", false)
+    Runtime.Quest.Panels.Artifact = UI.Window:AddParagraph(
+        S.Quest.ArtifactSection, "Panel Progress Artifact", "Loading...")
+    UI.Window:AddToggle(
+        S.Quest.ArtifactSection, "Auto Artifact Lever", "", false,
+        function(state) S.Quest.toggleCallback("Artifact", state) end)
+    UI.Window:AddButtonGrid(S.Quest.ArtifactSection,
+        {Title="Arrow Artifact",Callback=function()
+            S.Quest.fallback("Arrow Artifact", S.Quest.Artifacts[1].CFrame)
+        end},
+        {Title="Hourglass Diamond Artifact",Callback=function()
+            S.Quest.fallback("Hourglass Diamond Artifact", S.Quest.Artifacts[2].CFrame)
+        end})
+    UI.Window:AddButtonGrid(S.Quest.ArtifactSection,
+        {Title="Crescent Artifact",Callback=function()
+            S.Quest.fallback("Crescent Artifact", S.Quest.Artifacts[3].CFrame)
+        end},
+        {Title="Diamond Artifact",Callback=function()
+            S.Quest.fallback("Diamond Artifact", S.Quest.Artifacts[4].CFrame)
+        end})
+
+    S.Quest.DeepSeaSection = UI.Window:AddCollapsible(
+        UI.QuestTab, "Sisyphus Statue Quest", false)
+    Runtime.Quest.Panels.DeepSea = UI.Window:AddParagraph(
+        S.Quest.DeepSeaSection, "Deep Sea Panel", "Loading...")
+    UI.Window:AddToggle(
+        S.Quest.DeepSeaSection, "Auto Deep Sea Quest", "", false,
+        function(state) S.Quest.toggleCallback("DeepSea", state) end)
+    UI.Window:AddButtonGrid(S.Quest.DeepSeaSection,
+        {Title="Treasure Room",Callback=function()
+            S.Quest.fallback("Treasure Room", "Treasure Room")
+        end},
+        {Title="Sisyphus Statue",Callback=function()
+            S.Quest.fallback("Sisyphus Statue", "Sisyphus Statue")
+        end})
+
+    S.Quest.ElementSection = UI.Window:AddCollapsible(
+        UI.QuestTab, "Element Quest", false)
+    Runtime.Quest.Panels.Element = UI.Window:AddParagraph(
+        S.Quest.ElementSection, "Element Panel", "Loading...")
+    UI.Window:AddToggle(
+        S.Quest.ElementSection, "Auto Element Quest", "", false,
+        function(state) S.Quest.toggleCallback("Element", state) end)
+    UI.Window:AddButtonGrid(S.Quest.ElementSection,
+        {Title="Ancient Jungle",Callback=function()
+            S.Quest.fallback("Ancient Jungle", "Ancient Jungle")
+        end},
+        {Title="Sacred Temple",Callback=function()
+            S.Quest.fallback("Sacred Temple", "Sacred Temple")
+        end})
+
+    S.Quest.DiamondSection = UI.Window:AddCollapsible(
+        UI.QuestTab, "Diamond Rod Quest", false)
+    Runtime.Quest.Panels.Diamond = UI.Window:AddParagraph(
+        S.Quest.DiamondSection, "Diamond Rod Panel", "Loading...")
+    UI.Window:AddToggle(
+        S.Quest.DiamondSection, "Auto Diamond Rod Quest", "", false,
+        function(state) S.Quest.toggleCallback("Diamond", state) end)
+    UI.Window:AddButtonGrid(S.Quest.DiamondSection,
+        {Title="Coral Reefs",Callback=function()
+            S.Quest.fallback("Coral Reefs", "Coral Reefs")
+        end},
+        {Title="Tropical Grove",Callback=function()
+            S.Quest.fallback("Tropical Grove", "Tropical Grove")
+        end})
+    UI.Window:AddButtonGrid(S.Quest.DiamondSection,
+        {Title="Kohana (Lochness Monster)",Callback=function()
+            S.Quest.fallback("Kohana", "Kohana")
+        end},
+        {Title="NPC Lary",Callback=S.Quest.teleportNPC})
+
+    S.Quest.CrystallineSection = UI.Window:AddCollapsible(
+        UI.QuestTab, "Auto Crystalline Passage", false)
+    Runtime.Quest.Panels.Crystalline = UI.Window:AddParagraph(
+        S.Quest.CrystallineSection, "Ancient Ruin Panel", "Loading...")
+    UI.Window:AddToggle(
+        S.Quest.CrystallineSection, "Auto Ancient Ruin", "", false,
+        function(state) S.Quest.toggleCallback("Crystalline", state) end)
+
+    for _, path in ipairs({
+        "Quests", "CompletedQuests", "TempleLevers", "RuinPressurePlates",
+    }) do
+        pcall(function()
+            return Data.Player:OnChange(path, function()
+                task.defer(Runtime.Quest.RefreshPanels)
+            end)
+        end)
+    end
+    Runtime.Quest.RefreshPanels()
+end
 
 -- ====== STARTUP ======
 SupportState.updateBigPopup()
