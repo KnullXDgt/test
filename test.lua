@@ -1,7 +1,7 @@
 -- ====================================================================
 --                 INSTANT FISHING V2 - CLEAN
 --          Fishing + AutoSell + Auto Small Notification
---       Quest Planner + Elemental Event build: 20260829-R3
+--       Quest Planner + Elemental Event build: 20260829-R4
 -- ====================================================================
 
 -- ====== SERVICES ======
@@ -4958,18 +4958,17 @@ do
     -- never turn on another Quest and never mutate a user's toggle.
     S.Quest.jobEligible = function(job)
         if job == "DeepSea" then
-            return S.Quest.getMainline("Deep Sea Quest") ~= nil
-                or S.Quest.isCompleted("Deep Sea Quest")
-                or S.Quest.owns("Ghostfinn Rod")
+            -- Deep Sea is acquired by reaching Sisyphus Statue. The quest
+            -- cannot already exist in Replion when a fresh account starts.
+            return true
         elseif job == "Artifact" or job == "Crystalline" then
             return true
         elseif job == "Element" then
             local hasGhostfinn = S.Quest.progress("Element Quest", 1, 1) >= 1
                 or S.Quest.owns("Ghostfinn Rod")
+            -- Element has no NPC dialogue entry. Reaching Ancient Jungle is
+            -- the safe activation fallback after Ghostfinn is owned.
             return hasGhostfinn
-                and (S.Quest.getMainline("Element Quest") ~= nil
-                    or S.Quest.isCompleted("Element Quest")
-                    or S.Quest.owns("Element Rod"))
         elseif job == "Diamond" then
             return S.Quest.owns("Element Rod")
                 or S.Quest.progress("Diamond Researcher", 1, 1) >= 1
@@ -5088,6 +5087,27 @@ do
         end, 10, 0.1)
         S.Quest.releaseTransaction()
         if not acknowledged then return false, typeName .. " placement timeout" end
+        return true
+    end
+
+    S.Quest.activateAtLocation = function(
+        job, generation, questName, locationKey, destination)
+        if S.Quest.getMainline(questName)
+            or S.Quest.isCompleted(questName)
+        then
+            return true
+        end
+        if not S.Quest.moveTo(locationKey, destination) then
+            return false, "Position Lock blocked " .. destination .. " teleport"
+        end
+        local activated = S.Quest.waitUntil(job, generation, function()
+            return S.Quest.getMainline(questName) ~= nil
+                or S.Quest.isCompleted(questName)
+        end, 8, 0.1)
+        if not activated then
+            return false, questName .. " did not activate at " .. destination
+        end
+        Runtime.Quest.RefreshPanels()
         return true
     end
 
@@ -5258,7 +5278,10 @@ do
             and not S.Quest.isCompleted("Deep Sea Quest")
             and not S.Quest.owns("Ghostfinn Rod")
         then
-            return false, "Deep Sea Quest is not active"
+            local activated, message = S.Quest.activateAtLocation(
+                "DeepSea", generation, "Deep Sea Quest",
+                "DeepSea:Activate", "Sisyphus Statue")
+            if not activated then return false, message end
         end
         while S.Quest.isActive("DeepSea", generation) do
             local ghostfinn = S.Quest.findByName("Ghostfinn Rod")
@@ -5303,7 +5326,13 @@ do
             and not S.Quest.isCompleted("Element Quest")
             and not S.Quest.owns("Element Rod")
         then
-            return false, "Element Quest is not active"
+            if not S.Quest.owns("Ghostfinn Rod") then
+                return false, "Ghostfinn Rod is required first"
+            end
+            local activated, message = S.Quest.activateAtLocation(
+                "Element", generation, "Element Quest",
+                "Element:Activate", "Ancient Jungle")
+            if not activated then return false, message end
         end
         while S.Quest.isActive("Element", generation) do
             if S.Quest.owns("Element Rod") then
@@ -5456,7 +5485,14 @@ do
             if remaining == 0 then
                 return true, "Crystalline Passage completed"
             end
-            if not acted then task.wait(0.25) end
+            if not acted then
+                if not S.Quest.moveTo(
+                    "Crystalline:AncientJungle", "Ancient Jungle")
+                then
+                    return false, "Position Lock blocked Ancient Jungle teleport"
+                end
+                task.wait(0.25)
+            end
         end
         return false
     end
