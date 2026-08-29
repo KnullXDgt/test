@@ -1,5 +1,6 @@
 -- ====================================================================
---                    Orvion Hub - Fish It
+--                 INSTANT FISHING V2 - CLEAN
+--          Fishing + AutoSell + Auto Small Notification
 -- ====================================================================
 
 -- ====== SERVICES ======
