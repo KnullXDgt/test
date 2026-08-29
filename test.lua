@@ -1686,7 +1686,14 @@ SupportState.setAutoEquipRod = function(state)
         end
         SupportState.autoEquipRodConn = Data.Player:OnChange("EquippedId", function(value)
             if not value or value == "" then
+                if Runtime.Quest.FishingHold or Runtime.Sell.Busy then return end
+                local ticketBefore = Runtime.Quest.TransactionTicket
                 task.wait(0.2)
+                -- Re-check setelah delay; transaction baru mungkin sudah dimulai.
+                if Runtime.Quest.FishingHold
+                    or Runtime.Sell.Busy
+                    or Runtime.Quest.TransactionTicket ~= ticketBefore
+                then return end
                 pcall(function() Remote.equipTool:FireServer(1) end)
             end
         end)
@@ -4967,7 +4974,7 @@ do
         elseif job == "Crystalline" then
             local plates = S.Quest.get("RuinPressurePlates") or {}
             for _, definition in ipairs(S.Quest.Pressure) do
-                if plates[definition.Type] ~= true then return false end
+                if plates[definition.Name] ~= true then return false end
             end
             return true
         end
@@ -5157,13 +5164,118 @@ do
             or false
     end
 
+    S.Quest.findPressureFish = function(fishName)
+        -- Controller game mencari via kategori "Items", bukan "Fish"
+        local inventory = S.Quest.get("Inventory") or Data.Player.Data.Inventory
+        local items = inventory and inventory.Items or {}
+        local itemData = nil
+        pcall(function()
+            itemData = Data.ItemUtility.GetItemDataFromItemType("Items", fishName)
+        end)
+        if not itemData or not itemData.Data then return nil end
+        local targetId = itemData.Data.Id
+        for _, item in ipairs(items) do
+            if type(item) == "table" and tonumber(item.Id) == tonumber(targetId) then
+                return { Item = item, Category = "Items", Data = itemData.Data }
+            end
+        end
+        return nil
+    end
+
+    -- Equip ikan target, tahan, kirim remote, tunggu ack, restore hotbar.
+    -- Terpisah dari placeStateItem karena server validasi EquippedId.
+    S.Quest.placePressureFishEntry = function(job, generation, definition)
+        local entry = S.Quest.findPressureFish(definition.Name)
+        if not entry then
+            return false, definition.Name .. " not found in inventory"
+        end
+        local uuid = entry.Item.UUID
+        local itemType = (entry.Data and entry.Data.Type) or "Fish"
+
+        local acquired, transactionTicket = S.Quest.acquireTransaction(job, generation, 8)
+        if not acquired then
+            S.Quest.releaseTransaction(transactionTicket)
+            return false, "Unable to pause fishing/sell safely"
+        end
+
+        -- Smart hotbar: kalau penuh, evict slot paling ujung (bukan slot 1/rod)
+        local restoredEntry = nil
+        local equippedItems = Data.Player:Get("EquippedItems") or {}
+        if not table.find(equippedItems, uuid) and #equippedItems >= 5 then
+            for slotIdx = #equippedItems, 2, -1 do
+                local evictUUID = equippedItems[slotIdx]
+                if evictUUID and evictUUID ~= uuid then
+                    pcall(function() Remote.unequipItem:FireServer(evictUUID) end)
+                    local removeDeadline = os.clock() + 2
+                    while os.clock() < removeDeadline do
+                        if not S.Quest.isActive(job, generation) then
+                            S.Quest.releaseTransaction(transactionTicket)
+                            return false, "Job cancelled during hotbar clear"
+                        end
+                        local eq = Data.Player:Get("EquippedItems") or {}
+                        if not table.find(eq, evictUUID) then break end
+                        task.wait(0.05)
+                    end
+                    restoredEntry = { UUID = evictUUID, ItemType = "Fish" }
+                    -- Cari type asli item yang di-evict dari inventory
+                    S.Quest.eachInventoryItem(function(item, category, data)
+                        if tostring(item.UUID or "") == tostring(evictUUID) then
+                            restoredEntry.ItemType = (data and data.Type) or category or "Fish"
+                            return true
+                        end
+                    end)
+                    break
+                end
+            end
+        end
+
+        -- Equip dan hold ikan target
+        local held = S.equipAndHold(uuid, itemType, function()
+            return S.Quest.isActive(job, generation)
+        end)
+        if not held then
+            if restoredEntry then
+                pcall(function() Remote.equipItem:FireServer(restoredEntry.UUID, restoredEntry.ItemType) end)
+            end
+            S.Quest.releaseTransaction(transactionTicket)
+            return false, "Unable to equip " .. definition.Name
+        end
+
+        -- Kirim remote dengan nama ikan (bukan rarity)
+        local sent = Remote.placePressure and pcall(function()
+            Remote.placePressure:FireServer(definition.Name)
+        end)
+        if not sent then
+            if restoredEntry then
+                pcall(function() Remote.equipItem:FireServer(restoredEntry.UUID, restoredEntry.ItemType) end)
+            end
+            S.Quest.releaseTransaction(transactionTicket)
+            return false, "PlacePressureItem remote failed"
+        end
+
+        -- Tunggu Replion ack
+        local acknowledged = S.Quest.waitUntil(job, generation, function()
+            local state = S.Quest.get("RuinPressurePlates") or {}
+            return state[definition.Name] == true
+        end, 10, 0.1)
+
+        -- Restore slot yang di-evict
+        if restoredEntry then
+            pcall(function() Remote.equipItem:FireServer(restoredEntry.UUID, restoredEntry.ItemType) end)
+        end
+
+        S.Quest.releaseTransaction(transactionTicket)
+        if not acknowledged then return false, definition.Name .. " placement timeout" end
+        return true
+    end
+
     S.Quest.getCrystallineTarget = function()
         local plates = S.Quest.get("RuinPressurePlates") or {}
         local remaining, available = 0, nil
         for _, definition in ipairs(S.Quest.Pressure) do
-            if plates[definition.Type] ~= true then
+            if plates[definition.Name] ~= true then
                 remaining = remaining + 1
-                if not available and S.Quest.findByName(definition.Name) then
+                if not available and S.Quest.findPressureFish(definition.Name) then
                     available = definition
                 end
             end
@@ -5188,9 +5300,7 @@ do
         then
             return true, nil, false, remaining
         end
-        local ok, message = S.Quest.placeStateItem(
-            job, generation, Remote.placePressure,
-            "RuinPressurePlates", definition.Type)
+        local ok, message = S.Quest.placePressureFishEntry(job, generation, definition)
         if not ok then
             Runtime.Quest.RetryAt.Crystalline = os.clock() + 1
             return false, message, false, remaining
@@ -5624,7 +5734,7 @@ do
         then
             local plates = S.Quest.get("RuinPressurePlates") or {}
             for _, definition in ipairs(S.Quest.Pressure) do
-                if definition.Name == fishName and plates[definition.Type] ~= true then
+                if definition.Name == fishName and plates[definition.Name] ~= true then
                     Runtime.Quest.CrystallineCatchTicket =
                         Runtime.Quest.CrystallineCatchTicket + 1
                     local ticket = Runtime.Quest.CrystallineCatchTicket
@@ -5699,9 +5809,10 @@ do
         local state = S.Quest.get("RuinPressurePlates") or {}
         local lines, allActive = {}, true
         for _, definition in ipairs(S.Quest.Pressure) do
-            local active = state[definition.Type] == true
+            local active = state[definition.Name] == true
             allActive = allActive and active
-            table.insert(lines, definition.Type .. ": "
+            -- Display label pakai rarity (Type) supaya lebih readable
+            table.insert(lines, definition.Type .. " (" .. definition.Name .. "): "
                 .. (active and "Enabled" or "Disabled"))
         end
         S.setParagraphText(Runtime.Quest.Panels.Crystalline,
