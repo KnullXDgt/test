@@ -1693,6 +1693,7 @@ SupportState.setAutoEquipRod = function(state)
                 if Runtime.Quest.FishingHold
                     or Runtime.Sell.Busy
                     or Runtime.Quest.TransactionTicket ~= ticketBefore
+                    or FishingModes.Active  -- tunggu fishing cycle selesai dulu
                 then return end
                 pcall(function() Remote.equipTool:FireServer(1) end)
             end
