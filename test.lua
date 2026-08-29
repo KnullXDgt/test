@@ -1,7 +1,7 @@
 -- ====================================================================
 --                 INSTANT FISHING V2 - CLEAN
 --          Fishing + AutoSell + Auto Small Notification
---       Quest Planner + Elemental Event build: 20260829-R4
+--       Quest Planner + Elemental Event build: 20260830-R5
 -- ====================================================================
 
 -- ====== SERVICES ======
@@ -241,6 +241,9 @@ local Runtime = {
         FishingHold = false,
         SellHold = false,
         CatchReview = false,
+        TransactionTicket = 0,
+        CrystallineCatchTicket = 0,
+        CrystallineReviewUntil = 0,
         ForcePerfect = false,
         Panels = {},
         LastLocation = nil,
@@ -956,7 +959,9 @@ Runtime.Sell.Wait = function(ticket)
 end
 
 Runtime.Sell.Execute = function()
-    if Runtime.Quest.SellHold or Runtime.Quest.CatchReview then
+    if Runtime.Quest.SellHold or Runtime.Quest.CatchReview
+        or os.clock() < (Runtime.Quest.CrystallineReviewUntil or 0)
+    then
         Runtime.Sell.Pending = true
         Runtime.Sell.Reason = Runtime.Sell.Reason or "QuestHold"
         return false
@@ -2554,9 +2559,6 @@ SupportState.ensureAnimPatch()
 
 -- ====== CONSTANTS ======
 Catalog.EventList = {
-    "Blizzard Elemental Event",
-    "Storm Elemental Event",
-    "Volcano Elemental Event",
     "Admin - 1x1x1 Rage",
     "Admin - 2025 Anniversary",
     "Admin - 2025 Christmas",
@@ -2571,10 +2573,13 @@ Catalog.EventList = {
     "Admin - Meteor Rain",
     "Admin - Purple Bloodmoon",
     "Admin - Volcano Eruption",
+    "Blizzard Elemental Event",
     "Dark Megalodon Hunt",
     "Glacial Serpent Hunt",
     "Megalodon Hunt",
+    "Storm Elemental Event",
     "Thunderzilla Hunt",
+    "Volcano Elemental Event",
 }
 
 Catalog.TotemList = {
@@ -3036,6 +3041,7 @@ Navigation.pauseQuestForEvent = function(state)
     if Runtime.Quest.EventPause == state then return end
     Runtime.Quest.EventPause = state
     if state and Runtime.Quest.ActiveJob then
+        local transactionTicket = Runtime.Quest.TransactionTicket
         Runtime.Quest.Generation = Runtime.Quest.Generation + 1
         Runtime.Quest.ActiveJob = nil
         Runtime.Quest.ForcePerfect = false
@@ -3044,7 +3050,7 @@ Navigation.pauseQuestForEvent = function(state)
             if Runtime.Quest.EventPause
                 and S.Quest and S.Quest.releaseTransaction
             then
-                S.Quest.releaseTransaction()
+                S.Quest.releaseTransaction(transactionTicket)
             end
         end)
     elseif not state and S.Quest and S.Quest.startPlanner then
@@ -4887,6 +4893,8 @@ do
     end
 
     S.Quest.acquireTransaction = function(job, generation, timeout)
+        Runtime.Quest.TransactionTicket = Runtime.Quest.TransactionTicket + 1
+        local transactionTicket = Runtime.Quest.TransactionTicket
         Runtime.Quest.FishingHold = true
         Runtime.Quest.SellHold = true
         local ready = S.Quest.waitUntil(job, generation, function()
@@ -4894,10 +4902,20 @@ do
                 and Runtime.Fishing.Owner == nil
                 and not Runtime.Sell.Busy
         end, timeout or 8, 0.05)
-        return ready
+        return ready, transactionTicket
     end
 
-    S.Quest.releaseTransaction = function()
+    S.Quest.releaseTransaction = function(transactionTicket)
+        if transactionTicket
+            and transactionTicket ~= Runtime.Quest.TransactionTicket
+        then
+            return false
+        end
+        if not transactionTicket then
+            -- Forced cleanup invalidates releases still queued by an older
+            -- runner generation, so they cannot clear a newer transaction.
+            Runtime.Quest.TransactionTicket = Runtime.Quest.TransactionTicket + 1
+        end
         Runtime.Quest.FishingHold = false
         Runtime.Quest.SellHold = false
         Runtime.Quest.CatchReview = false
@@ -4905,10 +4923,12 @@ do
             if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle"
                 and not Runtime.Quest.SellHold
                 and not Runtime.Quest.CatchReview
+                and os.clock() >= (Runtime.Quest.CrystallineReviewUntil or 0)
             then
                 Runtime.Sell.Flush()
             end
         end)
+        return true
     end
 
     S.Quest.cancelActive = function(job)
@@ -5056,6 +5076,9 @@ do
         if job then
             Runtime.Quest.Enabled[job] = false
             Runtime.Quest.RetryAt[job] = nil
+            if job == "Crystalline" then
+                S.Quest.clearCrystallineReview()
+            end
             if Runtime.Quest.ActiveJob == job then
                 S.Quest.cancelActive(job)
             end
@@ -5065,6 +5088,7 @@ do
                 Runtime.Quest.RetryAt[name] = nil
             end
             Runtime.Quest.PlannerGeneration = Runtime.Quest.PlannerGeneration + 1
+            S.Quest.clearCrystallineReview()
             S.Quest.cancelActive()
             Runtime.Quest.PlannerThread = nil
         end
@@ -5072,22 +5096,110 @@ do
     end
 
     S.Quest.placeStateItem = function(job, generation, remote, stateKey, typeName)
-        if not S.Quest.acquireTransaction(job, generation, 8) then
-            S.Quest.releaseTransaction()
+        local acquired, transactionTicket = S.Quest.acquireTransaction(
+            job, generation, 8)
+        if not acquired then
+            S.Quest.releaseTransaction(transactionTicket)
             return false, "Unable to pause fishing/sell safely"
         end
         local sent = remote and pcall(function() remote:FireServer(typeName) end)
         if not sent then
-            S.Quest.releaseTransaction()
+            S.Quest.releaseTransaction(transactionTicket)
             return false, "Placement remote failed"
         end
         local acknowledged = S.Quest.waitUntil(job, generation, function()
             local state = S.Quest.get(stateKey) or {}
             return state[typeName] == true
         end, 10, 0.1)
-        S.Quest.releaseTransaction()
+        S.Quest.releaseTransaction(transactionTicket)
         if not acknowledged then return false, typeName .. " placement timeout" end
         return true
+    end
+
+    S.Quest.clearCrystallineReview = function()
+        if (Runtime.Quest.CrystallineReviewUntil or 0) <= 0 then return end
+        Runtime.Quest.CrystallineCatchTicket =
+            Runtime.Quest.CrystallineCatchTicket + 1
+        Runtime.Quest.CrystallineReviewUntil = 0
+        task.defer(function()
+            if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle"
+                and not Runtime.Quest.SellHold
+                and not Runtime.Quest.CatchReview
+            then
+                Runtime.Sell.Flush()
+            end
+        end)
+    end
+
+    S.Quest.isRuinFishingLocation = function()
+        local locationName = nil
+        pcall(function()
+            locationName = Service.LocalPlayer:GetAttribute("LocationName")
+            local character = Service.LocalPlayer.Character
+            locationName = locationName or (character
+                and character:GetAttribute("LocationName"))
+        end)
+        if locationName == "Ancient Jungle"
+            or locationName == "Sacred Temple"
+        then
+            return true
+        end
+
+        local character = Service.LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not root then return false end
+        local ancient = Catalog.Locations["Ancient Jungle"]
+        local sacred = Catalog.Locations["Sacred Temple"]
+        return (ancient
+                and (root.Position - ancient.Position).Magnitude <= 900)
+            or (sacred
+                and (root.Position - sacred.Position).Magnitude <= 900)
+            or false
+    end
+
+    S.Quest.getCrystallineTarget = function()
+        local plates = S.Quest.get("RuinPressurePlates") or {}
+        local remaining, available = 0, nil
+        for _, definition in ipairs(S.Quest.Pressure) do
+            if plates[definition.Type] ~= true then
+                remaining = remaining + 1
+                if not available and S.Quest.findByName(definition.Name) then
+                    available = definition
+                end
+            end
+        end
+        return remaining, available
+    end
+
+    -- Crystalline is an overlay while Artifact or Element owns navigation.
+    -- It only borrows that runner's transaction to place an item already in
+    -- inventory; it never creates a second movement/thread owner.
+    S.Quest.tryCrystallineOverlay = function(job, generation)
+        if Runtime.Quest.Enabled.Crystalline ~= true then
+            return true, nil, false, nil
+        end
+        local remaining, definition = S.Quest.getCrystallineTarget()
+        if remaining == 0 then
+            S.Quest.clearCrystallineReview()
+            return true, nil, false, 0
+        end
+        if not definition
+            or (Runtime.Quest.RetryAt.Crystalline or 0) > os.clock()
+        then
+            return true, nil, false, remaining
+        end
+        local ok, message = S.Quest.placeStateItem(
+            job, generation, Remote.placePressure,
+            "RuinPressurePlates", definition.Type)
+        if not ok then
+            Runtime.Quest.RetryAt.Crystalline = os.clock() + 1
+            return false, message, false, remaining
+        end
+        Runtime.Quest.RetryAt.Crystalline = nil
+        local after = S.Quest.getCrystallineTarget()
+        if after == 0 then S.Quest.clearCrystallineReview() end
+        Runtime.Quest.RefreshPanels()
+        return true, nil, true, after
     end
 
     S.Quest.activateAtLocation = function(
@@ -5113,22 +5225,24 @@ do
 
     S.Quest.exchangeItem = function(job, generation, questName, objectiveId, args)
         local before = S.Quest.progress(questName, objectiveId, 1)
-        if not S.Quest.acquireTransaction(job, generation, 8) then
-            S.Quest.releaseTransaction()
+        local acquired, transactionTicket = S.Quest.acquireTransaction(
+            job, generation, 8)
+        if not acquired then
+            S.Quest.releaseTransaction(transactionTicket)
             return false, "Unable to pause fishing/sell safely"
         end
         local sent = Remote.dialogueEnded and pcall(function()
             Remote.dialogueEnded:FireServer(table.unpack(args))
         end)
         if not sent then
-            S.Quest.releaseTransaction()
+            S.Quest.releaseTransaction(transactionTicket)
             return false, "Quest exchange remote failed"
         end
         local acknowledged = S.Quest.waitUntil(job, generation, function()
             return S.Quest.progress(questName, objectiveId, 1) > before
                 or S.Quest.isCompleted(questName)
         end, 10, 0.1)
-        S.Quest.releaseTransaction()
+        S.Quest.releaseTransaction(transactionTicket)
         if not acknowledged then return false, "Quest exchange acknowledgement timeout" end
         return true
     end
@@ -5139,14 +5253,16 @@ do
         if not Remote.createTranscended then
             return false, "Create Transcended remote not found"
         end
-        if not S.Quest.acquireTransaction(job, generation, 8) then
-            S.Quest.releaseTransaction()
+        local acquired, transactionTicket = S.Quest.acquireTransaction(
+            job, generation, 8)
+        if not acquired then
+            S.Quest.releaseTransaction(transactionTicket)
             return false, "Unable to pause fishing/sell safely"
         end
         if not S.equipAndHold(uuid, "Fish", function()
             return S.Quest.isActive(job, generation)
         end) then
-            S.Quest.releaseTransaction()
+            S.Quest.releaseTransaction(transactionTicket)
             return false, "Unable to equip Secret fish"
         end
         local done, result, errorText = false, false, "Create Transcended timeout"
@@ -5167,13 +5283,13 @@ do
         end
         if not done then pcall(task.cancel, invokeThread) end
         if not done or not result then
-            S.Quest.releaseTransaction()
+            S.Quest.releaseTransaction(transactionTicket)
             return false, errorText
         end
         local consumed = S.Quest.waitUntil(job, generation, function()
             return not S.Quest.hasUUID(uuid)
         end, 4, 0.05)
-        S.Quest.releaseTransaction()
+        S.Quest.releaseTransaction(transactionTicket)
         if not consumed then return false, "Transcended inventory sync timeout" end
         return true
     end
@@ -5181,18 +5297,20 @@ do
     S.Quest.openAndClaimDiamond = function(job, generation, keyEntry)
         local uuid = keyEntry and keyEntry.Item and keyEntry.Item.UUID
         if not uuid then return false, "Diamond Key UUID not found" end
-        if not S.Quest.acquireTransaction(job, generation, 8) then
-            S.Quest.releaseTransaction()
+        local acquired, transactionTicket = S.Quest.acquireTransaction(
+            job, generation, 8)
+        if not acquired then
+            S.Quest.releaseTransaction(transactionTicket)
             return false, "Unable to pause fishing/sell safely"
         end
         if not S.Quest.moveTo("Diamond:KeyDoor", S.Quest.DiamondDoor) then
-            S.Quest.releaseTransaction()
+            S.Quest.releaseTransaction(transactionTicket)
             return false, "Position Lock blocked Diamond Key Door teleport"
         end
         if not S.equipAndHold(uuid, "Gears", function()
             return S.Quest.isActive(job, generation)
         end) then
-            S.Quest.releaseTransaction()
+            S.Quest.releaseTransaction(transactionTicket)
             return false, "Unable to equip Diamond Key"
         end
 
@@ -5205,12 +5323,12 @@ do
             return prompt and prompt.Enabled
         end, 4, 0.05)
         if not promptReady or type(fireproximityprompt) ~= "function" then
-            S.Quest.releaseTransaction()
+            S.Quest.releaseTransaction(transactionTicket)
             return false, "Diamond door prompt is unavailable"
         end
         local opened = pcall(fireproximityprompt, prompt)
         if not opened then
-            S.Quest.releaseTransaction()
+            S.Quest.releaseTransaction(transactionTicket)
             return false, "Diamond door activation failed"
         end
         S.Quest.waitUntil(job, generation, function()
@@ -5233,19 +5351,22 @@ do
         end
         if not done then pcall(task.cancel, claimThread) end
         if not done or not claimed then
-            S.Quest.releaseTransaction()
+            S.Quest.releaseTransaction(transactionTicket)
             return false, "Diamond Rod claim failed"
         end
         local received = S.Quest.waitUntil(job, generation, function()
             return S.Quest.owns("Diamond Rod")
         end, 8, 0.1)
-        S.Quest.releaseTransaction()
+        S.Quest.releaseTransaction(transactionTicket)
         if not received then return false, "Diamond Rod inventory sync timeout" end
         return true
     end
 
     S.Quest.Runners.Artifact = function(generation)
         while S.Quest.isActive("Artifact", generation) do
+            -- Preserve Ruin Door catches made at any Artifact lever spot.
+            -- Artifact remains the only movement owner.
+            S.Quest.tryCrystallineOverlay("Artifact", generation)
             local levers = S.Quest.get("TempleLevers") or {}
             local remaining, acted = 0, false
             for _, definition in ipairs(S.Quest.Artifacts) do
@@ -5288,14 +5409,16 @@ do
             if ghostfinn then
                 local uuid = ghostfinn.Item and ghostfinn.Item.UUID
                 if not uuid then return false, "Ghostfinn Rod UUID not found" end
-                if not S.Quest.acquireTransaction("DeepSea", generation, 8) then
-                    S.Quest.releaseTransaction()
+                local acquired, transactionTicket = S.Quest.acquireTransaction(
+                    "DeepSea", generation, 8)
+                if not acquired then
+                    S.Quest.releaseTransaction(transactionTicket)
                     return false, "Unable to pause fishing/sell safely"
                 end
                 local equipped = S.equipAndHold(uuid, "Fishing Rods", function()
                     return S.Quest.isActive("DeepSea", generation)
                 end)
-                S.Quest.releaseTransaction()
+                S.Quest.releaseTransaction(transactionTicket)
                 if not equipped then return false, "Unable to equip Ghostfinn Rod" end
                 return true, "Deep Sea Quest completed"
             end
@@ -5335,6 +5458,9 @@ do
             if not activated then return false, message end
         end
         while S.Quest.isActive("Element", generation) do
+            -- Ancient Jungle and Sacred Temple can both supply Ruin Door
+            -- targets. Place them without changing Element's destination.
+            S.Quest.tryCrystallineOverlay("Element", generation)
             if S.Quest.owns("Element Rod") then
                 return true, "Element Quest completed"
             end
@@ -5465,31 +5591,24 @@ do
 
     S.Quest.Runners.Crystalline = function(generation)
         while S.Quest.isActive("Crystalline", generation) do
-            local plates = S.Quest.get("RuinPressurePlates") or {}
-            local remaining, acted = 0, false
-            for _, definition in ipairs(S.Quest.Pressure) do
-                if plates[definition.Type] ~= true then
-                    remaining = remaining + 1
-                    local item = S.Quest.findByName(definition.Name)
-                    if item then
-                        local ok, message = S.Quest.placeStateItem(
-                            "Crystalline", generation, Remote.placePressure,
-                            "RuinPressurePlates", definition.Type)
-                        if not ok then return false, message end
-                        acted = true
-                        break
-                    end
-                end
-            end
+            local ok, message, acted, remaining =
+                S.Quest.tryCrystallineOverlay("Crystalline", generation)
+            if not ok then return false, message end
             Runtime.Quest.RefreshPanels()
             if remaining == 0 then
                 return true, "Crystalline Passage completed"
             end
             if not acted then
-                if not S.Quest.moveTo(
-                    "Crystalline:AncientJungle", "Ancient Jungle")
-                then
-                    return false, "Position Lock blocked Ancient Jungle teleport"
+                -- Standalone mode accepts either valid fishing zone. Ancient
+                -- Jungle is only a fallback when the player is outside both.
+                if not S.Quest.isRuinFishingLocation() then
+                    Runtime.Quest.LastLocation = nil
+                    if not S.Quest.moveTo(
+                        "Crystalline:AncientJungle", "Ancient Jungle")
+                    then
+                        return false,
+                            "Position Lock blocked Ancient Jungle teleport"
+                    end
                 end
                 task.wait(0.25)
             end
@@ -5499,30 +5618,53 @@ do
 
     Runtime.Quest.OnFishCaught = function(fishName, metadata)
         local job = Runtime.Quest.ActiveJob
-        if job ~= "Crystalline" and job ~= "Diamond" then return end
-        Runtime.Quest.CatchReview = true
-        local targetType, protectDiamond = nil, false
-        if job == "Crystalline" then
+        if Runtime.Quest.Enabled.Crystalline == true
+            and (job == "Artifact" or job == "Element"
+                or job == "Crystalline")
+        then
             local plates = S.Quest.get("RuinPressurePlates") or {}
             for _, definition in ipairs(S.Quest.Pressure) do
                 if definition.Name == fishName and plates[definition.Type] ~= true then
-                    targetType = definition.Type
+                    Runtime.Quest.CrystallineCatchTicket =
+                        Runtime.Quest.CrystallineCatchTicket + 1
+                    local ticket = Runtime.Quest.CrystallineCatchTicket
+                    local deadline = os.clock() + 4
+                    Runtime.Quest.CrystallineReviewUntil = math.max(
+                        Runtime.Quest.CrystallineReviewUntil or 0, deadline)
+                    -- This only delays selling. Fishing stays live until the
+                    -- single planner runner sees the replicated inventory item.
+                    task.delay(4.05, function()
+                        if ticket ~= Runtime.Quest.CrystallineCatchTicket
+                            or os.clock() < Runtime.Quest.CrystallineReviewUntil
+                        then
+                            return
+                        end
+                        Runtime.Quest.CrystallineReviewUntil = 0
+                        if Runtime.Sell.Pending
+                            and Runtime.Fishing.Phase == "Idle"
+                            and not Runtime.Quest.SellHold
+                            and not Runtime.Quest.CatchReview
+                        then
+                            Runtime.Sell.Flush()
+                        end
+                    end)
                     break
                 end
             end
-        else
-            local variant = type(metadata) == "table"
-                and (metadata.Variant or metadata.VariantId) or nil
-            protectDiamond = (S.Quest.progress("Diamond Researcher", 4, 1) < 1
-                    and fishName == "Ruby" and variant == "Gemstone")
-                or (S.Quest.progress("Diamond Researcher", 5, 1) < 1
-                    and fishName == "Lochness Monster")
         end
-        if targetType or protectDiamond then
+
+        if job ~= "Diamond" then return end
+        local variant = type(metadata) == "table"
+            and (metadata.Variant or metadata.VariantId) or nil
+        local protectDiamond =
+            (S.Quest.progress("Diamond Researcher", 4, 1) < 1
+                and fishName == "Ruby" and variant == "Gemstone")
+            or (S.Quest.progress("Diamond Researcher", 5, 1) < 1
+                and fishName == "Lochness Monster")
+        if protectDiamond then
+            Runtime.Quest.CatchReview = true
             Runtime.Quest.FishingHold = true
             Runtime.Quest.SellHold = true
-        else
-            Runtime.Quest.CatchReview = false
         end
     end
 
