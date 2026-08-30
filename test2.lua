@@ -955,13 +955,14 @@ Runtime.Sell.Execute = function()
     -- Cek langsung saat mau sell: kalau ada ikan target quest di inventory, block
     -- Lebih reliable dari OnFishCaught karena tidak ada race window
     if S.Quest then
-        -- Crystalline: block kalau ada pressure fish belum di-place DAN attempt AKTIF
-        -- Kalau attempt sudah selesai (gagal/sukses), jangan block — cegah permanent block
-        if Runtime.Quest.Enabled.Crystalline == true and S.Quest.CrystallineBusy then
+        -- Crystalline: block kalau ada pressure fish di inventory DAN plate belum aktif
+        -- Cek findPressureFish langsung — lebih reliable dari CrystallineBusy
+        -- Setelah ikan di-sacrifice (dikonsumsi server), findPressureFish nil → sell lanjut
+        if Runtime.Quest.Enabled.Crystalline == true and S.Quest.findPressureFish then
             local plates = S.Quest.get("RuinPressurePlates") or {}
             for _, definition in ipairs(S.Quest.Pressure or {}) do
                 if plates[definition.Name] ~= true
-                    and S.Quest.CrystallineBusy[definition.Name]
+                    and S.Quest.findPressureFish(definition.Name)
                 then
                     Runtime.Sell.Pending = true
                     Runtime.Sell.Reason = "QuestHold"
