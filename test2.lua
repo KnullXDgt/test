@@ -551,7 +551,11 @@ end
 
 Runtime.Fishing.WaitReady = function(mode)
     while Runtime.Fishing.IsModeActive(mode) do
-        if Runtime.Fishing.Owner and Runtime.Fishing.Owner ~= mode then
+        if Runtime.Quest.SellHold > 0 then
+            -- Ada equip operation (Crystalline/Diamond/Enchant/etc) — tunggu selesai dulu
+            -- supaya charge:InvokeServer tidak nendang keluar item yang sedang dipegang
+            task.wait(0.05)
+        elseif Runtime.Fishing.Owner and Runtime.Fishing.Owner ~= mode then
             task.wait(0.05)
         else
             local character = Service.LocalPlayer.Character
