@@ -954,12 +954,13 @@ Runtime.Sell.Execute = function()
     -- Cek langsung saat mau sell: kalau ada ikan target quest di inventory, block
     -- Lebih reliable dari OnFishCaught karena tidak ada race window
     if S.Quest then
-        -- Crystalline: block kalau ada pressure fish belum di-place
+        -- Crystalline: block kalau ada pressure fish belum di-place DAN attempt AKTIF
+        -- Kalau attempt sudah selesai (gagal/sukses), jangan block — cegah permanent block
         if Runtime.Quest.Enabled.Crystalline == true then
             local plates = S.Quest.get("RuinPressurePlates") or {}
             for _, definition in ipairs(S.Quest.Pressure or {}) do
                 if plates[definition.Name] ~= true
-                    and S.Quest.findPressureFish(definition.Name)
+                    and S.Quest.CrystallineBusy[definition.Name]  -- hanya kalau attempt AKTIF
                 then
                     Runtime.Sell.Pending = true
                     Runtime.Sell.Reason = "QuestHold"
@@ -4952,49 +4953,40 @@ do
     end
 
     -- equipRodCanonical: equip progression rod agresif (mirip buy rod)
+    -- Tidak pakai withSellHold — rod bukan ikan yang bisa kejual
     S.Quest.equipRodCanonical = function(job, uuid)
-        local result = false
-        S.Quest.withSellHold(function()
-            result = S.equipAndHold(uuid, "Fishing Rods", function()
-                return Runtime.Quest.Enabled[job] == true
-            end)
+        return S.equipAndHold(uuid, "Fishing Rods", function()
+            return Runtime.Quest.Enabled[job] == true
         end)
-        return result
     end
 
-    -- equipRodWithRetry: equipRodCanonical + outer retry loop
-    -- Tiap attempt cek Replion EquippedId dulu — kalau sudah match, stop (dinamis)
-    -- Max 5 attempt, jeda 1s. Return true kalau berhasil, false kalau gagal semua
+    -- equipRodWithRetry: retry 5x cek Replion EquippedId dinamis
+    -- Tidak pakai withSellHold — rod tidak perlu lindungi dari autosell
     S.Quest.equipRodWithRetry = function(job, uuid)
         local equipped = false
-        S.Quest.withSellHold(function()
-            for attempt = 1, 5 do
-                if Runtime.Quest.Enabled[job] ~= true then break end
-                -- Cek Replion dulu — mungkin rod sudah terpasang (auto equip atau user manual)
-                local currentId = tostring(Data.Player:Get("EquippedId") or "")
-                if currentId == uuid then
-                    equipped = true
-                    break
-                end
-                -- Coba equip agresif
-                local ok = S.equipAndHold(uuid, "Fishing Rods", function()
-                    return Runtime.Quest.Enabled[job] == true
-                end)
-                if ok then
-                    equipped = true
-                    break
-                end
-                -- Tunggu Replion konfirmasi EquippedId == uuid (dinamis, max 2s)
-                local acked = S.Quest.waitJob(job, function()
-                    return tostring(Data.Player:Get("EquippedId") or "") == uuid
-                end, 2, 0.1)
-                if acked then
-                    equipped = true
-                    break
-                end
-                if attempt < 5 then task.wait(1) end
+        for attempt = 1, 5 do
+            if Runtime.Quest.Enabled[job] ~= true then break end
+            local currentId = tostring(Data.Player:Get("EquippedId") or "")
+            if currentId == uuid then
+                equipped = true
+                break
             end
-        end)
+            local ok = S.equipAndHold(uuid, "Fishing Rods", function()
+                return Runtime.Quest.Enabled[job] == true
+            end)
+            if ok then
+                equipped = true
+                break
+            end
+            local acked = S.Quest.waitJob(job, function()
+                return tostring(Data.Player:Get("EquippedId") or "") == uuid
+            end, 2, 0.1)
+            if acked then
+                equipped = true
+                break
+            end
+            if attempt < 5 then task.wait(1) end
+        end
         return equipped
     end
 
