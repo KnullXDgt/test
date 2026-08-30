@@ -5251,16 +5251,23 @@ do
             for _, definition in ipairs(S.Quest.Artifacts) do
                 if levers[definition.Type] ~= true then
                     allDone = false
-                    if lastTeleport ~= definition.Type then
-                        S.Quest.teleport(definition.CFrame)
-                        lastTeleport = definition.Type
-                    end
                     local item = S.Quest.findByName(definition.Type)
                     if item then
-                        lastTeleport = nil  -- reset setelah place, spot berikutnya butuh tp baru
+                        -- item ada di inventory → teleport dan place
+                        if lastTeleport ~= definition.Type then
+                            S.Quest.teleport(definition.CFrame)
+                            lastTeleport = definition.Type
+                        end
+                        lastTeleport = nil
                         S.Quest.placeStateItem(
                             "Artifact", Remote.placeLever,
                             "TempleLevers", definition.Type)
+                    else
+                        -- item belum ada → teleport nunggu fishing dapat item
+                        if lastTeleport ~= definition.Type then
+                            S.Quest.teleport(definition.CFrame)
+                            lastTeleport = definition.Type
+                        end
                     end
                     break
                 end
