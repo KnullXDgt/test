@@ -5289,9 +5289,8 @@ do
                 if uuid then
                     S.Quest.equipRodWithRetry("DeepSea", uuid)
                 end
-                -- Cek dinamis via Replion: jika rod sudah equipped, done
-                -- Jika gagal, loop berikutnya akan cek lagi lewat findByName
-                if tostring(Data.Player:Get("EquippedId") or "") == (ghostfinn.Item and ghostfinn.Item.UUID or "") then
+                -- Cek dinamis: stop hanya kalau uuid valid DAN sudah terpasang
+                if uuid and tostring(Data.Player:Get("EquippedId") or "") == uuid then
                     Runtime.Quest.Enabled.DeepSea = false
                     break
                 end
@@ -5339,11 +5338,12 @@ do
         while Runtime.Quest.Enabled.Element == true do
             if S.Quest.owns("Element Rod") then
                 local rod = S.Quest.findByName("Element Rod")
-                if rod and rod.Item and rod.Item.UUID then
-                    S.Quest.equipRodWithRetry("Element", rod.Item.UUID)
+                local uuid = rod and rod.Item and rod.Item.UUID
+                if uuid then
+                    S.Quest.equipRodWithRetry("Element", uuid)
                 end
-                -- Cek dinamis: stop hanya kalau rod sudah terpasang
-                if tostring(Data.Player:Get("EquippedId") or "") == (rod and rod.Item and rod.Item.UUID or "") then
+                -- Cek dinamis: stop hanya kalau uuid valid DAN sudah terpasang
+                if uuid and tostring(Data.Player:Get("EquippedId") or "") == uuid then
                     Runtime.Quest.Enabled.Element = false
                     break
                 end
@@ -5405,11 +5405,12 @@ do
         while Runtime.Quest.Enabled.Diamond == true do
             if S.Quest.owns("Diamond Rod") then
                 local rod = S.Quest.findByName("Diamond Rod")
-                if rod and rod.Item and rod.Item.UUID then
-                    S.Quest.equipRodWithRetry("Diamond", rod.Item.UUID)
+                local uuid = rod and rod.Item and rod.Item.UUID
+                if uuid then
+                    S.Quest.equipRodWithRetry("Diamond", uuid)
                 end
-                -- Cek dinamis: stop hanya kalau rod sudah terpasang
-                if tostring(Data.Player:Get("EquippedId") or "") == (rod and rod.Item and rod.Item.UUID or "") then
+                -- Cek dinamis: stop hanya kalau uuid valid DAN sudah terpasang
+                if uuid and tostring(Data.Player:Get("EquippedId") or "") == uuid then
                     Runtime.Quest.Enabled.Diamond = false
                     break
                 end
