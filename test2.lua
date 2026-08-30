@@ -4928,6 +4928,42 @@ do
         return result
     end
 
+    -- equipRodWithRetry: equipRodCanonical + outer retry loop
+    -- Tiap attempt cek Replion EquippedId dulu — kalau sudah match, stop (dinamis)
+    -- Max 5 attempt, jeda 1s. Return true kalau berhasil, false kalau gagal semua
+    S.Quest.equipRodWithRetry = function(job, uuid)
+        local equipped = false
+        S.Quest.withSellHold(function()
+            for attempt = 1, 5 do
+                if Runtime.Quest.Enabled[job] ~= true then break end
+                -- Cek Replion dulu — mungkin rod sudah terpasang (auto equip atau user manual)
+                local currentId = tostring(Data.Player:Get("EquippedId") or "")
+                if currentId == uuid then
+                    equipped = true
+                    break
+                end
+                -- Coba equip agresif
+                local ok = S.equipAndHold(uuid, "Fishing Rods", function()
+                    return Runtime.Quest.Enabled[job] == true
+                end)
+                if ok then
+                    equipped = true
+                    break
+                end
+                -- Tunggu Replion konfirmasi EquippedId == uuid (dinamis, max 2s)
+                local acked = S.Quest.waitJob(job, function()
+                    return tostring(Data.Player:Get("EquippedId") or "") == uuid
+                end, 2, 0.1)
+                if acked then
+                    equipped = true
+                    break
+                end
+                if attempt < 5 then task.wait(1) end
+            end
+        end)
+        return equipped
+    end
+
     -- placeStateItem: fire remote + waitJob Replion ack, max 3 retry jeda 1s
     S.Quest.placeStateItem = function(job, remote, stateKey, typeName)
         if not remote then return false end
@@ -5250,9 +5286,15 @@ do
             local ghostfinn = S.Quest.findByName("Ghostfinn Rod")
             if ghostfinn then
                 local uuid = ghostfinn.Item and ghostfinn.Item.UUID
-                if uuid then S.Quest.equipRodCanonical("DeepSea", uuid) end
-                Runtime.Quest.Enabled.DeepSea = false
-                break
+                if uuid then
+                    S.Quest.equipRodWithRetry("DeepSea", uuid)
+                end
+                -- Cek dinamis via Replion: jika rod sudah equipped, done
+                -- Jika gagal, loop berikutnya akan cek lagi lewat findByName
+                if tostring(Data.Player:Get("EquippedId") or "") == (ghostfinn.Item and ghostfinn.Item.UUID or "") then
+                    Runtime.Quest.Enabled.DeepSea = false
+                    break
+                end
             end
             local objective = nil
             for index, definition in ipairs(S.Quest.Goals.DeepSea) do
@@ -5298,10 +5340,13 @@ do
             if S.Quest.owns("Element Rod") then
                 local rod = S.Quest.findByName("Element Rod")
                 if rod and rod.Item and rod.Item.UUID then
-                    S.Quest.equipRodCanonical("Element", rod.Item.UUID)
+                    S.Quest.equipRodWithRetry("Element", rod.Item.UUID)
                 end
-                Runtime.Quest.Enabled.Element = false
-                break
+                -- Cek dinamis: stop hanya kalau rod sudah terpasang
+                if tostring(Data.Player:Get("EquippedId") or "") == (rod and rod.Item and rod.Item.UUID or "") then
+                    Runtime.Quest.Enabled.Element = false
+                    break
+                end
             end
             local targetLoc = nil
             if S.Quest.progress("Element Quest", 2, 1) < 1 then
@@ -5361,10 +5406,13 @@ do
             if S.Quest.owns("Diamond Rod") then
                 local rod = S.Quest.findByName("Diamond Rod")
                 if rod and rod.Item and rod.Item.UUID then
-                    S.Quest.equipRodCanonical("Diamond", rod.Item.UUID)
+                    S.Quest.equipRodWithRetry("Diamond", rod.Item.UUID)
                 end
-                Runtime.Quest.Enabled.Diamond = false
-                break
+                -- Cek dinamis: stop hanya kalau rod sudah terpasang
+                if tostring(Data.Player:Get("EquippedId") or "") == (rod and rod.Item and rod.Item.UUID or "") then
+                    Runtime.Quest.Enabled.Diamond = false
+                    break
+                end
             end
             if S.Quest.owns("Diamond Key") then
                 lastTeleport = nil
