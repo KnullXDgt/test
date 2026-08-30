@@ -5772,6 +5772,25 @@ do
         end)
     end
     Runtime.Quest.RefreshPanels()
+
+    -- Replion startup poller: retry baca semua data quest sampai semua loaded
+    -- Read-only — tidak ada equip/teleport, hanya update panel
+    task.spawn(function()
+        for _ = 1, 20 do
+            task.wait(0.5)
+            local inv       = S.Quest.get("Inventory")
+            local quests    = S.Quest.get("Quests")
+            local levers    = S.Quest.get("TempleLevers")
+            local plates    = S.Quest.get("RuinPressurePlates")
+            local completed = S.Quest.get("CompletedQuests")
+            -- Refresh panel tiap attempt agar panel terupdate begitu data masuk
+            Runtime.Quest.RefreshPanels()
+            -- Stop kalau semua data sudah ada
+            if inv and quests and levers ~= nil and plates ~= nil and completed ~= nil then
+                break
+            end
+        end
+    end)
 end
 
 -- ====== STARTUP ======
