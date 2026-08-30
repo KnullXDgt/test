@@ -5639,45 +5639,45 @@ do
         then
             S.Quest.startJobThread(job, S.Quest.Runners[job])
         elseif job == "Crystalline" then
-            -- Startup scan dengan retry: cek inventory + Replion sampai 5 attempt
-            -- Berguna kalau user toggle ON saat ikan target sudah ada di inventory
+            -- Startup scan: sequential satu per satu, retry per ikan jeda 2s
             task.spawn(function()
-                for attempt = 1, 5 do
+                if Runtime.Quest.Enabled.Crystalline ~= true then return end
+                local plates = S.Quest.get("RuinPressurePlates") or {}
+                for _, definition in ipairs(S.Quest.Pressure) do
                     if Runtime.Quest.Enabled.Crystalline ~= true then break end
-                    task.wait(0.3)
-                    if Runtime.Quest.Enabled.Crystalline ~= true then break end
-                    local plates = S.Quest.get("RuinPressurePlates") or {}
-                    local anyPending = false
-                    for _, definition in ipairs(S.Quest.Pressure) do
-                        if Runtime.Quest.Enabled.Crystalline ~= true then break end
-                        if plates[definition.Name] ~= true then
-                            anyPending = true
+                    if plates[definition.Name] ~= true then
+                        -- Retry per ikan sampai berhasil atau toggle OFF
+                        while Runtime.Quest.Enabled.Crystalline == true do
+                            plates = S.Quest.get("RuinPressurePlates") or {}
+                            if plates[definition.Name] == true then break end
                             if not S.Quest.CrystallineBusy[definition.Name]
                                 and S.Quest.findPressureFish(definition.Name)
                             then
                                 S.Quest.CrystallineBusy[definition.Name] = true
-                                -- SellHold+1 SYNCHRONOUS sebelum spawn (sama seperti OnFishCaught)
                                 Runtime.Quest.SellHold = Runtime.Quest.SellHold + 1
-                                task.spawn(function()
-                                    pcall(function()
-                                        S.Quest.placePressureFishEntry("Crystalline", definition)
-                                    end)
-                                    S.Quest.CrystallineBusy[definition.Name] = nil
-                                    Runtime.Quest.SellHold = Runtime.Quest.SellHold - 1
-                                    if Runtime.Quest.SellHold < 0 then Runtime.Quest.SellHold = 0 end
-                                    if Runtime.Quest.SellHold == 0 then
-                                        task.defer(function()
-                                            if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle" then
-                                                Runtime.Sell.Flush()
-                                            end
-                                        end)
-                                    end
-                                    Runtime.Quest.RefreshPanels()
+                                pcall(function()
+                                    S.Quest.placePressureFishEntry("Crystalline", definition)
                                 end)
+                                S.Quest.CrystallineBusy[definition.Name] = nil
+                                Runtime.Quest.SellHold = Runtime.Quest.SellHold - 1
+                                if Runtime.Quest.SellHold < 0 then Runtime.Quest.SellHold = 0 end
+                                Runtime.Quest.RefreshPanels()
+                                plates = S.Quest.get("RuinPressurePlates") or {}
+                                if plates[definition.Name] == true then break end
+                            else
+                                -- Ikan belum ada di inventory, tidak perlu retry
+                                break
                             end
+                            task.wait(2)
                         end
                     end
-                    if not anyPending then break end -- semua plate sudah aktif
+                end
+                if Runtime.Quest.SellHold == 0 then
+                    task.defer(function()
+                        if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle" then
+                            Runtime.Sell.Flush()
+                        end
+                    end)
                 end
             end)
         end
