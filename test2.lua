@@ -5076,8 +5076,7 @@ do
                 if not entry then
                     -- Replion mungkin belum sync, retry di attempt berikutnya
                     if attempt < 3 then task.wait(1) end
-                    continue
-                end
+                else
                 local uuid = entry.Item.UUID
                 local itemType = (entry.Data and entry.Data.Type) or "Items"
                 -- smart hotbar evict
@@ -5136,6 +5135,7 @@ do
                     if acked then ok = true; break end
                     if attempt < 3 then task.wait(1) end
                 end
+                end -- end else entry
             end
         end)
         return ok
