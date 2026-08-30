@@ -43,6 +43,7 @@ for key, remoteName in pairs({
     markAutoFishing = "RF/MarkAutoFishingUsed",
     fishCaught = "RE/FishCaught",
     equipTool = "RE/EquipToolFromHotbar",
+    unequipTool = "RE/UnequipToolFromHotbar",
     fishingRadar = "RF/UpdateFishingRadar",
     equipOxygen = "RF/EquipOxygenTank",
     unequipOxygen = "RF/UnequipOxygenTank",
@@ -5093,6 +5094,17 @@ do
     S.Quest.placePressureFishEntry = function(job, definition)
         local ok = false
         S.Quest.withSellHold(function()
+            -- Lepas rod dari tangan dulu (bukan dari hotbar)
+            -- supaya slot tangan kosong dan bisa pegang ikan
+            -- SellHold > 0 sudah block Auto Equip Rod
+            pcall(function() Remote.unequipTool:FireServer() end)
+            -- Tunggu EquippedId kosong (max 1s)
+            local dropDeadline = os.clock() + 1
+            while os.clock() < dropDeadline do
+                local eid = tostring(Data.Player:Get("EquippedId") or "")
+                if eid == "" then break end
+                task.wait(0.05)
+            end
             for attempt = 1, 3 do
                 if Runtime.Quest.Enabled[job] ~= true then break end
                 -- cek plate sudah aktif (awal tiap attempt)
