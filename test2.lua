@@ -1701,20 +1701,19 @@ end
 SupportState.setAutoEquipRod = function(state)
     if SupportState.autoEquipRodConn then SupportState.autoEquipRodConn:Disconnect() SupportState.autoEquipRodConn = nil end
     if state then
-        local ok, equipped = pcall(function() return Data.Player:Get("EquippedId") end)
-        if not (ok and equipped and equipped ~= "") then
-            task.wait(0.2)
-            pcall(function() Remote.equipTool:FireServer(1) end)
+        -- Cek sekarang dulu
+        if Runtime.Quest.SellHold == 0 and not FishingModes.Active then
+            pcall(function()
+                local equipped = Data.Player:Get("EquippedId")
+                if not equipped or equipped == "" then
+                    Remote.equipTool:FireServer(1)
+                end
+            end)
         end
+        -- Event-driven: tiap EquippedId kosong → pasang rod
         SupportState.autoEquipRodConn = Data.Player:OnChange("EquippedId", function(value)
             if not value or value == "" then
-                if Runtime.Quest.SellHold > 0 or Runtime.Sell.Busy then return end
-                task.wait(0.2)
-                -- Re-check setelah delay; SellHold mungkin sudah aktif
-                if Runtime.Quest.SellHold > 0
-                    or Runtime.Sell.Busy
-                    or FishingModes.Active
-                then return end
+                if Runtime.Quest.SellHold > 0 or Runtime.Sell.Busy or FishingModes.Active then return end
                 pcall(function() Remote.equipTool:FireServer(1) end)
             end
         end)
