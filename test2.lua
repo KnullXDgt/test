@@ -955,6 +955,40 @@ Runtime.Sell.Execute = function()
         Runtime.Sell.Reason = Runtime.Sell.Reason or "QuestHold"
         return false
     end
+    -- Cek langsung saat mau sell: kalau ada ikan target quest di inventory, block
+    -- Lebih reliable dari OnFishCaught karena tidak ada race window
+    if S.Quest then
+        -- Crystalline: block kalau ada pressure fish belum di-place
+        if Runtime.Quest.Enabled.Crystalline == true then
+            local plates = S.Quest.get("RuinPressurePlates") or {}
+            for _, definition in ipairs(S.Quest.Pressure or {}) do
+                if plates[definition.Name] ~= true
+                    and S.Quest.findPressureFish(definition.Name)
+                then
+                    Runtime.Sell.Pending = true
+                    Runtime.Sell.Reason = "QuestHold"
+                    return false
+                end
+            end
+        end
+        -- Diamond: block kalau ada Ruby Gemstone atau Lochness dan obj belum selesai
+        if Runtime.Quest.Enabled.Diamond == true then
+            if S.Quest.progress("Diamond Researcher", 4, 1) < 1
+                and S.Quest.findFish(243, "Gemstone")
+            then
+                Runtime.Sell.Pending = true
+                Runtime.Sell.Reason = "QuestHold"
+                return false
+            end
+            if S.Quest.progress("Diamond Researcher", 5, 1) < 1
+                and S.Quest.findFish(228)
+            then
+                Runtime.Sell.Pending = true
+                Runtime.Sell.Reason = "QuestHold"
+                return false
+            end
+        end
+    end
     if Runtime.Sell.Busy or Runtime.Sell.Phase ~= "Idle" then return false end
     if os.clock() - Runtime.Sell.LastCall < 0.25 then return false end
     if not Remote.sell then return false end
