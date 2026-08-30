@@ -5043,6 +5043,13 @@ do
         if not Remote.createTranscended then return false end
         local ok = false
         S.Quest.withSellHold(function()
+            -- Lepas rod dari tangan dulu sebelum equip secret fish
+            pcall(function() Remote.unequipTool:FireServer() end)
+            local dropDeadline = os.clock() + 1
+            while os.clock() < dropDeadline do
+                if tostring(Data.Player:Get("EquippedId") or "") == "" then break end
+                task.wait(0.05)
+            end
             if not S.equipAndHold(uuid, "Fish", function()
                 return Runtime.Quest.Enabled[job] == true
             end) then return end
@@ -5186,8 +5193,13 @@ do
         local ok = false
         S.Quest.withSellHold(function()
             -- KRITIS: equip key DULU sebelum teleport ke door
-            -- DiamondKeySlot controller cek EquippedId == key UUID saat prompt triggered
-            -- Kalau teleport dulu, auto equip rod bisa ngambil tangan sebelum key di-equip
+            -- Lepas rod dari tangan dulu supaya bisa pegang key
+            pcall(function() Remote.unequipTool:FireServer() end)
+            local dropDeadline = os.clock() + 1
+            while os.clock() < dropDeadline do
+                if tostring(Data.Player:Get("EquippedId") or "") == "" then break end
+                task.wait(0.05)
+            end
             if not S.equipAndHold(uuid, "Gears", function()
                 return Runtime.Quest.Enabled[job] == true
             end) then return end
