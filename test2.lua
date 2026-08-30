@@ -5100,10 +5100,14 @@ do
         if not uuid then return false end
         local ok = false
         S.Quest.withSellHold(function()
-            S.Quest.teleport(S.Quest.DiamondDoor)
+            -- KRITIS: equip key DULU sebelum teleport ke door
+            -- DiamondKeySlot controller cek EquippedId == key UUID saat prompt triggered
+            -- Kalau teleport dulu, auto equip rod bisa ngambil tangan sebelum key di-equip
             if not S.equipAndHold(uuid, "Gears", function()
                 return Runtime.Quest.Enabled[job] == true
             end) then return end
+            -- Setelah key di tangan, baru teleport ke door
+            S.Quest.teleport(S.Quest.DiamondDoor)
             local prompt = nil
             local promptReady = S.Quest.waitJob(job, function()
                 local doors = Service.CollectionService:GetTagged("DiamondDoor")
@@ -5111,12 +5115,12 @@ do
                 local input = door and door:FindFirstChild("InputPart")
                 prompt = input and input:FindFirstChildOfClass("ProximityPrompt")
                 return prompt and prompt.Enabled
-            end, 4, 0.05)
+            end, 6, 0.05)
             if not promptReady or type(fireproximityprompt) ~= "function" then return end
             pcall(fireproximityprompt, prompt)
             S.Quest.waitJob(job, function()
                 return prompt.Parent == nil or prompt.Enabled == false
-            end, 2, 0.05)
+            end, 3, 0.05)
             if not Remote.claimItem then return end
             local done, claimed = false, false
             local claimThread = task.spawn(function()
