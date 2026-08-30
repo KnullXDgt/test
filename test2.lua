@@ -1716,7 +1716,7 @@ SupportState.setAutoEquipRod = function(state)
             if not value or value == "" then
                 if Runtime.Quest.SellHold > 0 or Runtime.Sell.Busy or FishingModes.Active then return end
                 task.spawn(function()
-                    task.wait(0.1)
+                    task.wait(0.3)
                     if Runtime.Quest.SellHold > 0 or Runtime.Sell.Busy or FishingModes.Active then return end
                     local current = Data.Player:Get("EquippedId")
                     if not current or current == "" then
