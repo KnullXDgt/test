@@ -968,6 +968,16 @@ Runtime.Sell.Execute = function()
                 end
             end
         end
+        -- Element: block kalau ada secret fish (tier 7) dan obj Transcended belum selesai
+        if Runtime.Quest.Enabled.Element == true then
+            if S.Quest.progress("Element Quest", 4, 3) < 3
+                and S.Quest.findSecret()
+            then
+                Runtime.Sell.Pending = true
+                Runtime.Sell.Reason = "QuestHold"
+                return false
+            end
+        end
         -- Diamond: block kalau ada Ruby Gemstone atau Lochness dan obj belum selesai
         if Runtime.Quest.Enabled.Diamond == true then
             if S.Quest.progress("Diamond Researcher", 4, 1) < 1
