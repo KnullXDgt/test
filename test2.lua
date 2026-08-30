@@ -5013,7 +5013,7 @@ do
                 equipped = true
                 break
             end
-            if attempt < 5 then task.wait(1) end
+            if attempt < 5 then task.wait(2) end
         end
         return equipped
     end
@@ -5034,7 +5034,7 @@ do
                 return s[typeName] == true
             end, 8, 0.1)
             if acked then ok = true; break end
-            if attempt < 3 then task.wait(1) end
+            if attempt < 3 then task.wait(2) end
         end
         return ok
     end
@@ -5057,7 +5057,7 @@ do
                         or S.Quest.isCompleted(questName)
                 end, 10, 0.1)
                 if acked then ok = true; break end
-                if attempt < 3 then task.wait(1) end
+                if attempt < 3 then task.wait(2) end
             end
         end)
         return ok
@@ -5147,7 +5147,7 @@ do
                 local entry = S.Quest.findPressureFish(definition.Name)
                 if not entry then
                     -- Replion mungkin belum sync, retry di attempt berikutnya
-                    if attempt < 3 then task.wait(1) end
+                    if attempt < 3 then task.wait(2) end
                 else
                 local uuid = entry.Item.UUID
                 local itemType = (entry.Data and entry.Data.Type) or "Items"
@@ -5191,7 +5191,7 @@ do
                     if restoredEntry then
                         pcall(function() Remote.equipItem:FireServer(restoredEntry.UUID, restoredEntry.ItemType) end)
                     end
-                    if attempt < 3 then task.wait(1) end
+                    if attempt < 3 then task.wait(2) end
                 else
                     if Remote.placePressure then
                         pcall(function() Remote.placePressure:FireServer(definition.Name) end)
@@ -5205,7 +5205,7 @@ do
                     end
                     pcall(function() Remote.equipTool:FireServer(1) end)
                     if acked then ok = true; break end
-                    if attempt < 3 then task.wait(1) end
+                    if attempt < 3 then task.wait(2) end
                 end
                 end -- end else entry
             end
@@ -5414,7 +5414,7 @@ do
         -- Silent eligibility: tunggu Ghostfinn Rod via Replion, tidak update panel
         while Runtime.Quest.Enabled.Element == true do
             if S.Quest.owns("Ghostfinn Rod") then break end
-            task.wait(1)
+            task.wait(2)
         end
         if Runtime.Quest.Enabled.Element ~= true then return end
         if not S.Quest.getMainline("Element Quest")
@@ -5480,7 +5480,7 @@ do
                 or S.Quest.owns("Diamond Key")
                 or S.Quest.owns("Diamond Rod")
             then break end
-            task.wait(1)
+            task.wait(2)
         end
         if Runtime.Quest.Enabled.Diamond ~= true then return end
         if not S.Quest.getMainline("Diamond Researcher")
