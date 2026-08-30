@@ -5532,27 +5532,34 @@ do
         then
             S.Quest.startJobThread(job, S.Quest.Runners[job])
         elseif job == "Crystalline" then
-            -- Startup scan: cek inventory sekarang juga
+            -- Startup scan dengan retry: cek inventory + Replion sampai 5 attempt
             -- Berguna kalau user toggle ON saat ikan target sudah ada di inventory
             task.spawn(function()
-                task.wait(0.3)  -- beri waktu Replion sync
-                if Runtime.Quest.Enabled.Crystalline ~= true then return end
-                local plates = S.Quest.get("RuinPressurePlates") or {}
-                for _, definition in ipairs(S.Quest.Pressure) do
+                for attempt = 1, 5 do
                     if Runtime.Quest.Enabled.Crystalline ~= true then break end
-                    if plates[definition.Name] ~= true
-                        and not S.Quest.CrystallineBusy[definition.Name]
-                        and S.Quest.findPressureFish(definition.Name)
-                    then
-                        S.Quest.CrystallineBusy[definition.Name] = true
-                        task.spawn(function()
-                            pcall(function()
-                                S.Quest.placePressureFishEntry("Crystalline", definition)
-                            end)
-                            S.Quest.CrystallineBusy[definition.Name] = nil
-                            Runtime.Quest.RefreshPanels()
-                        end)
+                    task.wait(0.3)
+                    if Runtime.Quest.Enabled.Crystalline ~= true then break end
+                    local plates = S.Quest.get("RuinPressurePlates") or {}
+                    local anyPending = false
+                    for _, definition in ipairs(S.Quest.Pressure) do
+                        if Runtime.Quest.Enabled.Crystalline ~= true then break end
+                        if plates[definition.Name] ~= true then
+                            anyPending = true
+                            if not S.Quest.CrystallineBusy[definition.Name]
+                                and S.Quest.findPressureFish(definition.Name)
+                            then
+                                S.Quest.CrystallineBusy[definition.Name] = true
+                                task.spawn(function()
+                                    pcall(function()
+                                        S.Quest.placePressureFishEntry("Crystalline", definition)
+                                    end)
+                                    S.Quest.CrystallineBusy[definition.Name] = nil
+                                    Runtime.Quest.RefreshPanels()
+                                end)
+                            end
+                        end
                     end
+                    if not anyPending then break end -- semua plate sudah aktif
                 end
             end)
         end
