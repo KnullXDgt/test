@@ -233,7 +233,7 @@ local Runtime = {
     Quest = {
         Enabled = {},       -- [jobName]=true/false per toggle
         Threads = {},       -- [jobName]=thread handle
-        SellHold = false,   -- true hanya selama window equip+fire+ack
+        SellHold = 0,       -- counter: >0 = hold. Bukan boolean — cegah race multi-fitur
         Panels = {},
         LastLocation = nil, -- dipakai fallback/teleportNPC
         OnFishCaught = function() end,
@@ -946,7 +946,7 @@ Runtime.Sell.Wait = function(ticket)
 end
 
 Runtime.Sell.Execute = function()
-    if Runtime.Quest.SellHold then
+    if Runtime.Quest.SellHold > 0 then
         Runtime.Sell.Pending = true
         Runtime.Sell.Reason = Runtime.Sell.Reason or "QuestHold"
         return false
@@ -1671,10 +1671,10 @@ SupportState.setAutoEquipRod = function(state)
         end
         SupportState.autoEquipRodConn = Data.Player:OnChange("EquippedId", function(value)
             if not value or value == "" then
-                if Runtime.Quest.SellHold or Runtime.Sell.Busy then return end
+                if Runtime.Quest.SellHold > 0 or Runtime.Sell.Busy then return end
                 task.wait(0.2)
                 -- Re-check setelah delay; SellHold mungkin sudah aktif
-                if Runtime.Quest.SellHold
+                if Runtime.Quest.SellHold > 0
                     or Runtime.Sell.Busy
                     or FishingModes.Active
                 then return end
@@ -3040,7 +3040,7 @@ Navigation.pauseQuestForEvent = function(state)
                 end
             end
         end
-        Runtime.Quest.SellHold = false
+        Runtime.Quest.SellHold = 0
     else
         -- Resume: restart semua yang masih Enabled
         if S.Quest and S.Quest.startJobThread then
@@ -4899,17 +4899,21 @@ do
         end
     end
 
-    -- withSellHold: guaranteed release via pcall — task.cancel TIDAK di-catch pcall
-    -- sehingga Stop() harus tetap force SellHold=false setelah cancel
+    -- withSellHold: counter-based — cegah race antara Crystalline + Diamond bersamaan
+    -- Setiap caller increment +1 saat masuk, decrement -1 saat keluar
+    -- Sell.Execute cek SellHold > 0, bukan boolean
     S.Quest.withSellHold = function(fn)
-        Runtime.Quest.SellHold = true
+        Runtime.Quest.SellHold = Runtime.Quest.SellHold + 1
         local ok, err = pcall(fn)
-        Runtime.Quest.SellHold = false
-        task.defer(function()
-            if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle" then
-                Runtime.Sell.Flush()
-            end
-        end)
+        Runtime.Quest.SellHold = Runtime.Quest.SellHold - 1
+        if Runtime.Quest.SellHold < 0 then Runtime.Quest.SellHold = 0 end
+        if Runtime.Quest.SellHold == 0 then
+            task.defer(function()
+                if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle" then
+                    Runtime.Sell.Flush()
+                end
+            end)
+        end
         return ok, err
     end
 
@@ -5396,7 +5400,7 @@ do
         end
 
         -- DIAMOND: protect Ruby dan Lochness dari autosell
-        -- Diamond loop jalan tiap 0.4s — SellHold=true bridging gap antara
+        -- Diamond loop jalan tiap 0.4s — SellHold+1 bridging gap antara
         -- FishCaught dan loop iteration berikutnya yang akan exchange via withSellHold
         if Runtime.Quest.Enabled.Diamond == true then
             local variant = type(metadata) == "table"
@@ -5407,21 +5411,22 @@ do
                 or (S.Quest.progress("Diamond Researcher", 5, 1) < 1
                     and fishName == "Lochness Monster")
             if needProtect then
-                Runtime.Quest.SellHold = true
+                Runtime.Quest.SellHold = Runtime.Quest.SellHold + 1
                 -- Fallback release: kalau Diamond toggle OFF sebelum loop sempat
                 -- exchange, withSellHold tidak akan dipanggil — release manual setelah 2s
                 task.delay(2, function()
-                    if not Runtime.Quest.Enabled.Diamond
-                        and Runtime.Quest.SellHold
-                    then
-                        Runtime.Quest.SellHold = false
-                        task.defer(function()
-                            if Runtime.Sell.Pending
-                                and Runtime.Fishing.Phase == "Idle"
-                            then
-                                Runtime.Sell.Flush()
-                            end
-                        end)
+                    if not Runtime.Quest.Enabled.Diamond then
+                        Runtime.Quest.SellHold = Runtime.Quest.SellHold - 1
+                        if Runtime.Quest.SellHold < 0 then Runtime.Quest.SellHold = 0 end
+                        if Runtime.Quest.SellHold == 0 then
+                            task.defer(function()
+                                if Runtime.Sell.Pending
+                                    and Runtime.Fishing.Phase == "Idle"
+                                then
+                                    Runtime.Sell.Flush()
+                                end
+                            end)
+                        end
                     end
                 end)
             end
@@ -5447,9 +5452,9 @@ do
             pcall(task.cancel, thread)
             Runtime.Quest.Threads[job] = nil
         end
-        -- Force SellHold=false — task.cancel tidak di-catch pcall
-        -- withSellHold tidak bisa release sendiri kalau thread di-cancel
-        Runtime.Quest.SellHold = false
+        -- Force SellHold=0 — task.cancel tidak di-catch pcall
+        -- withSellHold tidak bisa decrement sendiri kalau thread di-cancel
+        Runtime.Quest.SellHold = 0
         task.defer(function()
             if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle" then
                 Runtime.Sell.Flush()
