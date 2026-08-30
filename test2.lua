@@ -4954,8 +4954,9 @@ do
     -- 5. Release Owner + SellHold
     S.Quest.withSellHold = function(fn)
         Runtime.Quest.SellHold = Runtime.Quest.SellHold + 1
-        -- Tunggu cycle yang sedang jalan selesai (max 3s)
-        local waitDeadline = os.clock() + 3
+        -- Tunggu cycle yang sedang jalan selesai (max 8s)
+        -- Re-check setelah timeout supaya 2 caller tidak concurrent equip
+        local waitDeadline = os.clock() + 8
         while (Runtime.Fishing.Phase ~= "Idle" or Runtime.Fishing.Owner ~= nil)
             and os.clock() < waitDeadline
         do
