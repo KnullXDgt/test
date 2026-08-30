@@ -4943,12 +4943,28 @@ do
         end
     end
 
-    -- withSellHold: counter-based — cegah race antara Crystalline + Diamond bersamaan
-    -- Setiap caller increment +1 saat masuk, decrement -1 saat keluar
-    -- Sell.Execute cek SellHold > 0, bukan boolean
+    -- withSellHold: counter-based + fishing cycle guard
+    -- 1. SellHold+1 → block autosell + auto equip rod
+    -- 2. Tunggu fishing phase idle + owner nil (max 3s)
+    -- 3. Set Owner="Quest" → block cycle BARU dimulai (WaitReady cek Owner)
+    -- 4. Jalankan fn (equip ikan/key, fire remote, dll)
+    -- 5. Release Owner + SellHold
     S.Quest.withSellHold = function(fn)
         Runtime.Quest.SellHold = Runtime.Quest.SellHold + 1
+        -- Tunggu cycle yang sedang jalan selesai (max 3s)
+        local waitDeadline = os.clock() + 3
+        while (Runtime.Fishing.Phase ~= "Idle" or Runtime.Fishing.Owner ~= nil)
+            and os.clock() < waitDeadline
+        do
+            task.wait(0.05)
+        end
+        -- Block cycle baru dimulai
+        Runtime.Fishing.Owner = "Quest"
         local ok, err = pcall(fn)
+        -- Release fishing owner kalau masih milik kita
+        if Runtime.Fishing.Owner == "Quest" then
+            Runtime.Fishing.Owner = nil
+        end
         Runtime.Quest.SellHold = Runtime.Quest.SellHold - 1
         if Runtime.Quest.SellHold < 0 then Runtime.Quest.SellHold = 0 end
         if Runtime.Quest.SellHold == 0 then
