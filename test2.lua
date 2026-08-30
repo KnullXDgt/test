@@ -5630,10 +5630,31 @@ do
         end
     end
 
+    -- Panel refresh loop: jalan saat ada quest aktif, stop saat semua OFF
+    -- Cek apakah minimal 1 quest masih ON
+    Runtime.Quest.anyEnabled = function()
+        for _, job in ipairs({"Artifact","DeepSea","Element","Diamond","Crystalline"}) do
+            if Runtime.Quest.Enabled[job] then return true end
+        end
+        return false
+    end
+
+    local function startPanelLoop()
+        if Runtime.Quest.PanelThread then return end
+        Runtime.Quest.PanelThread = task.spawn(function()
+            while Runtime.Quest.anyEnabled() do
+                task.wait(0.5)
+                Runtime.Quest.RefreshPanels()
+            end
+            Runtime.Quest.PanelThread = nil
+        end)
+    end
+
     -- ====== START / STOP ======
 
     Runtime.Quest.Start = function(job)
         Runtime.Quest.Enabled[job] = true
+        startPanelLoop()
         if job == "Artifact" or job == "DeepSea"
             or job == "Element" or job == "Diamond"
         then
