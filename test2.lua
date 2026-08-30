@@ -4969,23 +4969,23 @@ do
     end
 
     -- placeStateItem: fire remote + waitJob Replion ack, max 3 retry jeda 1s
+    -- Tidak pakai withSellHold — artifact items tidak bisa di-sell
+    -- Caller yang butuh SellHold (Crystalline dll) sudah wrap sendiri
     S.Quest.placeStateItem = function(job, remote, stateKey, typeName)
         if not remote then return false end
         local ok = false
-        S.Quest.withSellHold(function()
-            for attempt = 1, 3 do
-                if Runtime.Quest.Enabled[job] ~= true then break end
-                local state = S.Quest.get(stateKey) or {}
-                if state[typeName] == true then ok = true; break end
-                pcall(function() remote:FireServer(typeName) end)
-                local acked = S.Quest.waitJob(job, function()
-                    local s = S.Quest.get(stateKey) or {}
-                    return s[typeName] == true
-                end, 8, 0.1)
-                if acked then ok = true; break end
-                if attempt < 3 then task.wait(1) end
-            end
-        end)
+        for attempt = 1, 3 do
+            if Runtime.Quest.Enabled[job] ~= true then break end
+            local state = S.Quest.get(stateKey) or {}
+            if state[typeName] == true then ok = true; break end
+            pcall(function() remote:FireServer(typeName) end)
+            local acked = S.Quest.waitJob(job, function()
+                local s = S.Quest.get(stateKey) or {}
+                return s[typeName] == true
+            end, 8, 0.1)
+            if acked then ok = true; break end
+            if attempt < 3 then task.wait(1) end
+        end
         return ok
     end
 
