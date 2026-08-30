@@ -3085,6 +3085,9 @@ Navigation.pauseQuestForEvent = function(state)
             end
         end
         Runtime.Quest.SellHold = 0
+        if Runtime.Fishing.Owner == "Quest" then
+            Runtime.Fishing.Owner = nil
+        end
     else
         -- Resume: restart semua yang masih Enabled
         if S.Quest and S.Quest.startJobThread then
