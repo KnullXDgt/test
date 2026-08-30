@@ -1711,11 +1711,12 @@ SupportState.setAutoEquipRod = function(state)
             end)
         end
         -- Event-driven: tiap EquippedId kosong → pasang rod
-        -- task.defer: tunggu frame settle, re-cek sebelum fire → cegah flicker
+        -- task.spawn+wait(0.1): debounce supaya tidak flicker saat EquippedId bounce cepat
         SupportState.autoEquipRodConn = Data.Player:OnChange("EquippedId", function(value)
             if not value or value == "" then
                 if Runtime.Quest.SellHold > 0 or Runtime.Sell.Busy or FishingModes.Active then return end
-                task.defer(function()
+                task.spawn(function()
+                    task.wait(0.1)
                     if Runtime.Quest.SellHold > 0 or Runtime.Sell.Busy or FishingModes.Active then return end
                     local current = Data.Player:Get("EquippedId")
                     if not current or current == "" then
