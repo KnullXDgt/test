@@ -2644,6 +2644,7 @@ local function createPingUI()
     pingGui.Name = "PingTimerUI"
     pingGui.ResetOnSpawn = false
     pingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    pingGui.DisplayOrder = -1  -- selalu di bawah Orvion window
     pingGui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
     UI.pingGui = pingGui
 
@@ -2665,28 +2666,37 @@ local function createPingUI()
     label.Text = "Ping: -- ms | 0:00:00"
     UI.pingLabel = label
 
+    -- Simpan connections supaya bisa di-disconnect saat toggle OFF
     local dragging, dragStart, startPos = false, nil, nil
-    pcall(function() frame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true; dragStart = input.Position; startPos = frame.Position
-        end
-    end) end)
-    pcall(function() UIS.InputChanged:Connect(function(input)
-        if not dragging then return end
-        if input.UserInputType ~= Enum.UserInputType.MouseMovement
-            and input.UserInputType ~= Enum.UserInputType.Touch then return end
-        local delta = input.Position - dragStart
-        frame.Position = UDim2.new(
-            startPos.X.Scale, startPos.X.Offset + delta.X,
-            startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end) end)
-    pcall(function() UIS.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
-    end) end)
+    local conns = {}
+    pcall(function()
+        table.insert(conns, frame.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true; dragStart = input.Position; startPos = frame.Position
+            end
+        end))
+    end)
+    pcall(function()
+        table.insert(conns, UIS.InputChanged:Connect(function(input)
+            if not dragging then return end
+            if input.UserInputType ~= Enum.UserInputType.MouseMovement
+                and input.UserInputType ~= Enum.UserInputType.Touch then return end
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end))
+    end)
+    pcall(function()
+        table.insert(conns, UIS.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = false
+            end
+        end))
+    end)
+    UI.pingConns = conns
 end
 
 UI.Window = UI.Library:CreateWindow({
@@ -2736,6 +2746,10 @@ UI.Window:AddToggle(UI.SupportSection, "Show Real-Ping", "", false, function(sta
         end)
     else
         if UI.pingTimerThread then pcall(task.cancel, UI.pingTimerThread) UI.pingTimerThread = nil end
+        if UI.pingConns then
+            for _, conn in ipairs(UI.pingConns) do pcall(function() conn:Disconnect() end) end
+            UI.pingConns = nil
+        end
         if UI.pingGui then pcall(function() UI.pingGui:Destroy() end) UI.pingGui = nil UI.pingLabel = nil end
     end
 end, "Toggle_Show Real-Ping")
