@@ -5047,21 +5047,28 @@ do
                     for slotIdx = #equippedItems, 2, -1 do
                         local evictUUID = equippedItems[slotIdx]
                         if evictUUID and evictUUID ~= uuid then
+                            -- Set restoredEntry DULU sebelum unequip + wait
+                            -- supaya bisa restore meski job di-cancel saat menunggu
+                            local evictEntry = { UUID = evictUUID, ItemType = "Items" }
+                            S.Quest.eachInventoryItem(function(item, category, data)
+                                if tostring(item.UUID or "") == tostring(evictUUID) then
+                                    evictEntry.ItemType = (data and data.Type) or category or "Items"
+                                    return true
+                                end
+                            end)
                             pcall(function() Remote.unequipItem:FireServer(evictUUID) end)
                             local removeDeadline = os.clock() + 2
                             while os.clock() < removeDeadline do
-                                if Runtime.Quest.Enabled[job] ~= true then return end
+                                if Runtime.Quest.Enabled[job] ~= true then
+                                    -- Job di-cancel: restore item yang sudah di-unequip
+                                    pcall(function() Remote.equipItem:FireServer(evictEntry.UUID, evictEntry.ItemType) end)
+                                    return
+                                end
                                 local eq = Data.Player:Get("EquippedItems") or {}
                                 if not table.find(eq, evictUUID) then break end
                                 task.wait(0.05)
                             end
-                            restoredEntry = { UUID = evictUUID, ItemType = "Items" }
-                            S.Quest.eachInventoryItem(function(item, category, data)
-                                if tostring(item.UUID or "") == tostring(evictUUID) then
-                                    restoredEntry.ItemType = (data and data.Type) or category or "Items"
-                                    return true
-                                end
-                            end)
+                            restoredEntry = evictEntry
                             break
                         end
                     end
