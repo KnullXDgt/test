@@ -4904,17 +4904,10 @@ do
     end
 
     -- withSellHold: counter-based — cegah race antara Crystalline + Diamond bersamaan
-    -- Setelah set SellHold, tunggu fishing cycle yang sedang jalan selesai dulu
-    -- baru lanjut equip — supaya equipTool tidak drop rod di tengah AwaitCatch
+    -- Setiap caller increment +1 saat masuk, decrement -1 saat keluar
+    -- Sell.Execute cek SellHold > 0, bukan boolean
     S.Quest.withSellHold = function(fn)
         Runtime.Quest.SellHold = Runtime.Quest.SellHold + 1
-        -- Tunggu fishing cycle selesai (max 6s) sebelum equip apapun
-        local waitDeadline = os.clock() + 6
-        while (Runtime.Fishing.Phase ~= "Idle" or Runtime.Fishing.Owner ~= nil)
-            and os.clock() < waitDeadline
-        do
-            task.wait(0.05)
-        end
         local ok, err = pcall(fn)
         Runtime.Quest.SellHold = Runtime.Quest.SellHold - 1
         if Runtime.Quest.SellHold < 0 then Runtime.Quest.SellHold = 0 end
@@ -5501,11 +5494,25 @@ do
             if targetDef then
                 if not S.Quest.CrystallineBusy[fishName] then
                     S.Quest.CrystallineBusy[fishName] = true
+                    -- SellHold+1 SYNCHRONOUS sebelum task.spawn
+                    -- supaya autosell tidak bisa fire di gap antara FishCaught dan spawn
+                    Runtime.Quest.SellHold = Runtime.Quest.SellHold + 1
                     task.spawn(function()
                         pcall(function()
                             S.Quest.placePressureFishEntry("Crystalline", targetDef)
                         end)
                         S.Quest.CrystallineBusy[fishName] = nil
+                        -- Release SellHold setelah selesai (placePressureFishEntry punya withSellHold sendiri)
+                        -- tapi kita sudah +1 di sini jadi perlu -1 juga
+                        Runtime.Quest.SellHold = Runtime.Quest.SellHold - 1
+                        if Runtime.Quest.SellHold < 0 then Runtime.Quest.SellHold = 0 end
+                        if Runtime.Quest.SellHold == 0 then
+                            task.defer(function()
+                                if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle" then
+                                    Runtime.Sell.Flush()
+                                end
+                            end)
+                        end
                         Runtime.Quest.RefreshPanels()
                     end)
                 end
