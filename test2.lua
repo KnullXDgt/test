@@ -4904,10 +4904,17 @@ do
     end
 
     -- withSellHold: counter-based — cegah race antara Crystalline + Diamond bersamaan
-    -- Setiap caller increment +1 saat masuk, decrement -1 saat keluar
-    -- Sell.Execute cek SellHold > 0, bukan boolean
+    -- Setelah set SellHold, tunggu fishing cycle yang sedang jalan selesai dulu
+    -- baru lanjut equip — supaya equipTool tidak drop rod di tengah AwaitCatch
     S.Quest.withSellHold = function(fn)
         Runtime.Quest.SellHold = Runtime.Quest.SellHold + 1
+        -- Tunggu fishing cycle selesai (max 6s) sebelum equip apapun
+        local waitDeadline = os.clock() + 6
+        while (Runtime.Fishing.Phase ~= "Idle" or Runtime.Fishing.Owner ~= nil)
+            and os.clock() < waitDeadline
+        do
+            task.wait(0.05)
+        end
         local ok, err = pcall(fn)
         Runtime.Quest.SellHold = Runtime.Quest.SellHold - 1
         if Runtime.Quest.SellHold < 0 then Runtime.Quest.SellHold = 0 end
