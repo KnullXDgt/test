@@ -5184,15 +5184,20 @@ do
 
     -- ARTIFACT: teleport ke tiap CFrame, place lever jika item ada, max 3 retry
     S.Quest.Runners.Artifact = function()
+        local lastTeleport = nil  -- cache by definition.Type
         while Runtime.Quest.Enabled.Artifact == true do
             local levers = S.Quest.get("TempleLevers") or {}
             local allDone = true
             for _, definition in ipairs(S.Quest.Artifacts) do
                 if levers[definition.Type] ~= true then
                     allDone = false
-                    S.Quest.teleport(definition.CFrame)
+                    if lastTeleport ~= definition.Type then
+                        S.Quest.teleport(definition.CFrame)
+                        lastTeleport = definition.Type
+                    end
                     local item = S.Quest.findByName(definition.Type)
                     if item then
+                        lastTeleport = nil  -- reset setelah place, spot berikutnya butuh tp baru
                         S.Quest.placeStateItem(
                             "Artifact", Remote.placeLever,
                             "TempleLevers", definition.Type)
@@ -5220,6 +5225,7 @@ do
                     or S.Quest.isCompleted("Deep Sea Quest")
             end, 8, 0.1)
         end
+        local lastTeleport = nil
         while Runtime.Quest.Enabled.DeepSea == true do
             local ghostfinn = S.Quest.findByName("Ghostfinn Rod")
             if ghostfinn then
@@ -5235,10 +5241,15 @@ do
                     break
                 end
             end
+            local targetLoc = nil
             if objective == 1 then
-                S.Quest.teleport("Treasure Room")
+                targetLoc = "Treasure Room"
             elseif objective == 2 or objective == 3 then
-                S.Quest.teleport("Sisyphus Statue")
+                targetLoc = "Sisyphus Statue"
+            end
+            if targetLoc and lastTeleport ~= targetLoc then
+                S.Quest.teleport(targetLoc)
+                lastTeleport = targetLoc
             end
             task.wait(0.5)
         end
@@ -5262,6 +5273,7 @@ do
                     or S.Quest.isCompleted("Element Quest")
             end, 8, 0.1)
         end
+        local lastTeleport = nil
         while Runtime.Quest.Enabled.Element == true do
             if S.Quest.owns("Element Rod") then
                 local rod = S.Quest.findByName("Element Rod")
@@ -5271,21 +5283,27 @@ do
                 Runtime.Quest.Enabled.Element = false
                 break
             end
+            local targetLoc = nil
             if S.Quest.progress("Element Quest", 2, 1) < 1 then
-                S.Quest.teleport("Ancient Jungle")
+                targetLoc = "Ancient Jungle"
             elseif S.Quest.progress("Element Quest", 3, 1) < 1 then
                 if S.Quest.get("UnlockedTemple") == true then
-                    S.Quest.teleport("Sacred Temple")
+                    targetLoc = "Sacred Temple"
                 end
-                -- else: STAY — UnlockedTemple false, loop 1s sampai Replion update
+                -- else: STAY — UnlockedTemple false, loop 0.35s sampai Replion update
             elseif S.Quest.progress("Element Quest", 4, 3) < 3 then
                 local level = tonumber(S.Quest.get("Level")) or 0
                 if level >= 200 then
                     local secret = S.Quest.findSecret()
                     if secret then
+                        lastTeleport = nil  -- reset — setelah createTranscended lokasi mungkin berubah
                         S.Quest.createTranscended("Element", secret)
                     end
                 end
+            end
+            if targetLoc and lastTeleport ~= targetLoc then
+                S.Quest.teleport(targetLoc)
+                lastTeleport = targetLoc
             end
             task.wait(0.35)
         end
@@ -5412,21 +5430,20 @@ do
                     and fishName == "Lochness Monster")
             if needProtect then
                 Runtime.Quest.SellHold = Runtime.Quest.SellHold + 1
-                -- Fallback release: kalau Diamond toggle OFF sebelum loop sempat
-                -- exchange, withSellHold tidak akan dipanggil — release manual setelah 2s
+                -- Selalu release setelah 2s — jendela bridge untuk Diamond loop 0.4s
+                -- withSellHold dari loop exchange punya counter sendiri (+1/-1 net 0)
+                -- Tanpa ini, SellHold stuck di 1 selamanya kalau Diamond masih ON
                 task.delay(2, function()
-                    if not Runtime.Quest.Enabled.Diamond then
-                        Runtime.Quest.SellHold = Runtime.Quest.SellHold - 1
-                        if Runtime.Quest.SellHold < 0 then Runtime.Quest.SellHold = 0 end
-                        if Runtime.Quest.SellHold == 0 then
-                            task.defer(function()
-                                if Runtime.Sell.Pending
-                                    and Runtime.Fishing.Phase == "Idle"
-                                then
-                                    Runtime.Sell.Flush()
-                                end
-                            end)
-                        end
+                    Runtime.Quest.SellHold = Runtime.Quest.SellHold - 1
+                    if Runtime.Quest.SellHold < 0 then Runtime.Quest.SellHold = 0 end
+                    if Runtime.Quest.SellHold == 0 then
+                        task.defer(function()
+                            if Runtime.Sell.Pending
+                                and Runtime.Fishing.Phase == "Idle"
+                            then
+                                Runtime.Sell.Flush()
+                            end
+                        end)
                     end
                 end)
             end
