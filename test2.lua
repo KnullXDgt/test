@@ -5314,6 +5314,7 @@ do
                 end, 6, 0.1)
             end
         end
+        local lastTeleport = nil  -- cache: cegah teleport spam tiap 0.4s ke lokasi sama
         while Runtime.Quest.Enabled.Diamond == true do
             if S.Quest.owns("Diamond Rod") then
                 local rod = S.Quest.findByName("Diamond Rod")
@@ -5324,30 +5325,43 @@ do
                 break
             end
             if S.Quest.owns("Diamond Key") then
+                lastTeleport = nil
                 local key = S.Quest.findByName("Diamond Key")
                 S.Quest.openAndClaimDiamond("Diamond", key)
             elseif S.Quest.progress("Diamond Researcher", 2, 1) < 1 then
-                S.Quest.teleport("Coral Reefs")
+                if lastTeleport ~= "Coral Reefs" then
+                    S.Quest.teleport("Coral Reefs")
+                    lastTeleport = "Coral Reefs"
+                end
             elseif S.Quest.progress("Diamond Researcher", 3, 1) < 1 then
-                S.Quest.teleport("Tropical Grove")
+                if lastTeleport ~= "Tropical Grove" then
+                    S.Quest.teleport("Tropical Grove")
+                    lastTeleport = "Tropical Grove"
+                end
             elseif S.Quest.progress("Diamond Researcher", 4, 1) < 1 then
                 local ruby = S.Quest.findFish(243, "Gemstone")
                 if ruby then
+                    lastTeleport = nil
                     S.Quest.exchangeItem("Diamond", "Diamond Researcher", 4,
                         {"Diamond Researcher", 2, 1})
-                else
+                elseif lastTeleport ~= "Treasure Room" then
                     S.Quest.teleport("Treasure Room")
+                    lastTeleport = "Treasure Room"
                 end
             elseif S.Quest.progress("Diamond Researcher", 5, 1) < 1 then
                 local lochness = S.Quest.findFish(228)
                 if lochness then
+                    lastTeleport = nil
                     S.Quest.exchangeItem("Diamond", "Diamond Researcher", 5,
                         {"Diamond Researcher", 2, 2})
-                else
+                elseif lastTeleport ~= "Kohana" then
                     S.Quest.teleport("Kohana")
+                    lastTeleport = "Kohana"
                 end
+            else
+                -- obj6 (1000 perfect): diam, panel update via Replion OnChange("Quests")
+                lastTeleport = nil
             end
-            -- obj6 (1000 perfect): diam, panel update via Replion OnChange("Quests")
             task.wait(0.4)
         end
     end
@@ -5357,25 +5371,61 @@ do
     S.Quest.CrystallineBusy = {}
 
     Runtime.Quest.OnFishCaught = function(fishName, metadata)
-        if Runtime.Quest.Enabled.Crystalline ~= true then return end
-        local plates = S.Quest.get("RuinPressurePlates") or {}
-        local targetDef = nil
-        for _, definition in ipairs(S.Quest.Pressure) do
-            if definition.Name == fishName and plates[definition.Name] ~= true then
-                targetDef = definition
-                break
+        -- CRYSTALLINE: event-driven place pressure fish
+        if Runtime.Quest.Enabled.Crystalline == true then
+            local plates = S.Quest.get("RuinPressurePlates") or {}
+            local targetDef = nil
+            for _, definition in ipairs(S.Quest.Pressure) do
+                if definition.Name == fishName and plates[definition.Name] ~= true then
+                    targetDef = definition
+                    break
+                end
+            end
+            if targetDef then
+                if not S.Quest.CrystallineBusy[fishName] then
+                    S.Quest.CrystallineBusy[fishName] = true
+                    task.spawn(function()
+                        pcall(function()
+                            S.Quest.placePressureFishEntry("Crystalline", targetDef)
+                        end)
+                        S.Quest.CrystallineBusy[fishName] = nil
+                        Runtime.Quest.RefreshPanels()
+                    end)
+                end
             end
         end
-        if not targetDef then return end
-        if S.Quest.CrystallineBusy[fishName] then return end
-        S.Quest.CrystallineBusy[fishName] = true
-        task.spawn(function()
-            pcall(function()
-                S.Quest.placePressureFishEntry("Crystalline", targetDef)
-            end)
-            S.Quest.CrystallineBusy[fishName] = nil
-            Runtime.Quest.RefreshPanels()
-        end)
+
+        -- DIAMOND: protect Ruby dan Lochness dari autosell
+        -- Diamond loop jalan tiap 0.4s — SellHold=true bridging gap antara
+        -- FishCaught dan loop iteration berikutnya yang akan exchange via withSellHold
+        if Runtime.Quest.Enabled.Diamond == true then
+            local variant = type(metadata) == "table"
+                and (metadata.Variant or metadata.VariantId) or nil
+            local needProtect =
+                (S.Quest.progress("Diamond Researcher", 4, 1) < 1
+                    and fishName == "Ruby" and variant == "Gemstone")
+                or (S.Quest.progress("Diamond Researcher", 5, 1) < 1
+                    and fishName == "Lochness Monster")
+            if needProtect then
+                Runtime.Quest.SellHold = true
+                -- Fallback release: kalau Diamond toggle OFF sebelum loop sempat
+                -- exchange, withSellHold tidak akan dipanggil — release manual setelah 2s
+                task.delay(2, function()
+                    if not Runtime.Quest.Enabled.Diamond
+                        and Runtime.Quest.SellHold
+                    then
+                        Runtime.Quest.SellHold = false
+                        task.defer(function()
+                            if Runtime.Sell.Pending
+                                and Runtime.Fishing.Phase == "Idle"
+                            then
+                                Runtime.Sell.Flush()
+                            end
+                        end)
+                    end
+                end)
+            end
+        end
     end
 
     -- ====== START / STOP ======
