@@ -956,11 +956,11 @@ Runtime.Sell.Execute = function()
     if S.Quest then
         -- Crystalline: block kalau ada pressure fish belum di-place DAN attempt AKTIF
         -- Kalau attempt sudah selesai (gagal/sukses), jangan block — cegah permanent block
-        if Runtime.Quest.Enabled.Crystalline == true then
+        if Runtime.Quest.Enabled.Crystalline == true and S.Quest.CrystallineBusy then
             local plates = S.Quest.get("RuinPressurePlates") or {}
             for _, definition in ipairs(S.Quest.Pressure or {}) do
                 if plates[definition.Name] ~= true
-                    and S.Quest.CrystallineBusy[definition.Name]  -- hanya kalau attempt AKTIF
+                    and S.Quest.CrystallineBusy[definition.Name]
                 then
                     Runtime.Sell.Pending = true
                     Runtime.Sell.Reason = "QuestHold"
@@ -5600,11 +5600,22 @@ do
                                 and S.Quest.findPressureFish(definition.Name)
                             then
                                 S.Quest.CrystallineBusy[definition.Name] = true
+                                -- SellHold+1 SYNCHRONOUS sebelum spawn (sama seperti OnFishCaught)
+                                Runtime.Quest.SellHold = Runtime.Quest.SellHold + 1
                                 task.spawn(function()
                                     pcall(function()
                                         S.Quest.placePressureFishEntry("Crystalline", definition)
                                     end)
                                     S.Quest.CrystallineBusy[definition.Name] = nil
+                                    Runtime.Quest.SellHold = Runtime.Quest.SellHold - 1
+                                    if Runtime.Quest.SellHold < 0 then Runtime.Quest.SellHold = 0 end
+                                    if Runtime.Quest.SellHold == 0 then
+                                        task.defer(function()
+                                            if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle" then
+                                                Runtime.Sell.Flush()
+                                            end
+                                        end)
+                                    end
                                     Runtime.Quest.RefreshPanels()
                                 end)
                             end
