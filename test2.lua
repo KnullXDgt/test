@@ -5073,7 +5073,11 @@ do
                 local plates = S.Quest.get("RuinPressurePlates") or {}
                 if plates[definition.Name] == true then ok = true; break end
                 local entry = S.Quest.findPressureFish(definition.Name)
-                if not entry then break end
+                if not entry then
+                    -- Replion mungkin belum sync, retry di attempt berikutnya
+                    if attempt < 3 then task.wait(1) end
+                    continue
+                end
                 local uuid = entry.Item.UUID
                 local itemType = (entry.Data and entry.Data.Type) or "Items"
                 -- smart hotbar evict
@@ -5527,8 +5531,31 @@ do
             or job == "Element" or job == "Diamond"
         then
             S.Quest.startJobThread(job, S.Quest.Runners[job])
+        elseif job == "Crystalline" then
+            -- Startup scan: cek inventory sekarang juga
+            -- Berguna kalau user toggle ON saat ikan target sudah ada di inventory
+            task.spawn(function()
+                task.wait(0.3)  -- beri waktu Replion sync
+                if Runtime.Quest.Enabled.Crystalline ~= true then return end
+                local plates = S.Quest.get("RuinPressurePlates") or {}
+                for _, definition in ipairs(S.Quest.Pressure) do
+                    if Runtime.Quest.Enabled.Crystalline ~= true then break end
+                    if plates[definition.Name] ~= true
+                        and not S.Quest.CrystallineBusy[definition.Name]
+                        and S.Quest.findPressureFish(definition.Name)
+                    then
+                        S.Quest.CrystallineBusy[definition.Name] = true
+                        task.spawn(function()
+                            pcall(function()
+                                S.Quest.placePressureFishEntry("Crystalline", definition)
+                            end)
+                            S.Quest.CrystallineBusy[definition.Name] = nil
+                            Runtime.Quest.RefreshPanels()
+                        end)
+                    end
+                end
+            end)
         end
-        -- Crystalline: pure event-driven, tidak butuh thread
     end
 
     Runtime.Quest.Stop = function(job)
