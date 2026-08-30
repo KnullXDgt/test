@@ -5300,10 +5300,11 @@ do
         if existing then
             pcall(task.cancel, existing)
             Runtime.Quest.Threads[job] = nil
-            -- Reset SellHold — thread lama yang di-cancel tidak bisa decrement sendiri
-            -- Stop() seharusnya sudah reset, tapi ini defensive guard kalau Start
-            -- dipanggil rapid tanpa Stop (misal toggle off/on cepat)
+            -- Reset SellHold + Owner — thread lama yang di-cancel tidak bisa release sendiri
             Runtime.Quest.SellHold = 0
+            if Runtime.Fishing.Owner == "Quest" then
+                Runtime.Fishing.Owner = nil
+            end
             task.defer(function()
                 if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle" then
                     Runtime.Sell.Flush()
@@ -5686,9 +5687,11 @@ do
             pcall(task.cancel, thread)
             Runtime.Quest.Threads[job] = nil
         end
-        -- Force SellHold=0 — task.cancel tidak di-catch pcall
-        -- withSellHold tidak bisa decrement sendiri kalau thread di-cancel
+        -- Force SellHold=0 + release Owner — task.cancel tidak di-catch pcall
         Runtime.Quest.SellHold = 0
+        if Runtime.Fishing.Owner == "Quest" then
+            Runtime.Fishing.Owner = nil
+        end
         task.defer(function()
             if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle" then
                 Runtime.Sell.Flush()
