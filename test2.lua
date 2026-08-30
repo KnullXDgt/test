@@ -5186,6 +5186,15 @@ do
         if existing then
             pcall(task.cancel, existing)
             Runtime.Quest.Threads[job] = nil
+            -- Reset SellHold — thread lama yang di-cancel tidak bisa decrement sendiri
+            -- Stop() seharusnya sudah reset, tapi ini defensive guard kalau Start
+            -- dipanggil rapid tanpa Stop (misal toggle off/on cepat)
+            Runtime.Quest.SellHold = 0
+            task.defer(function()
+                if Runtime.Sell.Pending and Runtime.Fishing.Phase == "Idle" then
+                    Runtime.Sell.Flush()
+                end
+            end)
         end
         Runtime.Quest.Threads[job] = task.spawn(function()
             pcall(fn)
