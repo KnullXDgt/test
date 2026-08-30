@@ -5246,36 +5246,40 @@ do
     S.Quest.Runners.Artifact = function()
         local lastTeleport = nil  -- cache by definition.Type
         while Runtime.Quest.Enabled.Artifact == true do
-            local levers = S.Quest.get("TempleLevers") or {}
-            local allDone = true
-            for _, definition in ipairs(S.Quest.Artifacts) do
-                if levers[definition.Type] ~= true then
-                    allDone = false
-                    local item = S.Quest.findByName(definition.Type)
-                    if item then
-                        -- item ada di inventory → teleport dan place
-                        if lastTeleport ~= definition.Type then
-                            S.Quest.teleport(definition.CFrame)
-                            lastTeleport = definition.Type
+            local rawLevers = S.Quest.get("TempleLevers")
+            if rawLevers ~= nil then
+                -- Replion sudah load — proses normal
+                local allDone = true
+                for _, definition in ipairs(S.Quest.Artifacts) do
+                    if rawLevers[definition.Type] ~= true then
+                        allDone = false
+                        local item = S.Quest.findByName(definition.Type)
+                        if item then
+                            -- item ada → teleport dan place
+                            if lastTeleport ~= definition.Type then
+                                S.Quest.teleport(definition.CFrame)
+                                lastTeleport = definition.Type
+                            end
+                            lastTeleport = nil
+                            S.Quest.placeStateItem(
+                                "Artifact", Remote.placeLever,
+                                "TempleLevers", definition.Type)
+                        else
+                            -- item belum ada → teleport nunggu fishing dapat item
+                            if lastTeleport ~= definition.Type then
+                                S.Quest.teleport(definition.CFrame)
+                                lastTeleport = definition.Type
+                            end
                         end
-                        lastTeleport = nil
-                        S.Quest.placeStateItem(
-                            "Artifact", Remote.placeLever,
-                            "TempleLevers", definition.Type)
-                    else
-                        -- item belum ada → teleport nunggu fishing dapat item
-                        if lastTeleport ~= definition.Type then
-                            S.Quest.teleport(definition.CFrame)
-                            lastTeleport = definition.Type
-                        end
+                        break
                     end
+                end
+                if allDone then
+                    Runtime.Quest.Enabled.Artifact = false
                     break
                 end
             end
-            if allDone then
-                Runtime.Quest.Enabled.Artifact = false
-                break
-            end
+            -- rawLevers nil: Replion belum load, retry 0.4s
             task.wait(0.4)
         end
     end
