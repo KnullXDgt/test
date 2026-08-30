@@ -5391,7 +5391,11 @@ do
             end
             local targetLoc = nil
             if S.Quest.progress("Element Quest", 2, 1) < 1 then
-                targetLoc = "Ancient Jungle"
+                -- Kalau Artifact ON, skip teleport — Artifact navigasi di AJ sudah cukup
+                -- karakter di lever spot (AJ) bisa catch AJ secret fish juga
+                if not Runtime.Quest.Enabled.Artifact then
+                    targetLoc = "Ancient Jungle"
+                end
             elseif S.Quest.progress("Element Quest", 3, 1) < 1 then
                 if S.Quest.get("UnlockedTemple") == true then
                     targetLoc = "Sacred Temple"
