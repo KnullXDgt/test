@@ -5873,7 +5873,7 @@ do
             if type(items) == "table" then
                 for _, item in ipairs(items) do
                     if type(item) == "table" and item.Id and item.UUID then
-                        local ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, category, item.Id)
+                        local itemData = Data.ItemUtility.GetItemDataFromItemType(category, item.Id)
                         if itemData and itemData.Data and itemData.Data.Type == "Fish" then
                             if not filterFn or filterFn(item, itemData) then
                                 local name = itemData.Data.Name or tostring(item.Id)
@@ -5907,7 +5907,7 @@ do
             if type(items) == "table" then
                 for _, item in ipairs(items) do
                     if type(item) == "table" and item.Id and item.UUID then
-                        local ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, category, item.Id)
+                        local itemData = Data.ItemUtility.GetItemDataFromItemType(category, item.Id)
                         if itemData and itemData.Data then
                             local id = tonumber(item.Id)
                             local dataName = (itemData.Data.Name or ""):lower()
@@ -5953,7 +5953,7 @@ do
             if type(items) == "table" then
                 for _, item in ipairs(items) do
                     if type(item) == "table" and item.Id and item.UUID and canTradeItem(item) then
-                        local ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, category, item.Id)
+                        local itemData = Data.ItemUtility.GetItemDataFromItemType(category, item.Id)
                         if itemData and itemData.Data and itemData.Data.Type == "Fish" then
                             if tonumber(itemData.Data.Tier) == targetTier then
                                 table.insert(result, {UUID=item.UUID, Category=category})
@@ -5975,7 +5975,7 @@ do
             if type(items) == "table" then
                 for _, item in ipairs(items) do
                     if type(item) == "table" and item.Id and item.UUID and canTradeItem(item) then
-                        local ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, category, item.Id)
+                        local itemData = Data.ItemUtility.GetItemDataFromItemType(category, item.Id)
                         if itemData and itemData.Data and itemData.Data.Type == "Fish" then
                             table.insert(allFish, {
                                 UUID = item.UUID,
