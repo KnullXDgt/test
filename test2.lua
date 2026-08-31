@@ -6123,8 +6123,16 @@ do
                 local amountNeeded = targetAmount - totalSent
                 local batchSize = math.min(20, amountNeeded, #items)
                 local batch = {}
-                for i = 1, batchSize do
-                    table.insert(batch, items[i])
+                local seenUUIDs = {}  -- dedup: cegah UUID sama 2x dalam 1 trade
+                local addedBatch = 0
+                for i = 1, #items do
+                    if addedBatch >= batchSize then break end
+                    local entry = items[i]
+                    if not seenUUIDs[entry.UUID] then
+                        seenUUIDs[entry.UUID] = true
+                        table.insert(batch, entry)
+                        addedBatch = addedBatch + 1
+                    end
                 end
 
                 retryCount = retryCount + 1
@@ -6497,7 +6505,21 @@ do
                     getItemsFn = function()
                         -- Re-scan inventory tiap batch — cegah stale UUID
                         local _, freshStoneMap = buildStoneDisplayList()
-                        return freshStoneMap[cleanName] or {}
+                        local entries = freshStoneMap[cleanName] or {}
+                        -- Sort: single UUID (qty=1) first → bisa batch 20
+                        -- Stacked (qty>1) last → 1 per trade, server reject duplicate UUID
+                        local singles, stackeds = {}, {}
+                        for _, e in ipairs(entries) do
+                            if (e.Quantity or 1) == 1 then
+                                table.insert(singles, e)
+                            else
+                                table.insert(stackeds, e)
+                            end
+                        end
+                        local result = {}
+                        for _, e in ipairs(singles) do table.insert(result, e) end
+                        for _, e in ipairs(stackeds) do table.insert(result, e) end
+                        return result
                     end,
                     statusPara      = ByStoneStatusPara,
                     stateRunningKey = "ByStone_Running",
