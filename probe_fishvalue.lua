@@ -90,5 +90,62 @@ pcall(function()
 end)
 save()
 
+
+-- ====== TRADEDATA FOLLOW TRADE RULES ======
+log("\n=== TRADEDATA MODULE ===")
+pcall(function()
+    local TradeData = require(RS.Shared.Trading.TradeData)
+    -- Dump semua keys di TradeData
+    for k, v in pairs(TradeData) do
+        if type(v) ~= "function" and type(v) ~= "table" then
+            log("  " .. tostring(k) .. " = " .. tostring(v))
+        elseif type(v) == "table" then
+            log("  " .. tostring(k) .. " = table")
+        else
+            log("  " .. tostring(k) .. " = function")
+        end
+    end
+end)
+save()
+
+-- Cek apakah FollowTradeRules bisa dipanggil dengan item dari inventory
+log("\n=== FOLLOWTRADERULES TEST ===")
+pcall(function()
+    local TradeData = require(RS.Shared.Trading.TradeData)
+    local IU = require(RS.Shared.ItemUtility)
+    local inventory = PlayerData:Get("Inventory") or {}
+    local now = workspace:GetServerTimeNow()
+    log("ServerTimeNow = " .. tostring(now))
+    -- Test dengan beberapa ikan
+    for category, items in pairs(inventory) do
+        if type(items) == "table" then
+            for _, item in ipairs(items) do
+                if type(item) == "table" and item.Id then
+                    local ok, itemData = pcall(IU.GetItemDataFromItemType, IU, category, item.Id)
+                    if not ok then ok, itemData = pcall(IU.GetItemDataFromItemType, category, item.Id) end
+                    if itemData and itemData.Data and itemData.Data.Type == "Fish" then
+                        local canTrade = false
+                        local ok2, result = pcall(TradeData.FollowTradeRules, itemData.Data, item)
+                        if ok2 then canTrade = result end
+                        local meta = ""
+                        if item.Metadata then
+                            local parts = {}
+                            for k, v in pairs(item.Metadata) do
+                                table.insert(parts, k .. "=" .. tostring(v))
+                            end
+                            meta = table.concat(parts, ", ")
+                        end
+                        log(string.format("  %-35s | canTrade=%-5s | meta={%s}",
+                            tostring(itemData.Data.Name or "?"), tostring(canTrade), meta))
+                        -- Hanya test 10 ikan saja
+                        break
+                    end
+                end
+            end
+        end
+    end
+end)
+save()
+
 log("\nDONE")
 save()
