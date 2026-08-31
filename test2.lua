@@ -6276,6 +6276,7 @@ do
         ByStone_Running = false,
         ByCoins_Target  = 1000000,
         ByCoins_Running = false,
+        -- ByCoins: no item selection, greedy all fish
         AutoAccept      = false,
         ActiveMode      = nil,  -- guard: hanya 1 mode boleh jalan
     }
@@ -6355,22 +6356,11 @@ do
 
     local ByCoinsStatusPara = UI.Window:AddParagraph(ByCoinsSection, "Trade Status", "Waiting...")
 
-    local ByCoinsDropdown = UI.Window:AddDropdown(
-        ByCoinsSection, "Select Item", "", {}, false, "Select Option",
-        function(v) S.Trading.ByCoins_Item = v end,
-        "Dropdown_Trade_ByCoins_Item")
-
     UI.Window:AddInput(ByCoinsSection, "Set Amount", "", "1",
         function(v) S.Trading.ByCoins_Target = tonumber(v) or 1000000 end,
         "Input_Trade_ByCoins_Target")
 
-    local ByCoinsUUIDMap = {}
-    UI.Window:AddButton(ByCoinsSection, "Refresh Fish Name", "", "rbxassetid://16932740082",
-        function()
-            local displayList, uuidMap = buildFishDisplayList()
-            ByCoinsUUIDMap = uuidMap
-            ByCoinsDropdown:Set(displayList)
-        end)
+    -- No dropdown: By Coins selects fish greedily by value automatically
 
     UI.Window:AddToggle(ByCoinsSection, "Start Trade by Coins", "", false,
         function(state)
@@ -6381,31 +6371,8 @@ do
                     S.Trading.ByCoins_Running = false
                     return
                 end
-                -- Pre-build list saat toggle ON
-                -- Kalau user pilih ikan tertentu → greedy dari ikan itu saja
-                -- Kalau "Select Option" → greedy dari semua fish
-                local selectedName = S.Trading.ByCoins_Item
-                local cleanCoinName = selectedName ~= "" and selectedName ~= "Select Option"
-                    and (selectedName:match("^(.+) x%d+$") or selectedName) or nil
-                local byCoinsFullList
-                if cleanCoinName then
-                    -- Filter inventory hanya ikan yang dipilih, lalu greedy by SellPrice
-                    local _, freshCoinMap = buildFishDisplayList()
-                    local src = freshCoinMap[cleanCoinName] or {}
-                    -- Hitung total coins dari src, ambil secukupnya sampai >= target
-                    byCoinsFullList = {}
-                    local coinTotal = 0
-                    for _, entry in ipairs(src) do
-                        if coinTotal >= S.Trading.ByCoins_Target then break end
-                        local ok2, iData = pcall(Data.ItemUtility.GetItemDataFromItemType, Data.ItemUtility, entry.Category, entry.Id or 0)
-                        local price = ok2 and iData and iData.SellPrice or 0
-                        table.insert(byCoinsFullList, entry)
-                        coinTotal = coinTotal + price
-                    end
-                    if #byCoinsFullList == 0 then byCoinsFullList = src end
-                else
-                    byCoinsFullList = getItemsByCoins(S.Trading.ByCoins_Target)
-                end
+                -- Greedy all tradable fish sampai melebihi target coins
+                local byCoinsFullList = getItemsByCoins(S.Trading.ByCoins_Target)
                 if #byCoinsFullList == 0 then
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="No tradable fish for target coins!", Color=Color3.fromRGB(255,80,80), Delay=3 })
                     S.Trading.ByCoins_Running = false
