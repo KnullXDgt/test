@@ -6780,6 +6780,21 @@ do
     S.Trading.AutoAcceptSupported = promptGate.Installed == true
 
     -- ====== SELECT PLAYER ======
+    -- UI Gen2 uses :Refresh(values, default), while older builds exposed
+    -- :SetValues(values). Keep this adapter local to Trading so the three
+    -- dynamic lists work across both revisions.
+    local function refreshTradeDropdown(dropdown, values, defaultValue)
+        if dropdown and type(dropdown.Refresh) == "function" then
+            dropdown:Refresh(values or {}, defaultValue or "Select Option")
+            return true
+        end
+        if dropdown and type(dropdown.SetValues) == "function" then
+            dropdown:SetValues(values or {})
+            return true
+        end
+        return false
+    end
+
     local TradingPlayerSection = UI.Window:AddCollapsible(UI.TradingTab, "Select Player", false)
 
     local TradingPlayerDropdown = UI.Window:AddDropdown(
@@ -6795,7 +6810,7 @@ do
                     table.insert(list, p.Name)
                 end
             end
-            TradingPlayerDropdown:SetValues(list)
+            refreshTradeDropdown(TradingPlayerDropdown, list, "Select Option")
         end)
 
     -- ====== TRADE BY NAME ======
@@ -6817,7 +6832,7 @@ do
         function()
             local displayList, uuidMap = buildFishDisplayList()
             ByNameUUIDMap = uuidMap
-            ByNameDropdown:SetValues(displayList)
+            refreshTradeDropdown(ByNameDropdown, displayList, "Select Option")
         end)
 
     UI.Window:AddToggle(ByNameSection, "Start Trade by Name", "", false,
@@ -6966,7 +6981,7 @@ do
         function()
             local displayList, uuidMap = buildStoneDisplayList()
             ByStoneUUIDMap = uuidMap
-            ByStoneDropdown:SetValues(displayList)
+            refreshTradeDropdown(ByStoneDropdown, displayList, "Select Option")
         end)
 
     UI.Window:AddToggle(ByStoneSection, "Start Trade by Enchant Stone", "", false,
