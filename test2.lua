@@ -6938,66 +6938,86 @@ do
         end)
     end
 
-    local function acceptIncomingTradePrompt(sender)
-        -- Prefer the game's own Accept button. Its controller then clears its
-        -- pending prompt state, unlike calling the remote behind its back.
-        local expected = ("trade request from " .. tostring(sender.DisplayName)):lower()
-        local deadline = os.clock() + 1.5
-        repeat
-            local playerGui = Service.LocalPlayer:FindFirstChildOfClass("PlayerGui")
-            if playerGui then
-                for _, label in ipairs(playerGui:GetDescendants()) do
-                    local isText = label:IsA("TextLabel") or label:IsA("TextButton")
-                    if isText and tostring(label.Text):lower():find(expected, 1, true) then
-                        local root = label
-                        while root.Parent and root.Parent ~= playerGui do root = root.Parent end
-                        for _, button in ipairs(root:GetDescendants()) do
-                            if button:IsA("TextButton") and button.Visible then
-                                local buttonText = tostring(button.Text):lower()
-                                if buttonText:find("accept", 1, true)
-                                    or buttonText == "yes" or buttonText == "confirm"
-                                then
-                                    local fired = false
-                                    if type(firesignal) == "function" then
-                                        fired = pcall(firesignal, button.Activated)
-                                    end
-                                    if not fired then fired = pcall(function() button:Activate() end) end
-                                    if fired then return true end
-                                end
-                            end
-                        end
-                    end
+    -- ====== PASSIVE INCOMING-TRADE GATE ======
+    -- Game flow (confirmed by Trading probe):
+    -- TradeOfferReceived -> TradeOfferController -> PromptController:FirePrompt
+    -- -> DrawPrompt -> PlayerGui.Prompt.Enabled = true.
+    --
+    -- Returning an already-resolved positive Promise here lets the *game's own*
+    -- TradeOfferController call AcceptTrade(), including its normal client-side
+    -- bookkeeping.  Consequently the prompt is never queued or drawn.  This is
+    -- deliberately not a GUI scan/click, getconnections disable, or a second
+    -- direct AcceptTradeOffer remote call.
+    local function installPassiveTradePromptGate()
+        local sharedEnv = type(getgenv) == "function" and getgenv() or _G
+        local gate = sharedEnv.__OrvionPassiveTradePromptGate
+        if type(gate) ~= "table" then
+            gate = {}
+            sharedEnv.__OrvionPassiveTradePromptGate = gate
+        end
+
+        -- State is refreshed on every execution, while the hook itself remains
+        -- single-install. This prevents a re-execute from stacking wrappers.
+        gate.IsAutoAcceptEnabled = function()
+            return S.Trading ~= nil and S.Trading.AutoAccept == true
+        end
+
+        if gate.Installed then return gate.Available == true end
+        gate.Installed = true
+        gate.Available = false
+
+        if type(hookfunction) ~= "function" then
+            warn("[Orvion] Passive trade prompt gate unavailable: hookfunction missing.")
+            return false
+        end
+
+        local controllerModule = Service.ReplicatedStorage:FindFirstChild("Controllers")
+        controllerModule = controllerModule and controllerModule:FindFirstChild("PromptController")
+        if not controllerModule then
+            warn("[Orvion] Passive trade prompt gate unavailable: PromptController missing.")
+            return false
+        end
+
+        local okController, promptController = pcall(require, controllerModule)
+        local promiseModule = nil
+        local okPromise, promiseResult = pcall(require,
+            Service.ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Promise"))
+        if okPromise then promiseModule = promiseResult end
+        if not okController or type(promptController) ~= "table"
+            or type(promptController.FirePrompt) ~= "function"
+            or type(promiseModule) ~= "table" or type(promiseModule.new) ~= "function" then
+            warn("[Orvion] Passive trade prompt gate unavailable: required game module failed to resolve.")
+            return false
+        end
+
+        local originalFirePrompt
+        local makeClosure = type(newcclosure) == "function" and newcclosure or function(fn) return fn end
+        local hooked, hookError = pcall(function()
+            originalFirePrompt = hookfunction(promptController.FirePrompt, makeClosure(function(self, text, ...)
+                local normalized = type(text) == "string" and text:lower() or ""
+                local isTradeOffer = normalized:find("trade request from", 1, true) ~= nil
+                    and normalized:find("do you want to accept", 1, true) ~= nil
+                if isTradeOffer and gate.IsAutoAcceptEnabled() then
+                    -- TradeOfferController receives true in :andThen() and calls
+                    -- its own AcceptTrade() without PlayerGui.Prompt ever opening.
+                    return promiseModule.new(function(resolve)
+                        resolve(true)
+                    end)
                 end
-            end
-            task.wait(0.05)
-        until os.clock() >= deadline
-        return false
+                return originalFirePrompt(self, text, ...)
+            end))
+        end)
+
+        if not hooked or type(originalFirePrompt) ~= "function" then
+            warn("[Orvion] Passive trade prompt gate hook failed: " .. tostring(hookError))
+            return false
+        end
+
+        gate.Available = true
+        return true
     end
 
-    if Remote.tradeOfferReceived then
-        Remote.tradeOfferReceived.OnClientEvent:Connect(function(sender)
-            if not S.Trading.AutoAccept or Service.LocalPlayer:GetAttribute("IsTrading") == true then return end
-            S_Trade.PendingIncoming = true
-            task.spawn(function()
-                -- The UI controller owns both the popup and its client state.
-                -- Direct remote is only a fallback when that prompt cannot be found.
-                local usedPrompt = acceptIncomingTradePrompt(sender)
-                if usedPrompt then
-                    local waited = 0
-                    while Service.LocalPlayer:GetAttribute("IsTrading") ~= true and waited < 3 do
-                        task.wait(0.05)
-                        waited = waited + 0.05
-                    end
-                end
-                if Service.LocalPlayer:GetAttribute("IsTrading") ~= true then
-                    local ok, accepted = pcall(function()
-                        return Remote.tradeAcceptOffer:InvokeServer(sender)
-                    end)
-                    if not ok or accepted == false then S_Trade.PendingIncoming = false end
-                end
-            end)
-        end)
-    end
+    installPassiveTradePromptGate()
 
     -- ====== SELECT PLAYER ======
     local TradingPlayerSection = UI.Window:AddCollapsible(UI.TradingTab, "Select Player", false)
