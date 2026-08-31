@@ -5845,7 +5845,19 @@ do
     local function canTradeItem(item)
         if not item.Metadata then return true end
         if item.Metadata.Favorited then return false end
-        if item.Metadata.TradeLock then return false end
+        if item.Metadata.TradeLock then
+            local tl = item.Metadata.TradeLock
+            if type(tl) == "table" then
+                if tl.Type == "Untradable" then return false end
+                if tl.Type == "Timestamp" then
+                    -- cek apakah masih locked
+                    local now = pcall(workspace.GetServerTimeNow, workspace) and workspace:GetServerTimeNow() or os.time()
+                    if tl.Time and tl.Time > now then return false end
+                end
+            else
+                return false  -- TradeLock ada tapi bukan table = locked
+            end
+        end
         return true
     end
 
@@ -5864,13 +5876,14 @@ do
                         if itemData and itemData.Data and itemData.Data.Type == "Fish" then
                             if not filterFn or filterFn(item, itemData) then
                                 local name = itemData.Data.Name or tostring(item.Id)
+                                local qty = tonumber(item.Quantity) or 1
                                 if not nameCount[name] then
                                     nameCount[name] = 0
                                     uuidMap[name] = {}
                                     table.insert(nameOrder, name)
                                 end
-                                nameCount[name] = nameCount[name] + 1
-                                table.insert(uuidMap[name], {UUID=item.UUID, Category=category})
+                                nameCount[name] = nameCount[name] + qty
+                                table.insert(uuidMap[name], {UUID=item.UUID, Category=category, Quantity=qty})
                             end
                         end
                     end
@@ -5901,13 +5914,16 @@ do
                             local isStone = (id == 929) or (id == 558) or dataName:find("enchant stone", 1, true)
                             if isStone then
                                 local name = itemData.Data.Name or tostring(item.Id)
+                                local qty = tonumber(item.Quantity) or 1
                                 if not stoneCount[name] then
                                     stoneCount[name] = 0
                                     uuidMap[name] = {}
                                     table.insert(stoneOrder, name)
                                 end
-                                stoneCount[name] = stoneCount[name] + 1
-                                table.insert(uuidMap[name], {UUID=item.UUID, Category=category})
+                                stoneCount[name] = stoneCount[name] + qty
+                                -- UUID terpisah: tiap entry 1 addItem
+                                -- UUID sama (stacked): 1 entry = 1 addItem (trade 1 stack)
+                                table.insert(uuidMap[name], {UUID=item.UUID, Category=category, Quantity=qty})
                             end
                         end
                     end
