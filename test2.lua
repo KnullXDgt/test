@@ -74,6 +74,19 @@ Remote.enchantAltar2 = Remote.Resolve("RE/ActivateSecondEnchantingAltar")
 Remote.enchantRoll = Remote.Resolve("RE/RollEnchant")
 Remote.createTranscended = Remote.Resolve("RF/CreateTranscendedStone")
 
+-- Trading remotes
+Remote.tradeSendOffer     = Remote.Resolve("RF/Trading/SendTradeOffer")
+Remote.tradeAcceptOffer   = Remote.Resolve("RF/Trading/AcceptTradeOffer")
+Remote.tradeDeclineOffer  = Remote.Resolve("RF/Trading/DeclineTradeOffer")
+Remote.tradeAddItem       = Remote.Resolve("RF/Trading/AddItem")
+Remote.tradeSetReady      = Remote.Resolve("RF/Trading/SetReady")
+Remote.tradeConfirm       = Remote.Resolve("RF/Trading/ConfirmTrade")
+Remote.tradeCancel        = Remote.Resolve("RF/Trading/CancelTrade")
+Remote.tradeOfferReceived = Remote.Resolve("RE/Trading/TradeOfferReceived")
+Remote.tradeStarted       = Remote.Resolve("RE/Trading/TradeStarted")
+Remote.tradeEnded         = Remote.Resolve("RE/Trading/TradeEnded")
+Remote.tradeCompleted     = Remote.Resolve("RE/Trading/TradeCompleted")
+
 -- Support Features state
 local SupportState = {
     cutsceneConns = {
@@ -5825,6 +5838,405 @@ do
 
 
     -- Shop is created first; Trading is placed before Quest.
+
+    -- ====== TRADING HELPERS ======
+
+    -- Filter: item bisa ditrade (tidak locked, tidak favorited)
+    local function canTradeItem(item)
+        if not item.Metadata then return true end
+        if item.Metadata.Favorited then return false end
+        if item.Metadata.TradeLock then return false end
+        return true
+    end
+
+    -- Build grouped display list + internal UUID map
+    -- Returns: displayList ({"Name x3"}), uuidMap ({["Name"]={uuid1,uuid2,...}})
+    local function buildFishDisplayList(filterFn)
+        local inventory = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+        local nameCount, nameOrder, uuidMap = {}, {}, {}
+        if type(inventory) ~= "table" then return {}, {} end
+        for category, items in pairs(inventory) do
+            if type(items) == "table" then
+                for _, item in ipairs(items) do
+                    if type(item) == "table" and item.Id and item.UUID and canTradeItem(item) then
+                        local ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, Data.ItemUtility, category, item.Id)
+                        if not ok then ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, category, item.Id) end
+                        if itemData and itemData.Data and itemData.Data.Type == "Fish" then
+                            if not filterFn or filterFn(item, itemData) then
+                                local name = itemData.Data.Name or tostring(item.Id)
+                                if not nameCount[name] then
+                                    nameCount[name] = 0
+                                    uuidMap[name] = {}
+                                    table.insert(nameOrder, name)
+                                end
+                                nameCount[name] = nameCount[name] + 1
+                                table.insert(uuidMap[name], {UUID=item.UUID, Category=category})
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        table.sort(nameOrder)
+        local displayList = {}
+        for _, name in ipairs(nameOrder) do
+            table.insert(displayList, name .. " x" .. nameCount[name])
+        end
+        return displayList, uuidMap
+    end
+
+    local function buildStoneDisplayList()
+        local inventory = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+        local stoneCount, stoneOrder, uuidMap = {}, {}, {}
+        if type(inventory) ~= "table" then return {}, {} end
+        for category, items in pairs(inventory) do
+            if type(items) == "table" then
+                for _, item in ipairs(items) do
+                    if type(item) == "table" and item.Id and item.UUID and canTradeItem(item) then
+                        local ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, Data.ItemUtility, category, item.Id)
+                        if not ok then ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, category, item.Id) end
+                        if itemData and itemData.Data then
+                            local id = tonumber(item.Id)
+                            local dataName = (itemData.Data.Name or ""):lower()
+                            local isStone = (id == 929) or (id == 558) or dataName:find("enchant stone", 1, true)
+                            if isStone then
+                                local name = itemData.Data.Name or tostring(item.Id)
+                                if not stoneCount[name] then
+                                    stoneCount[name] = 0
+                                    uuidMap[name] = {}
+                                    table.insert(stoneOrder, name)
+                                end
+                                stoneCount[name] = stoneCount[name] + 1
+                                table.insert(uuidMap[name], {UUID=item.UUID, Category=category})
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        table.sort(stoneOrder)
+        local displayList = {}
+        for _, name in ipairs(stoneOrder) do
+            table.insert(displayList, name .. " x" .. stoneCount[name])
+        end
+        return displayList, uuidMap
+    end
+
+    -- Get items by rarity tier
+    local RARITY_TIER_MAP = {
+        Common=1, Uncommon=2, Rare=3, Epic=4,
+        Legendary=5, Mythic=6, Secret=7, Forgotten=8
+    }
+    local function getItemsByRarity(rarityLabel)
+        local targetTier = RARITY_TIER_MAP[rarityLabel]
+        if not targetTier then return {} end
+        local inventory = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+        local result = {}
+        if type(inventory) ~= "table" then return result end
+        for category, items in pairs(inventory) do
+            if type(items) == "table" then
+                for _, item in ipairs(items) do
+                    if type(item) == "table" and item.Id and item.UUID and canTradeItem(item) then
+                        local ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, Data.ItemUtility, category, item.Id)
+                        if not ok then ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, category, item.Id) end
+                        if itemData and itemData.Data and itemData.Data.Type == "Fish" then
+                            if tonumber(itemData.Data.Tier) == targetTier then
+                                table.insert(result, {UUID=item.UUID, Category=category})
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return result
+    end
+
+    -- Get items by coin value (greedy, melebihi target)
+    local function getItemsByCoins(targetCoins)
+        local inventory = Data.Player:Get("Inventory") or Data.Player.Data.Inventory
+        local allFish = {}
+        if type(inventory) ~= "table" then return {} end
+        for category, items in pairs(inventory) do
+            if type(items) == "table" then
+                for _, item in ipairs(items) do
+                    if type(item) == "table" and item.Id and item.UUID and canTradeItem(item) then
+                        local ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, Data.ItemUtility, category, item.Id)
+                        if not ok then ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, category, item.Id) end
+                        if itemData and itemData.Data and itemData.Data.Type == "Fish" then
+                            table.insert(allFish, {
+                                UUID = item.UUID,
+                                Category = category,
+                                SellPrice = itemData.SellPrice or 0,
+                            })
+                        end
+                    end
+                end
+            end
+        end
+        -- Sort desc by SellPrice
+        table.sort(allFish, function(a, b) return a.SellPrice > b.SellPrice end)
+        local result, total = {}, 0
+        for _, f in ipairs(allFish) do
+            if total >= targetCoins then break end
+            table.insert(result, {UUID=f.UUID, Category=f.Category})
+            total = total + f.SellPrice
+        end
+        return result
+    end
+
+    -- ====== TRADE SESSION HANDLER ======
+    -- Event-driven: resolve trade session after TradeStarted
+    -- Waits for lock expiry (LastModifiedTime + 5s) before SetReady
+    -- Watchdog: cancel after 45s no progress
+    local S_Trade = {
+        IsAddingItems = false,
+        ActiveSession = nil, -- Replion session handle
+    }
+
+    local function runTradeSession(tradeReplion)
+        S_Trade.ActiveSession = tradeReplion
+        local LP = Service.LocalPlayer
+        local watchdogStart = os.clock()
+
+        -- Listen LastModifiedTime → wait lock → SetReady
+        local function trySetReady()
+            if S_Trade.IsAddingItems then return end
+            if not tradeReplion or tradeReplion.Destroyed then return end
+            local lastMod = tradeReplion.Data.LastModifiedTime or 0
+            local lockExpiry = lastMod + 5 -- ChangeCountdownTime = 5
+            local now = workspace:GetServerTimeNow()
+            if now < lockExpiry then
+                -- Still locked, wait and retry
+                task.delay(lockExpiry - now + 0.1, function()
+                    if tradeReplion and not tradeReplion.Destroyed then
+                        pcall(function() Remote.tradeSetReady:InvokeServer(true) end)
+                    end
+                end)
+            else
+                pcall(function() Remote.tradeSetReady:InvokeServer(true) end)
+            end
+        end
+
+        -- Watch IsReady reset (partner changed offer)
+        local myId = tostring(LP.UserId)
+        local readyConn = tradeReplion:OnChange("Players." .. myId .. ".IsReady", function(v)
+            if v == false then trySetReady() end
+        end)
+
+        -- Watch PlayersReady → ConfirmTrade
+        local confirmConn = tradeReplion:OnChange("PlayersReady", function(v)
+            if v then
+                pcall(function() Remote.tradeConfirm:InvokeServer() end)
+            end
+        end)
+
+        -- Initial ready attempt after items added
+        task.spawn(function()
+            -- Wait for addItems to finish
+            while S_Trade.IsAddingItems do task.wait(0.1) end
+            trySetReady()
+        end)
+
+        -- Watchdog: cancel after 45s
+        task.spawn(function()
+            while LP:GetAttribute("IsTrading") == true do
+                task.wait(1)
+                if os.clock() - watchdogStart >= 45 then
+                    pcall(function() Remote.tradeCancel:InvokeServer() end)
+                    break
+                end
+            end
+            pcall(function() readyConn:Disconnect() end)
+            pcall(function() confirmConn:Disconnect() end)
+            S_Trade.ActiveSession = nil
+        end)
+    end
+
+    -- ====== TRADE LOOP ======
+    -- opts: { getItemsFn, statusPara, stateRunningKey, targetAmount, targetPlayer }
+    local function setStatus(para, txt)
+        S.setParagraphText(para, txt)
+    end
+
+    local function runTradeLoop(opts)
+        local getItemsFn      = opts.getItemsFn
+        local statusPara      = opts.statusPara
+        local stateKey        = opts.stateRunningKey
+        local targetAmount    = tonumber(opts.targetAmount) or 1
+        local targetPlayer    = opts.targetPlayer
+        local LP              = Service.LocalPlayer
+
+        local totalSent, retryCount, success, failed = 0, 0, 0, 0
+
+        setStatus(statusPara, "Retry: 0 | Success: 0 | Failed: 0 | Sent: 0")
+
+        task.spawn(function()
+            while S.Trading[stateKey] == true and totalSent < targetAmount do
+                local target = game:GetService("Players"):FindFirstChild(targetPlayer)
+                if not target then
+                    S.Trading[stateKey] = false
+                    setStatus(statusPara, "Player not found. Stopped.")
+                    break
+                end
+
+                -- Wait kalau sedang trading
+                local waitClear = 0
+                while (LP:GetAttribute("IsTrading") == true or target:GetAttribute("IsTrading") == true)
+                    and waitClear < 10 and S.Trading[stateKey] == true
+                do
+                    task.wait(0.5)
+                    waitClear = waitClear + 0.5
+                end
+                if not S.Trading[stateKey] then break end
+
+                local items = getItemsFn()
+                if #items == 0 then
+                    S.Trading[stateKey] = false
+                    setStatus(statusPara, "Done -- Inventory empty. Sent: " .. totalSent)
+                    break
+                end
+
+                local amountNeeded = targetAmount - totalSent
+                local batchSize = math.min(20, amountNeeded, #items)
+                local batch = {}
+                for i = 1, batchSize do
+                    table.insert(batch, items[i])
+                end
+
+                retryCount = retryCount + 1
+                setStatus(statusPara, "Retry: " .. retryCount .. " | Success: " .. success .. " | Failed: " .. failed .. " | Sent: " .. totalSent)
+
+                -- Send offer
+                local ok, sendResult = pcall(function()
+                    return Remote.tradeSendOffer:InvokeServer(target)
+                end)
+                if not ok or sendResult == false then
+                    failed = failed + 1
+                    setStatus(statusPara, "Retry: " .. retryCount .. " | Success: " .. success .. " | Failed: " .. failed .. " | Sent: " .. totalSent)
+                    task.wait(2.5)
+                else
+                    -- Wait TradeStarted (max 15s)
+                    local tradeStarted = false
+                    local startConn
+                    if Remote.tradeStarted then
+                        startConn = Remote.tradeStarted.OnClientEvent:Connect(function()
+                            tradeStarted = true
+                        end)
+                    end
+                    local waited = 0
+                    while not tradeStarted and waited < 15 and S.Trading[stateKey] == true do
+                        task.wait(0.5)
+                        waited = waited + 0.5
+                    end
+                    if startConn then pcall(function() startConn:Disconnect() end) end
+
+                    if not tradeStarted then
+                        failed = failed + 1
+                        task.wait(2.5)
+                    else
+                        task.wait(1.5)
+                        -- Add items
+                        S_Trade.IsAddingItems = true
+                        local addedCount = 0
+                        for _, itemData in ipairs(batch) do
+                            if LP:GetAttribute("IsTrading") ~= true then break end
+                            local ok2, _ = pcall(function()
+                                return Remote.tradeAddItem:InvokeServer(itemData.Category, itemData.UUID)
+                            end)
+                            if ok2 then addedCount = addedCount + 1 end
+                            task.wait(math.random(1, 3) / 8)
+                        end
+                        S_Trade.IsAddingItems = false
+
+                        -- Wait TradeCompleted/TradeEnded (max 45s)
+                        local tradeFinished, isSuccess = false, false
+                        local endConn, compConn
+                        if Remote.tradeEnded then
+                            endConn = Remote.tradeEnded.OnClientEvent:Connect(function()
+                                tradeFinished = true
+                            end)
+                        end
+                        if Remote.tradeCompleted then
+                            compConn = Remote.tradeCompleted.OnClientEvent:Connect(function()
+                                tradeFinished = true
+                                isSuccess = true
+                            end)
+                        end
+                        local waitElapsed = 0
+                        while not tradeFinished and LP:GetAttribute("IsTrading") == true
+                            and waitElapsed < 45 and S.Trading[stateKey] == true
+                        do
+                            task.wait(1)
+                            waitElapsed = waitElapsed + 1
+                        end
+                        if endConn then pcall(function() endConn:Disconnect() end) end
+                        if compConn then pcall(function() compConn:Disconnect() end) end
+
+                        -- Stuck: cancel
+                        if not tradeFinished and LP:GetAttribute("IsTrading") == true then
+                            pcall(function() Remote.tradeCancel:InvokeServer() end)
+                            task.wait(1)
+                        end
+
+                        -- Wait IsTrading fully cleared (server cleanup)
+                        local cleanWait = 0
+                        while LP:GetAttribute("IsTrading") == true and cleanWait < 10 do
+                            task.wait(0.5)
+                            cleanWait = cleanWait + 0.5
+                        end
+
+                        if isSuccess then
+                            success = success + 1
+                            totalSent = totalSent + addedCount
+                        else
+                            failed = failed + 1
+                        end
+
+                        setStatus(statusPara, "Retry: " .. retryCount .. " | Success: " .. success .. " | Failed: " .. failed .. " | Sent: " .. totalSent)
+                        task.wait(3.5)
+                    end
+                end
+            end
+
+            if S.Trading[stateKey] == true and totalSent >= targetAmount then
+                S.Trading[stateKey] = false
+                UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Trade done! Sent: " .. totalSent, Color=Color3.fromRGB(150,150,170), Delay=4 })
+            end
+            setStatus(statusPara, "Done -- Retry: " .. retryCount .. " | Success: " .. success .. " | Failed: " .. failed .. " | Sent: " .. totalSent)
+        end)
+    end
+
+    -- ====== AUTO ACCEPT SETUP (event-driven, saat script load) ======
+    if Remote.tradeOfferReceived then
+        Remote.tradeOfferReceived.OnClientEvent:Connect(function(sender)
+            if not S.Trading.AutoAccept then return end
+            -- Server auto-reject kalau kita sedang trading, biarkan
+            pcall(function() Remote.tradeAcceptOffer:InvokeServer(sender) end)
+        end)
+    end
+
+    -- Watchdog untuk auto accept
+    Service.LocalPlayer:GetAttributeChangedSignal("IsTrading"):Connect(function()
+        if Service.LocalPlayer:GetAttribute("IsTrading") == true and S.Trading.AutoAccept then
+            task.spawn(function()
+                local watchStart = os.clock()
+                while Service.LocalPlayer:GetAttribute("IsTrading") == true do
+                    if not S.Trading.AutoAccept then break end
+                    if os.clock() - watchStart >= 45 then
+                        pcall(function() Remote.tradeCancel:InvokeServer() end)
+                        break
+                    end
+                    if not S_Trade.IsAddingItems then
+                        pcall(function() Remote.tradeSetReady:InvokeServer(true) end)
+                        task.wait(0.1)
+                        pcall(function() Remote.tradeConfirm:InvokeServer() end)
+                    end
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end)
+
     UI.TradingTab = UI.Window:CreateTab("Trading", "rbxassetid://114581487428395")
 
     -- ====== TRADING STATE ======
@@ -5877,15 +6289,40 @@ do
         function(v) S.Trading.ByName_Amount = tonumber(v) or 1 end,
         "Input_Trade_ByName_Amount")
 
+    local ByNameUUIDMap = {}
     UI.Window:AddButton(ByNameSection, "Refresh Fish Name", "", "rbxassetid://16932740082",
         function()
-            -- TODO: implement fish name list from inventory
+            local displayList, uuidMap = buildFishDisplayList()
+            ByNameUUIDMap = uuidMap
+            ByNameDropdown:Set(displayList)
         end)
 
     UI.Window:AddToggle(ByNameSection, "Start Trade by Name", "", false,
         function(state)
             S.Trading.ByName_Running = state
-            -- TODO: implement trade loop
+            if state then
+                if S.Trading.TargetPlayer == "" or S.Trading.TargetPlayer == "Select Option" then
+                    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a player first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
+                    S.Trading.ByName_Running = false
+                    return
+                end
+                if S.Trading.ByName_Item == "" or S.Trading.ByName_Item == "Select Option" then
+                    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select an item first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
+                    S.Trading.ByName_Running = false
+                    return
+                end
+                local cleanName = (S.Trading.ByName_Item:match("^(.+) x%d+$") or S.Trading.ByName_Item)
+                runTradeLoop({
+                    getItemsFn = function()
+                        local uuids = ByNameUUIDMap[cleanName] or {}
+                        return uuids
+                    end,
+                    statusPara      = ByNameStatusPara,
+                    stateRunningKey = "ByName_Running",
+                    targetAmount    = S.Trading.ByName_Amount,
+                    targetPlayer    = S.Trading.TargetPlayer,
+                })
+            end
         end, "Toggle_Trade_ByName")
 
     -- ====== TRADE BY COINS ======
@@ -5904,13 +6341,29 @@ do
 
     UI.Window:AddButton(ByCoinsSection, "Refresh Fish Name", "", "rbxassetid://16932740082",
         function()
-            -- TODO: implement fish name list from inventory
+            -- By Coins tidak butuh dropdown list — greedy otomatis dari inventory
+            UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="By Coins: all tradable fish auto-selected by value.", Color=Color3.fromRGB(150,150,170), Delay=3 })
         end)
 
     UI.Window:AddToggle(ByCoinsSection, "Start Trade by Coins", "", false,
         function(state)
             S.Trading.ByCoins_Running = state
-            -- TODO: implement trade loop
+            if state then
+                if S.Trading.TargetPlayer == "" or S.Trading.TargetPlayer == "Select Option" then
+                    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a player first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
+                    S.Trading.ByCoins_Running = false
+                    return
+                end
+                runTradeLoop({
+                    getItemsFn = function()
+                        return getItemsByCoins(S.Trading.ByCoins_Target)
+                    end,
+                    statusPara      = ByCoinsStatusPara,
+                    stateRunningKey = "ByCoins_Running",
+                    targetAmount    = 999999,  -- run sampai inventory habis atau target tercapai
+                    targetPlayer    = S.Trading.TargetPlayer,
+                })
+            end
         end, "Toggle_Trade_ByCoins")
 
 
@@ -5933,7 +6386,22 @@ do
     UI.Window:AddToggle(ByRaritySection, "Start Trade by Rarities", "", false,
         function(state)
             S.Trading.ByRarity_Running = state
-            -- TODO: implement trade loop
+            if state then
+                if S.Trading.TargetPlayer == "" or S.Trading.TargetPlayer == "Select Option" then
+                    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a player first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
+                    S.Trading.ByRarity_Running = false
+                    return
+                end
+                runTradeLoop({
+                    getItemsFn = function()
+                        return getItemsByRarity(S.Trading.ByRarity_Rarity)
+                    end,
+                    statusPara      = ByRarityStatusPara,
+                    stateRunningKey = "ByRarity_Running",
+                    targetAmount    = S.Trading.ByRarity_Amount,
+                    targetPlayer    = S.Trading.TargetPlayer,
+                })
+            end
         end, "Toggle_Trade_ByRarity")
 
     -- ====== TRADE ENCHANT STONE ======
@@ -5950,15 +6418,39 @@ do
         function(v) S.Trading.ByStone_Amount = tonumber(v) or 1 end,
         "Input_Trade_ByStone_Amount")
 
+    local ByStoneUUIDMap = {}
     UI.Window:AddButton(ByStoneSection, "Check Enchant Stones", "", "rbxassetid://16932740082",
         function()
-            -- TODO: implement stone list from inventory
+            local displayList, uuidMap = buildStoneDisplayList()
+            ByStoneUUIDMap = uuidMap
+            ByStoneDropdown:Set(displayList)
         end)
 
     UI.Window:AddToggle(ByStoneSection, "Start Trade by Enchant Stone", "", false,
         function(state)
             S.Trading.ByStone_Running = state
-            -- TODO: implement trade loop
+            if state then
+                if S.Trading.TargetPlayer == "" or S.Trading.TargetPlayer == "Select Option" then
+                    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a player first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
+                    S.Trading.ByStone_Running = false
+                    return
+                end
+                if S.Trading.ByStone_Stone == "" or S.Trading.ByStone_Stone == "Select Option" then
+                    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a stone first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
+                    S.Trading.ByStone_Running = false
+                    return
+                end
+                local cleanName = (S.Trading.ByStone_Stone:match("^(.+) x%d+$") or S.Trading.ByStone_Stone)
+                runTradeLoop({
+                    getItemsFn = function()
+                        return ByStoneUUIDMap[cleanName] or {}
+                    end,
+                    statusPara      = ByStoneStatusPara,
+                    stateRunningKey = "ByStone_Running",
+                    targetAmount    = S.Trading.ByStone_Amount,
+                    targetPlayer    = S.Trading.TargetPlayer,
+                })
+            end
         end, "Toggle_Trade_ByStone")
 
     -- ====== AUTO ACCEPT TRADE ======
@@ -5967,7 +6459,6 @@ do
     UI.Window:AddToggle(AutoAcceptSection, "Auto Accept & Confirm Trade", "", false,
         function(state)
             S.Trading.AutoAccept = state
-            -- TODO: implement auto accept logic
         end, "Toggle_Trade_AutoAccept")
 
     -- Shop is created first; Quest is therefore placed immediately after it.
