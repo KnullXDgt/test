@@ -6364,10 +6364,12 @@ do
         function(v) S.Trading.ByCoins_Target = tonumber(v) or 1000000 end,
         "Input_Trade_ByCoins_Target")
 
+    local ByCoinsUUIDMap = {}
     UI.Window:AddButton(ByCoinsSection, "Refresh Fish Name", "", "rbxassetid://16932740082",
         function()
-            -- By Coins tidak butuh dropdown list — greedy otomatis dari inventory
-            UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="By Coins: all tradable fish auto-selected by value.", Color=Color3.fromRGB(150,150,170), Delay=3 })
+            local displayList, uuidMap = buildFishDisplayList()
+            ByCoinsUUIDMap = uuidMap
+            ByCoinsDropdown:Set(displayList)
         end)
 
     UI.Window:AddToggle(ByCoinsSection, "Start Trade by Coins", "", false,
