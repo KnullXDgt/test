@@ -6596,6 +6596,7 @@ do
         PendingOutgoing = false,
         PendingIncoming = false,
         RequestReady = nil,
+        LastActivityAt = nil,
         Serial = 0,
     }
 
@@ -6610,13 +6611,37 @@ do
         local serial = S_Trade.Serial
         local LP = Service.LocalPlayer
         local myId = tostring(LP.UserId)
-        local readyForModified = nil
-        local confirmedForModified = nil
+        -- AddItem milik lawan tidak pernah dibaca dari remote client lawan.
+        -- Server menulis hasil validasinya ke Replion bersama, tepat di
+        -- Players.<otherUserId>.Items.  Cabang itu adalah sumber kebenaran
+        -- untuk receiver.
+        local otherId = nil
+        for _, player in ipairs(tradeReplion.Data.PlayerList or {}) do
+            if player ~= LP and player and player.UserId then
+                otherId = tostring(player.UserId)
+                break
+            end
+        end
+        if not otherId then
+            for playerId in pairs(tradeReplion.Data.Players or {}) do
+                if tostring(playerId) ~= myId then
+                    otherId = tostring(playerId)
+                    break
+                end
+            end
+        end
+
+        local otherOfferRevision = 0
+        local otherOfferChangedAt = os.clock()
+        local otherOfferItemCount = 0
+        local readyForKey = nil
+        local confirmedForKey = nil
         local connections = {}
 
         S_Trade.ActiveSession = tradeReplion
         S_Trade.ActiveSessionId = sessionId
         S_Trade.Managed = managed == true
+        S_Trade.LastActivityAt = os.clock()
 
         local function alive()
             return S_Trade.Serial == serial
@@ -6625,27 +6650,66 @@ do
                 and LP:GetAttribute("IsTrading") == true
         end
 
+        local function markActivity()
+            if S_Trade.Serial == serial and S_Trade.ActiveSession == tradeReplion then
+                S_Trade.LastActivityAt = os.clock()
+            end
+        end
+
+        local function readOtherOffer()
+            if not otherId then return 0 end
+            local offer = tradeReplion:Get("Players." .. otherId .. ".Items") or {}
+            local count = 0
+            for _, categoryItems in pairs(offer) do
+                for _ in pairs(categoryItems or {}) do
+                    count = count + 1
+                end
+            end
+            return count
+        end
+
+        local function otherOfferIsQuiet()
+            return os.clock() - otherOfferChangedAt >= 5
+        end
+
+        local scheduleReady
         local function confirmIfReady()
             if not alive() or not S_Trade.Managed or tradeReplion.Data.PlayersReady ~= true then return end
             local modified = tonumber(tradeReplion.Data.LastModifiedTime) or 0
-            if confirmedForModified == modified then return end
-            confirmedForModified = modified
+            local key = tostring(modified) .. ":" .. tostring(otherOfferRevision)
+            if confirmedForKey == key then return end
+            -- Jangan confirm ketika item offer lawan baru saja direplikasi.
+            -- Bila kedua Ready sementara offer masih berubah, tunggu sampai
+            -- jendela tenang yang sama dengan server selesai.
+            if not otherOfferIsQuiet() then
+                readyForKey = nil
+                scheduleReady()
+                return
+            end
+            confirmedForKey = key
             pcall(function() Remote.tradeConfirm:InvokeServer() end)
         end
 
-        local function scheduleReady()
+        scheduleReady = function()
             if not alive() or not S_Trade.Managed or S_Trade.IsAddingItems then return end
             local modified = tonumber(tradeReplion.Data.LastModifiedTime) or 0
-            if readyForModified == modified then return end
-            readyForModified = modified
+            local offerRevision = otherOfferRevision
+            local key = tostring(modified) .. ":" .. tostring(offerRevision)
+            if readyForKey == key then return end
+            readyForKey = key
             task.spawn(function()
                 while alive() and S_Trade.IsAddingItems do task.wait(0.05) end
                 if not alive() then return end
                 if (tonumber(tradeReplion.Data.LastModifiedTime) or 0) ~= modified then return end
-                local delay = modified + 5 - workspace:GetServerTimeNow()
+                -- Kedua syarat wajib terpenuhi: lock server selesai dan
+                -- cabang Items milik pihak lawan tidak lagi berubah.
+                local serverDelay = modified + 5 - workspace:GetServerTimeNow()
+                local offerDelay = 5 - (os.clock() - otherOfferChangedAt)
+                local delay = math.max(serverDelay, offerDelay, 0)
                 if delay > 0 then task.wait(delay + 0.1) end
                 if not alive() or S_Trade.IsAddingItems then return end
                 if (tonumber(tradeReplion.Data.LastModifiedTime) or 0) ~= modified then return end
+                if otherOfferRevision ~= offerRevision or not otherOfferIsQuiet() then return end
                 local mine = tradeReplion.Data.Players and tradeReplion.Data.Players[myId]
                 if mine and mine.IsReady then
                     confirmIfReady()
@@ -6656,28 +6720,50 @@ do
         end
 
         table.insert(connections, tradeReplion:OnChange("LastModifiedTime", function()
-            readyForModified = nil
-            confirmedForModified = nil
+            markActivity()
+            readyForKey = nil
+            confirmedForKey = nil
             scheduleReady()
         end))
         table.insert(connections, tradeReplion:OnChange("Players." .. myId .. ".IsReady", function(isReady)
+            markActivity()
             if isReady then
                 confirmIfReady()
             else
-                readyForModified = nil
+                readyForKey = nil
                 scheduleReady()
             end
         end))
         table.insert(connections, tradeReplion:OnChange("PlayersReady", function(isReady)
+            markActivity()
             if isReady then confirmIfReady() end
         end))
+        if otherId then
+            otherOfferItemCount = readOtherOffer()
+            table.insert(connections, tradeReplion:OnDescendantChange(
+                "Players." .. otherId .. ".Items",
+                function()
+                    -- AddItem/RemoveItem lawan telah diakui server dan
+                    -- direplikasi ke client ini.
+                    otherOfferItemCount = readOtherOffer()
+                    otherOfferRevision = otherOfferRevision + 1
+                    otherOfferChangedAt = os.clock()
+                    markActivity()
+                    readyForKey = nil
+                    confirmedForKey = nil
+                    scheduleReady()
+                end
+            ))
+        end
         S_Trade.RequestReady = scheduleReady
         task.defer(scheduleReady)
 
         task.spawn(function()
-            local startedAt = os.clock()
             while alive() do
-                if S_Trade.Managed and os.clock() - startedAt >= 45 then
+                -- A sender can legitimately add twenty items slowly.  Only
+                -- 45s without *any* authoritative Replion activity is stuck.
+                local lastActivity = S_Trade.LastActivityAt or os.clock()
+                if S_Trade.Managed and os.clock() - lastActivity >= 45 then
                     pcall(function() Remote.tradeCancel:InvokeServer() end)
                     break
                 end
@@ -6690,6 +6776,7 @@ do
                 S_Trade.Managed = false
                 S_Trade.IsAddingItems = false
                 S_Trade.RequestReady = nil
+                S_Trade.LastActivityAt = nil
             end
         end)
     end
@@ -6938,86 +7025,66 @@ do
         end)
     end
 
-    -- ====== PASSIVE INCOMING-TRADE GATE ======
-    -- Game flow (confirmed by Trading probe):
-    -- TradeOfferReceived -> TradeOfferController -> PromptController:FirePrompt
-    -- -> DrawPrompt -> PlayerGui.Prompt.Enabled = true.
-    --
-    -- Returning an already-resolved positive Promise here lets the *game's own*
-    -- TradeOfferController call AcceptTrade(), including its normal client-side
-    -- bookkeeping.  Consequently the prompt is never queued or drawn.  This is
-    -- deliberately not a GUI scan/click, getconnections disable, or a second
-    -- direct AcceptTradeOffer remote call.
-    local function installPassiveTradePromptGate()
-        local sharedEnv = type(getgenv) == "function" and getgenv() or _G
-        local gate = sharedEnv.__OrvionPassiveTradePromptGate
-        if type(gate) ~= "table" then
-            gate = {}
-            sharedEnv.__OrvionPassiveTradePromptGate = gate
-        end
-
-        -- State is refreshed on every execution, while the hook itself remains
-        -- single-install. This prevents a re-execute from stacking wrappers.
-        gate.IsAutoAcceptEnabled = function()
-            return S.Trading ~= nil and S.Trading.AutoAccept == true
-        end
-
-        if gate.Installed then return gate.Available == true end
-        gate.Installed = true
-        gate.Available = false
-
-        if type(hookfunction) ~= "function" then
-            warn("[Orvion] Passive trade prompt gate unavailable: hookfunction missing.")
-            return false
-        end
-
-        local controllerModule = Service.ReplicatedStorage:FindFirstChild("Controllers")
-        controllerModule = controllerModule and controllerModule:FindFirstChild("PromptController")
-        if not controllerModule then
-            warn("[Orvion] Passive trade prompt gate unavailable: PromptController missing.")
-            return false
-        end
-
-        local okController, promptController = pcall(require, controllerModule)
-        local promiseModule = nil
-        local okPromise, promiseResult = pcall(require,
-            Service.ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Promise"))
-        if okPromise then promiseModule = promiseResult end
-        if not okController or type(promptController) ~= "table"
-            or type(promptController.FirePrompt) ~= "function"
-            or type(promiseModule) ~= "table" or type(promiseModule.new) ~= "function" then
-            warn("[Orvion] Passive trade prompt gate unavailable: required game module failed to resolve.")
-            return false
-        end
-
-        local originalFirePrompt
-        local makeClosure = type(newcclosure) == "function" and newcclosure or function(fn) return fn end
-        local hooked, hookError = pcall(function()
-            originalFirePrompt = hookfunction(promptController.FirePrompt, makeClosure(function(self, text, ...)
-                local normalized = type(text) == "string" and text:lower() or ""
-                local isTradeOffer = normalized:find("trade request from", 1, true) ~= nil
-                    and normalized:find("do you want to accept", 1, true) ~= nil
-                if isTradeOffer and gate.IsAutoAcceptEnabled() then
-                    -- TradeOfferController receives true in :andThen() and calls
-                    -- its own AcceptTrade() without PlayerGui.Prompt ever opening.
-                    return promiseModule.new(function(resolve)
-                        resolve(true)
-                    end)
+    local function acceptIncomingTradePrompt(sender)
+        -- Prefer the game's own Accept button. Its controller then clears its
+        -- pending prompt state, unlike calling the remote behind its back.
+        local expected = ("trade request from " .. tostring(sender.DisplayName)):lower()
+        local deadline = os.clock() + 1.5
+        repeat
+            local playerGui = Service.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            if playerGui then
+                for _, label in ipairs(playerGui:GetDescendants()) do
+                    local isText = label:IsA("TextLabel") or label:IsA("TextButton")
+                    if isText and tostring(label.Text):lower():find(expected, 1, true) then
+                        local root = label
+                        while root.Parent and root.Parent ~= playerGui do root = root.Parent end
+                        for _, button in ipairs(root:GetDescendants()) do
+                            if button:IsA("TextButton") and button.Visible then
+                                local buttonText = tostring(button.Text):lower()
+                                if buttonText:find("accept", 1, true)
+                                    or buttonText == "yes" or buttonText == "confirm"
+                                then
+                                    local fired = false
+                                    if type(firesignal) == "function" then
+                                        fired = pcall(firesignal, button.Activated)
+                                    end
+                                    if not fired then fired = pcall(function() button:Activate() end) end
+                                    if fired then return true end
+                                end
+                            end
+                        end
+                    end
                 end
-                return originalFirePrompt(self, text, ...)
-            end))
-        end)
-
-        if not hooked or type(originalFirePrompt) ~= "function" then
-            warn("[Orvion] Passive trade prompt gate hook failed: " .. tostring(hookError))
-            return false
-        end
-
-        gate.Available = true
-        return true
+            end
+            task.wait(0.05)
+        until os.clock() >= deadline
+        return false
     end
 
-    installPassiveTradePromptGate()
+    if Remote.tradeOfferReceived then
+        Remote.tradeOfferReceived.OnClientEvent:Connect(function(sender)
+            if not S.Trading.AutoAccept or Service.LocalPlayer:GetAttribute("IsTrading") == true then return end
+            S_Trade.PendingIncoming = true
+            task.spawn(function()
+                -- The UI controller owns both the popup and its client state.
+                -- Direct remote is only a fallback when that prompt cannot be found.
+                local usedPrompt = acceptIncomingTradePrompt(sender)
+                if usedPrompt then
+                    local waited = 0
+                    while Service.LocalPlayer:GetAttribute("IsTrading") ~= true and waited < 3 do
+                        task.wait(0.05)
+                        waited = waited + 0.05
+                    end
+                end
+                if Service.LocalPlayer:GetAttribute("IsTrading") ~= true then
+                    local ok, accepted = pcall(function()
+                        return Remote.tradeAcceptOffer:InvokeServer(sender)
+                    end)
+                    if not ok or accepted == false then S_Trade.PendingIncoming = false end
+                end
+            end)
+        end)
+    end
 
     -- ====== SELECT PLAYER ======
     local TradingPlayerSection = UI.Window:AddCollapsible(UI.TradingTab, "Select Player", false)
