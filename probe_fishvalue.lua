@@ -147,5 +147,41 @@ pcall(function()
 end)
 save()
 
+
+-- ====== TRADELOCK TABLE DUMP ======
+log("\n=== TRADELOCK TABLE CONTENTS ===")
+pcall(function()
+    local IU = require(RS.Shared.ItemUtility)
+    local inventory = PlayerData:Get("Inventory") or {}
+    local now = workspace:GetServerTimeNow()
+    log("ServerTimeNow = " .. tostring(now))
+    for category, items in pairs(inventory) do
+        if type(items) == "table" then
+            for _, item in ipairs(items) do
+                if item.Metadata and item.Metadata.TradeLock then
+                    local ok, itemData = pcall(IU.GetItemDataFromItemType, IU, category, item.Id)
+                    if not ok then ok, itemData = pcall(IU.GetItemDataFromItemType, category, item.Id) end
+                    local name = itemData and itemData.Data and itemData.Data.Name or tostring(item.Id)
+                    log("  LOCKED: " .. name)
+                    -- Dump TradeLock table
+                    local tl = item.Metadata.TradeLock
+                    if type(tl) == "table" then
+                        for k, v in pairs(tl) do
+                            log("    TradeLock." .. tostring(k) .. " = " .. tostring(v))
+                        end
+                    else
+                        log("    TradeLock = " .. tostring(tl))
+                    end
+                    -- Cek FollowTradeRules
+                    local TradeData = require(RS.Shared.Trading.TradeData)
+                    local ok2, result = pcall(TradeData.FollowTradeRules, itemData and itemData.Data, item)
+                    log("    FollowTradeRules = " .. tostring(ok2 and result or "error:" .. tostring(result)))
+                end
+            end
+        end
+    end
+end)
+save()
+
 log("\nDONE")
 save()
