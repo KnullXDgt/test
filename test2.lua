@@ -6381,17 +6381,18 @@ do
                     S.Trading.ByCoins_Running = false
                     return
                 end
-                -- Pre-build full list saat toggle ON
-                -- Kalau user pilih ikan tertentu → greedy dari ikan itu saja sampai >= target
+                -- Pre-build list saat toggle ON
+                -- Kalau user pilih ikan tertentu → greedy dari ikan itu saja
                 -- Kalau "Select Option" → greedy dari semua fish
                 local selectedName = S.Trading.ByCoins_Item
                 local cleanCoinName = selectedName ~= "" and selectedName ~= "Select Option"
                     and (selectedName:match("^(.+) x%d+$") or selectedName) or nil
                 local byCoinsFullList
                 if cleanCoinName then
+                    -- Filter inventory hanya ikan yang dipilih, lalu greedy by SellPrice
                     local _, freshCoinMap = buildFishDisplayList()
                     local src = freshCoinMap[cleanCoinName] or {}
-                    -- Hitung SellPrice dari ikan ini lalu ambil secukupnya
+                    -- Hitung total coins dari src, ambil secukupnya sampai >= target
                     byCoinsFullList = {}
                     local coinTotal = 0
                     for _, entry in ipairs(src) do
