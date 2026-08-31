@@ -3027,7 +3027,7 @@ UI.Window:AddDropdown(UI.TpSection, "Select Location", "", Catalog.LocationNames
     Config.TeleportLocation = value
 end, "Dropdown_Select Map")
 
-UI.Window:AddButton(UI.TpSection, "Teleport", "", "", function()
+UI.Window:AddButton(UI.TpSection, "Teleport", "", "rbxassetid://16932740082", function()
     if Navigation.teleportTo(Config.TeleportLocation, true) then
         UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Teleported to " .. Config.TeleportLocation, Color=Color3.fromRGB(150,150,170), Delay=2 })
     end
@@ -5888,6 +5888,32 @@ do
             -- TODO: implement trade loop
         end, "Toggle_Trade_ByName")
 
+    -- ====== TRADE BY COINS ======
+    local ByCoinsSection = UI.Window:AddCollapsible(UI.TradingTab, "Trade by Coins", false)
+
+    local ByCoinsStatusPara = UI.Window:AddParagraph(ByCoinsSection, "Trade Status", "Waiting...")
+
+    local ByCoinsDropdown = UI.Window:AddDropdown(
+        ByCoinsSection, "Select Item", "", {}, false, "Select Option",
+        function(v) S.Trading.ByCoins_Item = v end,
+        "Dropdown_Trade_ByCoins_Item")
+
+    UI.Window:AddInput(ByCoinsSection, "Set Amount", "", "1",
+        function(v) S.Trading.ByCoins_Target = tonumber(v) or 1000000 end,
+        "Input_Trade_ByCoins_Target")
+
+    UI.Window:AddButton(ByCoinsSection, "Refresh Fish Name", "", "rbxassetid://10088146947",
+        function()
+            -- TODO: implement fish name list from inventory
+        end)
+
+    UI.Window:AddToggle(ByCoinsSection, "Start Trade by Coins", "", false,
+        function(state)
+            S.Trading.ByCoins_Running = state
+            -- TODO: implement trade loop
+        end, "Toggle_Trade_ByCoins")
+
+
     -- ====== TRADE BY RARITIES ======
     local ByRaritySection = UI.Window:AddCollapsible(UI.TradingTab, "Trade by Rarities", false)
 
@@ -5934,31 +5960,6 @@ do
             S.Trading.ByStone_Running = state
             -- TODO: implement trade loop
         end, "Toggle_Trade_ByStone")
-
-    -- ====== TRADE BY COINS ======
-    local ByCoinsSection = UI.Window:AddCollapsible(UI.TradingTab, "Trade by Coins", false)
-
-    local ByCoinsStatusPara = UI.Window:AddParagraph(ByCoinsSection, "Trade Status", "Waiting...")
-
-    local ByCoinsDropdown = UI.Window:AddDropdown(
-        ByCoinsSection, "Select Item", "", {}, false, "Select Option",
-        function(v) S.Trading.ByCoins_Item = v end,
-        "Dropdown_Trade_ByCoins_Item")
-
-    UI.Window:AddInput(ByCoinsSection, "Set Amount", "", "1",
-        function(v) S.Trading.ByCoins_Target = tonumber(v) or 1000000 end,
-        "Input_Trade_ByCoins_Target")
-
-    UI.Window:AddButton(ByCoinsSection, "Refresh Fish Name", "", "rbxassetid://10088146947",
-        function()
-            -- TODO: implement fish name list from inventory
-        end)
-
-    UI.Window:AddToggle(ByCoinsSection, "Start Trade by Coins", "", false,
-        function(state)
-            S.Trading.ByCoins_Running = state
-            -- TODO: implement trade loop
-        end, "Toggle_Trade_ByCoins")
 
     -- ====== AUTO ACCEPT TRADE ======
     local AutoAcceptSection = UI.Window:AddCollapsible(UI.TradingTab, "Auto Accept Trade", false)
