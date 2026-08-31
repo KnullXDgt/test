@@ -143,6 +143,56 @@ local Data = {
     Replion = require(Service.ReplicatedStorage.Packages.Replion),
     Events = nil, -- lazy-loaded saat weather feature dipakai
 }
+
+-- Install before the UI and all workers.  TradeOfferController owns the
+-- offer queue and calls PopUp only after it has stored the sender internally.
+-- Intercepting this controller boundary prevents PromptController and its GUI
+-- from ever being reached, while AcceptTrade retains the game's own remote
+-- call and queue cleanup.
+local TradeOfferGate = (type(getgenv) == "function" and getgenv() or _G).__OrvionTradeOfferGate
+if type(TradeOfferGate) ~= "table" then
+    TradeOfferGate = {}
+    (type(getgenv) == "function" and getgenv() or _G).__OrvionTradeOfferGate = TradeOfferGate
+end
+TradeOfferGate.Enabled = false
+
+local function installTradeOfferGate()
+    if TradeOfferGate.Installed then return TradeOfferGate.Available == true end
+    TradeOfferGate.Installed = true
+    TradeOfferGate.Available = false
+    if type(hookfunction) ~= "function" then return false end
+
+    local controllers = Service.ReplicatedStorage:FindFirstChild("Controllers")
+    local controllerModule = controllers and controllers:FindFirstChild("TradeOfferController")
+    if not controllerModule then return false end
+
+    local ok, controller = pcall(require, controllerModule)
+    if not ok or type(controller) ~= "table" or type(controller.PopUp) ~= "function"
+        or type(controller.AcceptTrade) ~= "function"
+    then return false end
+
+    local originalPopUp
+    local wrap = type(newcclosure) == "function" and newcclosure or function(fn) return fn end
+    local hooked = pcall(function()
+        originalPopUp = hookfunction(controller.PopUp, wrap(function(self, sender)
+            if TradeOfferGate.Enabled == true then
+                -- The controller has already assigned sender to its private
+                -- pending field.  Its own AcceptTrade clears that field and
+                -- invokes AcceptTradeOffer before any prompt is constructed.
+                return self:AcceptTrade()
+            end
+            return originalPopUp(self, sender)
+        end))
+    end)
+    if not hooked or type(originalPopUp) ~= "function" then return false end
+    TradeOfferGate.Available = true
+    return true
+end
+
+installTradeOfferGate()
+
+-- The gate must not wait behind the player-data replication.  Everything
+-- below may yield normally after the controller hook already exists.
 Data.Player = Data.Replion.Client:WaitReplion("Data")
 Data.ItemUtility = require(Service.ReplicatedStorage.Shared.ItemUtility)
 Data.FishingConstants = require(Service.ReplicatedStorage.Shared.Constants)
@@ -7057,83 +7107,6 @@ do
         end)
     end
 
-    -- Offer flow observed in the game's controller:
-    -- TradeOfferReceived -> PromptController:FirePrompt -> Prompt.Enabled.
-    -- Hooking FirePrompt lets TradeOfferController receive the same positive
-    -- result it would receive from a real click, before the popup is queued.
-    -- It is not a GUI scan/click and therefore has no visible-popup race.
-    local function installPassiveTradePromptGate()
-        local sharedEnv = type(getgenv) == "function" and getgenv() or _G
-        local gate = sharedEnv.__OrvionPassiveTradePromptGate
-        if type(gate) ~= "table" then
-            gate = {}
-            sharedEnv.__OrvionPassiveTradePromptGate = gate
-        end
-
-        -- Refresh this closure each execution; the hook itself is installed
-        -- once, so re-executing Orvion cannot stack wrapped functions.
-        gate.IsAutoAcceptEnabled = function()
-            return S.Trading ~= nil and S.Trading.AutoAccept == true
-        end
-
-        if gate.Installed then return gate.Available == true end
-        gate.Installed = true
-        gate.Available = false
-        if type(hookfunction) ~= "function" then return false end
-
-        local controllers = Service.ReplicatedStorage:FindFirstChild("Controllers")
-        local controllerModule = controllers and controllers:FindFirstChild("PromptController")
-        if not controllerModule then return false end
-
-        local okController, promptController = pcall(require, controllerModule)
-        local okPromise, promiseModule = pcall(require,
-            Service.ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Promise"))
-        if not okController or type(promptController) ~= "table"
-            or type(promptController.FirePrompt) ~= "function"
-            or not okPromise or type(promiseModule) ~= "table"
-            or type(promiseModule.new) ~= "function"
-        then return false end
-
-        local originalFirePrompt
-        local wrap = type(newcclosure) == "function" and newcclosure or function(fn) return fn end
-        local hooked = pcall(function()
-            originalFirePrompt = hookfunction(promptController.FirePrompt,
-                wrap(function(self, text, ...)
-                    local normalized = type(text) == "string" and text:lower() or ""
-                    local isTradeOffer = normalized:find("trade request from", 1, true) ~= nil
-                        and normalized:find("do you want to accept", 1, true) ~= nil
-                    if isTradeOffer and gate.IsAutoAcceptEnabled() then
-                        return promiseModule.new(function(resolve) resolve(true) end)
-                    end
-                    return originalFirePrompt(self, text, ...)
-                end))
-        end)
-        if not hooked or type(originalFirePrompt) ~= "function" then return false end
-        gate.Available = true
-        return true
-    end
-
-    local PassiveTradePromptGateAvailable = installPassiveTradePromptGate()
-
-    if Remote.tradeOfferReceived then
-        Remote.tradeOfferReceived.OnClientEvent:Connect(function(sender)
-            if not S.Trading.AutoAccept or Service.LocalPlayer:GetAttribute("IsTrading") == true then return end
-            S_Trade.PendingIncoming = true
-            -- In supported executors the game controller accepts through the
-            -- resolved prompt gate above.  A direct remote fallback keeps auto
-            -- accept functional on minimal executors, but cannot promise that
-            -- their stock Prompt GUI will remain invisible.
-            if not PassiveTradePromptGateAvailable then
-                task.spawn(function()
-                    local ok, accepted = pcall(function()
-                        return Remote.tradeAcceptOffer:InvokeServer(sender)
-                    end)
-                    if not ok or accepted == false then S_Trade.PendingIncoming = false end
-                end)
-            end
-        end)
-    end
-
     -- ====== SELECT PLAYER ======
     local TradingPlayerSection = UI.Window:AddCollapsible(UI.TradingTab, "Select Player", false)
 
@@ -7396,6 +7369,10 @@ do
     UI.Window:AddToggle(AutoAcceptSection, "Auto Accept & Confirm Trade", "", false,
         function(state)
             S.Trading.AutoAccept = state
+            -- The controller hook is already installed before the UI exists;
+            -- this assignment is all that is needed for both a manual toggle
+            -- and a later Gen2 autoload callback.
+            TradeOfferGate.Enabled = state == true
         end, "Toggle_Trade_AutoAccept")
 
     -- Shop is created first; Quest is therefore placed immediately after it.
