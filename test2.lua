@@ -3718,7 +3718,9 @@ end)
 S.setParagraphText = function(para, text)
     if not para then return end
     text = tostring(text or "")
-    if type(para) == "table" and para.Set then
+    if type(para) == "table" and para.SetDesc then
+        pcall(function() para:SetDesc(text) end)
+    elseif type(para) == "table" and para.Set then
         pcall(function() para:Set(text) end)
     else
         pcall(function()
