@@ -5880,7 +5880,7 @@ do
         table.sort(nameOrder)
         local displayList = {}
         for _, name in ipairs(nameOrder) do
-            table.insert(displayList, name .. " x" .. nameCount[name])
+            table.insert(displayList, "x" .. nameCount[name] .. " " .. name)
         end
         return displayList, uuidMap
     end
@@ -5917,7 +5917,7 @@ do
         table.sort(stoneOrder)
         local displayList = {}
         for _, name in ipairs(stoneOrder) do
-            table.insert(displayList, name .. " x" .. stoneCount[name])
+            table.insert(displayList, "x" .. stoneCount[name] .. " " .. name)
         end
         return displayList, uuidMap
     end
@@ -6336,7 +6336,7 @@ do
                     S.Trading.ByName_Running = false
                     return
                 end
-                local cleanName = (S.Trading.ByName_Item:match("^(.+) x%d+$") or S.Trading.ByName_Item)
+                local cleanName = (S.Trading.ByName_Item:match("^x%d+ (.+)$") or S.Trading.ByName_Item)
                 runTradeLoop({
                     getItemsFn = function()
                         -- Re-scan inventory tiap batch — cegah stale UUID dari item yang sudah ditrade
@@ -6476,7 +6476,7 @@ do
                     S.Trading.ByStone_Running = false
                     return
                 end
-                local cleanName = (S.Trading.ByStone_Stone:match("^(.+) x%d+$") or S.Trading.ByStone_Stone)
+                local cleanName = (S.Trading.ByStone_Stone:match("^x%d+ (.+)$") or S.Trading.ByStone_Stone)
                 runTradeLoop({
                     getItemsFn = function()
                         -- Re-scan inventory tiap batch — cegah stale UUID
