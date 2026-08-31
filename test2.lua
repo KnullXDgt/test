@@ -6382,8 +6382,29 @@ do
                     return
                 end
                 -- Pre-build full list saat toggle ON
-                -- Greedy fill dari semua fish tradable sampai target coins tercapai
-                local byCoinsFullList = getItemsByCoins(S.Trading.ByCoins_Target)
+                -- Kalau user pilih ikan tertentu → greedy dari ikan itu saja sampai >= target
+                -- Kalau "Select Option" → greedy dari semua fish
+                local selectedName = S.Trading.ByCoins_Item
+                local cleanCoinName = selectedName ~= "" and selectedName ~= "Select Option"
+                    and (selectedName:match("^(.+) x%d+$") or selectedName) or nil
+                local byCoinsFullList
+                if cleanCoinName then
+                    local _, freshCoinMap = buildFishDisplayList()
+                    local src = freshCoinMap[cleanCoinName] or {}
+                    -- Hitung SellPrice dari ikan ini lalu ambil secukupnya
+                    byCoinsFullList = {}
+                    local coinTotal = 0
+                    for _, entry in ipairs(src) do
+                        if coinTotal >= S.Trading.ByCoins_Target then break end
+                        local ok2, iData = pcall(Data.ItemUtility.GetItemDataFromItemType, Data.ItemUtility, entry.Category, entry.Id or 0)
+                        local price = ok2 and iData and iData.SellPrice or 0
+                        table.insert(byCoinsFullList, entry)
+                        coinTotal = coinTotal + price
+                    end
+                    if #byCoinsFullList == 0 then byCoinsFullList = src end
+                else
+                    byCoinsFullList = getItemsByCoins(S.Trading.ByCoins_Target)
+                end
                 if #byCoinsFullList == 0 then
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="No tradable fish for target coins!", Color=Color3.fromRGB(255,80,80), Delay=3 })
                     S.Trading.ByCoins_Running = false
