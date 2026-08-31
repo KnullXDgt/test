@@ -1,7 +1,7 @@
 -- ====================================================================
 --                 INSTANT FISHING V2 - CLEAN
 --          Fishing + AutoSell + Auto Small Notification
--- Quest Replion-sync + worker-generation build: 20260831-R14
+-- Quest manual-toggle + Diamond proximity build: 20260831-R15
 -- ====================================================================
 
 -- ====== SERVICES ======
@@ -2731,7 +2731,6 @@ end
 
 UI.Window = UI.Library:CreateWindow({
     Title          = "Orvion Hub",
-    Icon           = "rbxassetid://95126399202412",
     TitleImage     = "rbxassetid://138517423977481",
     Subtitle       = "",
     Badges         = {"v0.1", "Executor: " .. UI.execName},
@@ -5012,6 +5011,37 @@ do
             and (root.Position - target.Position).Magnitude <= (radius or 80)
     end
 
+    S.Quest.getNPC = function(name)
+        local npcFolder = workspace:FindFirstChild("NPC")
+        return npcFolder and npcFolder:FindFirstChild(name) or nil
+    end
+
+    S.Quest.isNearNPC = function(name, radius)
+        local npc = S.Quest.getNPC(name)
+        local character = Service.LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not npc or not root then return false end
+        return (root.Position - npc:GetPivot().Position).Magnitude <= (radius or 12)
+    end
+
+    -- DialogueEnded is the normal controller's choice-confirmation remote.
+    -- Establish actual NPC proximity first, but do not fire the prompt itself:
+    -- that would open a client dialogue UI which a direct remote cannot close.
+    S.Quest.approachDiamondResearcher = function(job, session)
+        local npc = S.Quest.getNPC("Diamond Researcher")
+        local character = Service.LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not npc or not root then return false end
+        if not S.Quest.isNearNPC("Diamond Researcher", 12) then
+            Navigation.tryMoveRoot(root, npc:GetPivot() * CFrame.new(0, 0, 4), false)
+        end
+        local near = S.Quest.waitJob(job, function()
+            return S.Quest.isNearNPC("Diamond Researcher", 12)
+        end, 3, 0.05, session)
+        if near then task.wait(0.2) end -- give server character replication one beat
+        return near and S.Quest.isActive(job, session)
+    end
+
     S.Quest.refreshSellHold = function()
         local count = 0
         for _ in pairs(Runtime.Quest.HoldTokens) do count = count + 1 end
@@ -5408,9 +5438,11 @@ do
         return ok
     end
 
-    -- exchangeItem: dialogueEnded + waitJob progress ack, max 3 retry
-    -- double-fire guard: cek progress sebelum fire
-    S.Quest.exchangeItem = function(job, session, questName, objectiveId, args, entry)
+    -- exchangeItem: dialogueEnded + waitJob progress ack, max 3 retry.
+    -- prepareAction is used by Diamond turn-ins to establish physical NPC
+    -- proximity before the same controller-confirmation remote is sent.
+    S.Quest.exchangeItem = function(
+        job, session, questName, objectiveId, args, entry, prepareAction)
         local before = S.Quest.progress(questName, objectiveId, 1)
         local ok = false
         S.Quest.withSellHold("Exchange:" .. tostring(objectiveId), function()
@@ -5442,6 +5474,7 @@ do
                     break
                 end
                 if not Remote.dialogueEnded then break end
+                if prepareAction and not prepareAction() then break end
                 pcall(function() Remote.dialogueEnded:FireServer(table.unpack(args)) end)
                 local acked = S.Quest.waitJob(job, progressed, 10, 0.1, session)
                 if acked then
@@ -5459,12 +5492,55 @@ do
         return ok
     end
 
-    -- createTranscended: equip secret fish (tier 7) + InvokeServer + wait consumed
-    S.Quest.createTranscended = function(job, session, entry)
+    S.Quest.startDiamondQuest = function(session)
+        if not Remote.dialogueEnded then return false end
+        local started = false
+        S.Quest.withSellHold("Dialogue:DiamondStart", function()
+            return S.Quest.isActive("Diamond", session)
+        end, function()
+            local function isStarted()
+                return S.Quest.getMainline("Diamond Researcher") ~= nil
+                    or S.Quest.isCompleted("Diamond Researcher")
+                    or S.Quest.owns("Diamond Key")
+                    or S.Quest.owns("Diamond Rod")
+            end
+            for attempt = 1, 3 do
+                if not S.Quest.isActive("Diamond", session) then break end
+                if isStarted() then
+                    started = true
+                    S.Quest.refreshFromReplion()
+                    break
+                end
+                if not S.Quest.approachDiamondResearcher("Diamond", session) then
+                    break
+                end
+                pcall(function()
+                    -- NPCQuestGivers: Path 1, Index 2.
+                    Remote.dialogueEnded:FireServer("Diamond Researcher", 1, 2)
+                end)
+                if S.Quest.waitJob("Diamond", isStarted, 8, 0.1, session) then
+                    started = true
+                    S.Quest.refreshFromReplion()
+                    break
+                end
+                if attempt < 3 then task.wait(1) end
+            end
+        end, 12)
+        return started
+    end
+
+    -- createTranscended: wait for both consumption and, when supplied, the
+    -- corresponding Replion quest-progress acknowledgement.  Consumption
+    -- alone is not enough: progress can replicate a frame later.
+    S.Quest.createTranscended = function(
+        job, session, entry, questName, objectiveId, objectiveGoal)
         local uuid = entry and entry.Item and entry.Item.UUID
         if not uuid then return false end
         if not Remote.createTranscended then return false end
         local ok = false
+        local beforeProgress = questName and objectiveId
+            and S.Quest.progress(questName, objectiveId, objectiveGoal or 1)
+            or nil
         S.Quest.withSellHold("Transcended:" .. job, function()
             return S.Quest.isActive(job, session)
         end, function()
@@ -5498,8 +5574,17 @@ do
                 return not S.Quest.hasUUID(uuid)
             end, 4, 0.05, session)
             if consumed then
-                ok = true
-                S.Quest.refreshFromReplion()
+                if beforeProgress == nil then
+                    ok = true
+                else
+                    ok = S.Quest.waitJob(job, function()
+                        return S.Quest.isCompleted(questName)
+                            or S.Quest.progress(
+                                questName, objectiveId, objectiveGoal or 1
+                            ) > beforeProgress
+                    end, 8, 0.05, session)
+                end
+                if ok then S.Quest.refreshFromReplion() end
             end
             S.Quest.restoreQuestItem(uuid, displaced, true, inserted)
         end, 10)
@@ -5743,12 +5828,11 @@ do
 
     S.Quest.completeJob = function(job, session)
         if Runtime.Quest.Sessions[job] ~= session then return end
-        Runtime.Quest.Enabled[job] = false
         if job == "Diamond" then Runtime.Quest.ForcePerfect = false end
-        local toggle = S.Quest.Toggles and S.Quest.Toggles[job]
-        if toggle then
-            task.defer(function() pcall(function() toggle:Set(false) end) end)
-        end
+        -- Completion ends the current runner at its call site, but never
+        -- mutates the user's toggle.  This keeps UI and Enabled state aligned
+        -- and lets the user turn every Quest off manually.
+        S.Quest.refreshFromReplion()
     end
 
     -- A new session may begin immediately after a toggle restart.  The old
@@ -5946,8 +6030,16 @@ do
                     local secret = S.Quest.findSecret()
                     if secret then
                         lastTeleport = nil  -- reset — setelah createTranscended lokasi mungkin berubah
-                        S.Quest.createTranscended("Element", session, secret)
+                        S.Quest.createTranscended(
+                            "Element", session, secret,
+                            "Element Quest", 4, 3)
                     end
+                else
+                    -- Keep the intended farming location while waiting for
+                    -- the level-200 gate; event/manual movement must not
+                    -- strand this phase elsewhere.
+                    targetLoc = S.Quest.get("UnlockedTemple") == true
+                        and "Sacred Temple" or "Ancient Jungle"
                 end
             end
             if targetLoc and (lastTeleport ~= targetLoc
@@ -5981,15 +6073,7 @@ do
             and not S.Quest.owns("Diamond Key")
             and not S.Quest.owns("Diamond Rod")
         do
-            if Remote.dialogueEnded then
-                pcall(function()
-                    Remote.dialogueEnded:FireServer("Diamond Researcher", 1, 2)
-                end)
-                S.Quest.waitJob("Diamond", function()
-                    return S.Quest.getMainline("Diamond Researcher") ~= nil
-                        or S.Quest.owns("Diamond Key")
-                end, 6, 0.1, session)
-            end
+            S.Quest.startDiamondQuest(session)
             task.wait(0.5)
         end
         local lastTeleport = nil  -- cache: cegah teleport spam tiap 0.4s ke lokasi sama
@@ -6039,7 +6123,11 @@ do
                     lastTeleport = nil
                     S.Quest.exchangeItem("Diamond", session,
                         "Diamond Researcher", 4,
-                        {"Diamond Researcher", 2, 1}, ruby)
+                        {"Diamond Researcher", 2, 1}, ruby,
+                        function()
+                            return S.Quest.approachDiamondResearcher(
+                                "Diamond", session)
+                        end)
                 elseif lastTeleport ~= "Treasure Room"
                     or not S.Quest.isNear("Treasure Room", 150)
                 then
@@ -6053,7 +6141,11 @@ do
                     lastTeleport = nil
                     S.Quest.exchangeItem("Diamond", session,
                         "Diamond Researcher", 5,
-                        {"Diamond Researcher", 2, 2}, lochness)
+                        {"Diamond Researcher", 2, 2}, lochness,
+                        function()
+                            return S.Quest.approachDiamondResearcher(
+                                "Diamond", session)
+                        end)
                 elseif lastTeleport ~= "Kohana"
                     or not S.Quest.isNear("Kohana", 150)
                 then
