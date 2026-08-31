@@ -5824,6 +5824,151 @@ do
     end
 
 
+    -- Shop is created first; Trading is placed before Quest.
+    UI.TradingTab = UI.Window:CreateTab("Trading", "rbxassetid://114581487428395")
+
+    -- ====== TRADING STATE ======
+    S.Trading = {
+        TargetPlayer    = "",
+        ByName_Item     = "",
+        ByName_Amount   = 1,
+        ByName_Running  = false,
+        ByRarity_Rarity = "Common",
+        ByRarity_Amount = 1,
+        ByRarity_Running = false,
+        ByStone_Stone   = "",
+        ByStone_Amount  = 1,
+        ByStone_Running = false,
+        ByCoins_Target  = 1000000,
+        ByCoins_Running = false,
+        AutoAccept      = false,
+    }
+
+    -- ====== SELECT PLAYER ======
+    local TradingPlayerSection = UI.Window:AddCollapsible(UI.TradingTab, "Select Player", false)
+
+    local TradingPlayerDropdown = UI.Window:AddDropdown(
+        TradingPlayerSection, "Select Player for Trade", "", {}, false, "Select Option",
+        function(v) S.Trading.TargetPlayer = v end,
+        "Dropdown_Trade_TargetPlayer")
+
+    UI.Window:AddButton(TradingPlayerSection, "Refresh Player", "", "rbxassetid://10088146947",
+        function()
+            local list = {}
+            for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
+                if p ~= game:GetService("Players").LocalPlayer then
+                    table.insert(list, p.Name)
+                end
+            end
+            TradingPlayerDropdown:Set(list)
+        end)
+
+    -- ====== TRADE BY NAME ======
+    local ByNameSection = UI.Window:AddCollapsible(UI.TradingTab, "Trade by Name", false)
+
+    local ByNameStatusPara = UI.Window:AddParagraph(ByNameSection, "Trade Status", "Waiting...")
+
+    local ByNameDropdown = UI.Window:AddDropdown(
+        ByNameSection, "Select Item", "", {}, false, "Select Option",
+        function(v) S.Trading.ByName_Item = v end,
+        "Dropdown_Trade_ByName_Item")
+
+    UI.Window:AddInput(ByNameSection, "Set Amount", "", "1",
+        function(v) S.Trading.ByName_Amount = tonumber(v) or 1 end,
+        "Input_Trade_ByName_Amount")
+
+    UI.Window:AddButton(ByNameSection, "Refresh Fish Name", "", "rbxassetid://10088146947",
+        function()
+            -- TODO: implement fish name list from inventory
+        end)
+
+    UI.Window:AddToggle(ByNameSection, "Start Trade by Name", "", false,
+        function(state)
+            S.Trading.ByName_Running = state
+            -- TODO: implement trade loop
+        end, "Toggle_Trade_ByName")
+
+    -- ====== TRADE BY RARITIES ======
+    local ByRaritySection = UI.Window:AddCollapsible(UI.TradingTab, "Trade by Rarities", false)
+
+    local ByRarityStatusPara = UI.Window:AddParagraph(ByRaritySection, "Trade Status", "Waiting...")
+
+    UI.Window:AddDropdown(
+        ByRaritySection, "Select Rarity", "",
+        {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Secret","Forgotten"},
+        false, "Common",
+        function(v) S.Trading.ByRarity_Rarity = v end,
+        "Dropdown_Trade_ByRarity_Rarity")
+
+    UI.Window:AddInput(ByRaritySection, "Set Amount", "", "1",
+        function(v) S.Trading.ByRarity_Amount = tonumber(v) or 1 end,
+        "Input_Trade_ByRarity_Amount")
+
+    UI.Window:AddToggle(ByRaritySection, "Start Trade by Rarities", "", false,
+        function(state)
+            S.Trading.ByRarity_Running = state
+            -- TODO: implement trade loop
+        end, "Toggle_Trade_ByRarity")
+
+    -- ====== TRADE ENCHANT STONE ======
+    local ByStoneSection = UI.Window:AddCollapsible(UI.TradingTab, "Trade Enchant Stone", false)
+
+    local ByStoneStatusPara = UI.Window:AddParagraph(ByStoneSection, "Trade Status", "Waiting...")
+
+    local ByStoneDropdown = UI.Window:AddDropdown(
+        ByStoneSection, "Select Stone", "", {}, false, "Select Option",
+        function(v) S.Trading.ByStone_Stone = v end,
+        "Dropdown_Trade_ByStone_Stone")
+
+    UI.Window:AddInput(ByStoneSection, "Set Amount", "", "1",
+        function(v) S.Trading.ByStone_Amount = tonumber(v) or 1 end,
+        "Input_Trade_ByStone_Amount")
+
+    UI.Window:AddButton(ByStoneSection, "Check Enchant Stones", "", "rbxassetid://10088146947",
+        function()
+            -- TODO: implement stone list from inventory
+        end)
+
+    UI.Window:AddToggle(ByStoneSection, "Start Trade by Enchant Stone", "", false,
+        function(state)
+            S.Trading.ByStone_Running = state
+            -- TODO: implement trade loop
+        end, "Toggle_Trade_ByStone")
+
+    -- ====== TRADE BY COINS ======
+    local ByCoinsSection = UI.Window:AddCollapsible(UI.TradingTab, "Trade by Coins", false)
+
+    local ByCoinsStatusPara = UI.Window:AddParagraph(ByCoinsSection, "Trade Status", "Waiting...")
+
+    local ByCoinsDropdown = UI.Window:AddDropdown(
+        ByCoinsSection, "Select Item", "", {}, false, "Select Option",
+        function(v) S.Trading.ByCoins_Item = v end,
+        "Dropdown_Trade_ByCoins_Item")
+
+    UI.Window:AddInput(ByCoinsSection, "Set Amount", "", "1",
+        function(v) S.Trading.ByCoins_Target = tonumber(v) or 1000000 end,
+        "Input_Trade_ByCoins_Target")
+
+    UI.Window:AddButton(ByCoinsSection, "Refresh Fish Name", "", "rbxassetid://10088146947",
+        function()
+            -- TODO: implement fish name list from inventory
+        end)
+
+    UI.Window:AddToggle(ByCoinsSection, "Start Trade by Coins", "", false,
+        function(state)
+            S.Trading.ByCoins_Running = state
+            -- TODO: implement trade loop
+        end, "Toggle_Trade_ByCoins")
+
+    -- ====== AUTO ACCEPT TRADE ======
+    local AutoAcceptSection = UI.Window:AddCollapsible(UI.TradingTab, "Auto Accept Trade", false)
+
+    UI.Window:AddToggle(AutoAcceptSection, "Auto Accept & Confirm Trade", "", false,
+        function(state)
+            S.Trading.AutoAccept = state
+            -- TODO: implement auto accept logic
+        end, "Toggle_Trade_AutoAccept")
+
     -- Shop is created first; Quest is therefore placed immediately after it.
     UI.QuestTab = UI.Window:CreateTab("Quest", "rbxassetid://13436029894")
 
