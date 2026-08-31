@@ -144,55 +144,55 @@ local Data = {
     Events = nil, -- lazy-loaded saat weather feature dipakai
 }
 
--- Install before the UI and all workers.  TradeOfferController owns the
--- offer queue and calls PopUp only after it has stored the sender internally.
--- Intercepting this controller boundary prevents PromptController and its GUI
--- from ever being reached, while AcceptTrade retains the game's own remote
--- call and queue cleanup.
-local TradeOfferGate = (type(getgenv) == "function" and getgenv() or _G).__OrvionTradeOfferGate
-if type(TradeOfferGate) ~= "table" then
-    TradeOfferGate = {}
-    (type(getgenv) == "function" and getgenv() or _G).__OrvionTradeOfferGate = TradeOfferGate
+-- Trade Offer UI suppression: the game controller is subscribed directly to
+-- TradeOfferReceived.  Disable its existing connection before creating the
+-- Orvion listener, then accept through the same remote immediately.  No GUI
+-- scan/click and no controller-method hook are involved.
+local TradeOfferRouter = (type(getgenv) == "function" and getgenv() or _G).__OrvionTradeOfferRouter
+if type(TradeOfferRouter) ~= "table" then
+    TradeOfferRouter = {}
+    (type(getgenv) == "function" and getgenv() or _G).__OrvionTradeOfferRouter = TradeOfferRouter
 end
-TradeOfferGate.Enabled = false
+TradeOfferRouter.Enabled = false
+if TradeOfferRouter.Connection then
+    pcall(function() TradeOfferRouter.Connection:Disconnect() end)
+    TradeOfferRouter.Connection = nil
+end
 
-local function installTradeOfferGate()
-    if TradeOfferGate.Installed then return TradeOfferGate.Available == true end
-    TradeOfferGate.Installed = true
-    TradeOfferGate.Available = false
-    if type(hookfunction) ~= "function" then return false end
-
-    local controllers = Service.ReplicatedStorage:FindFirstChild("Controllers")
-    local controllerModule = controllers and controllers:FindFirstChild("TradeOfferController")
-    if not controllerModule then return false end
-
-    local ok, controller = pcall(require, controllerModule)
-    if not ok or type(controller) ~= "table" or type(controller.PopUp) ~= "function"
-        or type(controller.AcceptTrade) ~= "function"
-    then return false end
-
-    local originalPopUp
-    local wrap = type(newcclosure) == "function" and newcclosure or function(fn) return fn end
-    local hooked = pcall(function()
-        originalPopUp = hookfunction(controller.PopUp, wrap(function(self, sender)
-            if TradeOfferGate.Enabled == true then
-                -- The controller has already assigned sender to its private
-                -- pending field.  Its own AcceptTrade clears that field and
-                -- invokes AcceptTradeOffer before any prompt is constructed.
-                return self:AcceptTrade()
+local function installTradeOfferRouter()
+    if not Remote.tradeOfferReceived then return end
+    if type(getconnections) == "function" then
+        -- The controller is normally already connected.  A tiny bounded retry
+        -- covers executors that run this script during the final game-loader
+        -- frames, without leaving a permanent polling task behind.
+        for attempt = 1, 12 do
+            local found = false
+            local ok, connections = pcall(getconnections,
+                Remote.tradeOfferReceived.OnClientEvent)
+            if ok and type(connections) == "table" then
+                for _, connection in ipairs(connections) do
+                    found = true
+                    pcall(function() connection:Disable() end)
+                end
             end
-            return originalPopUp(self, sender)
-        end))
+            if found then break end
+            if attempt < 12 then task.wait(0.05) end
+        end
+    end
+
+    TradeOfferRouter.Connection = Remote.tradeOfferReceived.OnClientEvent:Connect(function(sender)
+        if TradeOfferRouter.Enabled == true
+            and Service.LocalPlayer:GetAttribute("IsTrading") ~= true
+        then
+            pcall(function() Remote.tradeAcceptOffer:InvokeServer(sender) end)
+        end
     end)
-    if not hooked or type(originalPopUp) ~= "function" then return false end
-    TradeOfferGate.Available = true
-    return true
 end
 
-installTradeOfferGate()
+installTradeOfferRouter()
 
--- The gate must not wait behind the player-data replication.  Everything
--- below may yield normally after the controller hook already exists.
+-- The offer router is installed before player-data replication; everything
+-- below may yield normally after the game UI connection has been disabled.
 Data.Player = Data.Replion.Client:WaitReplion("Data")
 Data.ItemUtility = require(Service.ReplicatedStorage.Shared.ItemUtility)
 Data.FishingConstants = require(Service.ReplicatedStorage.Shared.Constants)
@@ -7369,10 +7369,7 @@ do
     UI.Window:AddToggle(AutoAcceptSection, "Auto Accept & Confirm Trade", "", false,
         function(state)
             S.Trading.AutoAccept = state
-            -- The controller hook is already installed before the UI exists;
-            -- this assignment is all that is needed for both a manual toggle
-            -- and a later Gen2 autoload callback.
-            TradeOfferGate.Enabled = state == true
+            TradeOfferRouter.Enabled = state == true
         end, "Toggle_Trade_AutoAccept")
 
     -- Shop is created first; Quest is therefore placed immediately after it.
