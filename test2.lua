@@ -6321,7 +6321,7 @@ do
                     table.insert(list, p.Name)
                 end
             end
-            TradingPlayerDropdown:SetValues(list)
+            TradingPlayerDropdown:Refresh(list, nil)
         end)
 
     -- ====== TRADE BY NAME ======
@@ -6343,7 +6343,7 @@ do
         function()
             local displayList, uuidMap = buildFishDisplayList()
             ByNameUUIDMap = uuidMap
-            ByNameDropdown:SetValues(displayList)
+            ByNameDropdown:Refresh(displayList, nil)
         end)
 
     UI.Window:AddToggle(ByNameSection, "Start Trade by Name", "", false,
@@ -6486,7 +6486,7 @@ do
         function()
             local displayList, uuidMap = buildStoneDisplayList()
             ByStoneUUIDMap = uuidMap
-            ByStoneDropdown:SetValues(displayList)
+            ByStoneDropdown:Refresh(displayList, nil)
         end)
 
     UI.Window:AddToggle(ByStoneSection, "Start Trade by Enchant Stone", "", false,
