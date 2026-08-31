@@ -1,8 +1,7 @@
--- Orvion delivery build: Trading + Quest audit R11 (2026-08-31)
 -- ====================================================================
 --                 INSTANT FISHING V2 - CLEAN
 --          Fishing + AutoSell + Auto Small Notification
--- Quest workers + Elemental Event race-fix build: 20260831-R6
+-- Quest Replion-sync + worker-generation build: 20260831-R14
 -- ====================================================================
 
 -- ====== SERVICES ======
@@ -77,10 +76,13 @@ Remote.createTranscended = Remote.Resolve("RF/CreateTranscendedStone")
 
 -- Trading remotes
 Remote.tradeSendOffer     = Remote.Resolve("RF/Trading/SendTradeOffer")
+Remote.tradeAcceptOffer   = Remote.Resolve("RF/Trading/AcceptTradeOffer")
+Remote.tradeDeclineOffer  = Remote.Resolve("RF/Trading/DeclineTradeOffer")
 Remote.tradeAddItem       = Remote.Resolve("RF/Trading/AddItem")
 Remote.tradeSetReady      = Remote.Resolve("RF/Trading/SetReady")
 Remote.tradeConfirm       = Remote.Resolve("RF/Trading/ConfirmTrade")
 Remote.tradeCancel        = Remote.Resolve("RF/Trading/CancelTrade")
+Remote.tradeOfferReceived = Remote.Resolve("RE/Trading/TradeOfferReceived")
 Remote.tradeStarted       = Remote.Resolve("RE/Trading/TradeStarted")
 Remote.tradeEnded         = Remote.Resolve("RE/Trading/TradeEnded")
 Remote.tradeCompleted     = Remote.Resolve("RE/Trading/TradeCompleted")
@@ -245,6 +247,7 @@ local Runtime = {
     Quest = {
         Enabled = {},       -- [jobName]=true/false per toggle
         Threads = {},       -- [jobName]=thread handle
+        ThreadSessions = {},-- session currently owned by each thread handle
         Sessions = {},      -- generation per toggle; invalidates stale tasks
         SellHold = 0,       -- derived from HoldTokens; never force-reset
         HoldTokens = {},
@@ -1717,21 +1720,30 @@ end
 
 -- ====== SUPPORT FEATURES FUNCTIONS ======
 
+-- The EquippedId listener intentionally ignores an empty hand while a quest
+-- transaction owns it. A transaction can finish after the only EquipId change
+-- has already happened, so recheck after the owner releases it.
+SupportState.recheckAutoEquipRod = function(delay)
+    task.spawn(function()
+        if delay and delay > 0 then task.wait(delay) end
+        if not SupportState.autoEquipRodEnabled
+            or Runtime.Quest.SellHold > 0
+            or Runtime.Quest.Action.Busy
+            or Runtime.Sell.Busy
+            or FishingModes.Active
+        then return end
+        local equipped = Data.Player:Get("EquippedId")
+        if not equipped or equipped == "" then
+            pcall(function() Remote.equipTool:FireServer(1) end)
+        end
+    end)
+end
+
 SupportState.setAutoEquipRod = function(state)
     if SupportState.autoEquipRodConn then SupportState.autoEquipRodConn:Disconnect() SupportState.autoEquipRodConn = nil end
+    SupportState.autoEquipRodEnabled = state == true
     if state then
-        -- Cek sekarang dulu
-        if Runtime.Quest.SellHold == 0
-            and not Runtime.Quest.Action.Busy
-            and not FishingModes.Active
-        then
-            pcall(function()
-                local equipped = Data.Player:Get("EquippedId")
-                if not equipped or equipped == "" then
-                    Remote.equipTool:FireServer(1)
-                end
-            end)
-        end
+        SupportState.recheckAutoEquipRod()
         -- Event-driven: tiap EquippedId kosong → pasang rod
         -- task.spawn+wait(0.1): debounce supaya tidak flicker saat EquippedId bounce cepat
         SupportState.autoEquipRodConn = Data.Player:OnChange("EquippedId", function(value)
@@ -1740,17 +1752,7 @@ SupportState.setAutoEquipRod = function(state)
                     or Runtime.Quest.Action.Busy
                     or Runtime.Sell.Busy or FishingModes.Active
                 then return end
-                task.spawn(function()
-                    task.wait(0.3)
-                    if Runtime.Quest.SellHold > 0
-                        or Runtime.Quest.Action.Busy
-                        or Runtime.Sell.Busy or FishingModes.Active
-                    then return end
-                    local current = Data.Player:Get("EquippedId")
-                    if not current or current == "" then
-                        pcall(function() Remote.equipTool:FireServer(1) end)
-                    end
-                end)
+                SupportState.recheckAutoEquipRod(0.3)
             end
         end)
     end
@@ -4804,7 +4806,8 @@ do
             -0.703928888,-9.02597677e-08,0.710270464,
             -9.39578726e-08,1,3.39590471e-08,
             -0.710270464,-4.28307452e-08,-0.703928888),
-        ItemTypes = {"Fish", "Gears", "Fishing Rods", "Enchant Stones"},
+        -- Artifacts are their own item type in the item-data resolver.
+        ItemTypes = {"Fish", "Gears", "Fishing Rods", "Enchant Stones", "Artifacts"},
         ItemDataCache = {},
         KnownIds = {
             ["Arrow Artifact"]=265, ["Crescent Artifact"]=266,
@@ -4857,6 +4860,8 @@ do
             if type(items) == "table" then
                 for _, item in ipairs(items) do
                     if type(item) == "table" and item.Id ~= nil then
+                        -- Id values are not globally unique across all
+                        -- inventory collections; cache by collection + Id.
                         local cacheKey = tostring(category) .. ":" .. tostring(item.Id)
                         local itemData = S.Quest.ItemDataCache[cacheKey]
                         local resolvedCategory = category
@@ -4912,20 +4917,6 @@ do
     S.Quest.findByName = function(name)
         local id = S.Quest.KnownIds[name]
         local resolvedType = nil
-        if id then
-            -- A numeric Id can exist in more than one inventory category.
-            -- Confirm both the type and display name before using a hardcoded Id.
-            for _, itemType in ipairs(S.Quest.ItemTypes) do
-                local itemData = nil
-                pcall(function()
-                    itemData = Data.ItemUtility.GetItemDataFromItemType(itemType, id)
-                end)
-                if itemData and itemData.Data and itemData.Data.Name == name then
-                    resolvedType = itemType
-                    break
-                end
-            end
-        end
         if not id then
             for _, itemType in ipairs(S.Quest.ItemTypes) do
                 local itemData = nil
@@ -4991,6 +4982,13 @@ do
             task.wait(interval or 0.1)
         end
         return false
+    end
+
+    -- All Quest panels are a read-only projection of Replion.  Action code
+    -- calls this immediately after an acknowledgement, while OnChange below
+    -- covers acknowledgements that arrive outside a worker.
+    S.Quest.refreshFromReplion = function()
+        Runtime.Quest.RefreshPanels()
     end
 
     -- teleport helper tanpa LastLocation tracking
@@ -5099,6 +5097,11 @@ do
         Runtime.Quest.Action.Owner = nil
         Runtime.Quest.Action.HoldToken = nil
         S.Quest.removeHold(holdToken)
+        -- Auto Equip deliberately stayed quiet while Action.Busy was true.
+        -- Recover once the temporary quest item has been restored/consumed.
+        if SupportState.recheckAutoEquipRod then
+            SupportState.recheckAutoEquipRod(0.2)
+        end
         return true
     end
 
@@ -5120,7 +5123,7 @@ do
 
     -- Smart hotbar used only while the caller owns Quest.Action.
     -- Slot 1 is never evicted because Fish It always keeps a rod there.
-    S.Quest.equipQuestItem = function(job, session, uuid, itemType)
+    S.Quest.equipQuestItem = function(job, session, uuid, itemType, fallbackTypes)
         local wanted = tostring(uuid or "")
         if wanted == "" or not Remote.equipItem or not Remote.equipTool
             or not Remote.unequipItem
@@ -5138,46 +5141,60 @@ do
         local slot = table.find(hotbar, wanted)
         local inserted = slot == nil
         local displaced = nil
-        if not slot then
-            pcall(function() Remote.equipItem:FireServer(uuid, itemType) end)
-            deadline = os.clock() + 0.8
-            while os.clock() < deadline and S.Quest.isActive(job, session) do
-                hotbar = Data.Player:Get("EquippedItems") or {}
-                slot = table.find(hotbar, wanted)
-                if slot then break end
-                task.wait(0.05)
+        local function insertIntoHotbar()
+            local tried = {}
+            local types = {itemType}
+            for _, fallback in ipairs(fallbackTypes or {}) do
+                table.insert(types, fallback)
             end
+            for _, candidate in ipairs(types) do
+                candidate = tostring(candidate or "")
+                if candidate ~= "" and not tried[candidate] then
+                    tried[candidate] = true
+                    pcall(function()
+                        Remote.equipItem:FireServer(uuid, candidate)
+                    end)
+                    deadline = os.clock() + 1.2
+                    while os.clock() < deadline
+                        and S.Quest.isActive(job, session)
+                    do
+                        hotbar = Data.Player:Get("EquippedItems") or {}
+                        slot = table.find(hotbar, wanted)
+                        if slot then return true end
+                        task.wait(0.05)
+                    end
+                end
+            end
+            return false
+        end
+        if not slot then
+            insertIntoHotbar()
         end
         if not slot then
             hotbar = Data.Player:Get("EquippedItems") or {}
-            for index = #hotbar, 2, -1 do
-                local evictUUID = hotbar[index]
-                local entry = evictUUID and S.Quest.findByUUID(evictUUID)
-                if entry and not (entry.Data
-                    and entry.Data.Type == "Fishing Rods")
-                then
-                    displaced = entry
-                    pcall(function()
-                        Remote.unequipItem:FireServer(evictUUID)
-                    end)
-                    deadline = os.clock() + 1.5
-                    while os.clock() < deadline
-                        and S.Quest.isActive(job, session)
-                        and table.find(Data.Player:Get("EquippedItems") or {},
-                            tostring(evictUUID))
-                    do task.wait(0.05) end
-                    break
+            if not displaced then
+                for index = #hotbar, 2, -1 do
+                    local evictUUID = hotbar[index]
+                    local entry = evictUUID and S.Quest.findByUUID(evictUUID)
+                    if entry and not (entry.Data
+                        and entry.Data.Type == "Fishing Rods")
+                    then
+                        displaced = entry
+                        pcall(function()
+                            Remote.unequipItem:FireServer(evictUUID)
+                        end)
+                        deadline = os.clock() + 1.5
+                        while os.clock() < deadline
+                            and S.Quest.isActive(job, session)
+                            and table.find(Data.Player:Get("EquippedItems") or {},
+                                tostring(evictUUID))
+                        do task.wait(0.05) end
+                        break
+                    end
                 end
             end
             if not displaced then return false, nil, inserted end
-            pcall(function() Remote.equipItem:FireServer(uuid, itemType) end)
-            deadline = os.clock() + 1.5
-            while os.clock() < deadline and S.Quest.isActive(job, session) do
-                hotbar = Data.Player:Get("EquippedItems") or {}
-                slot = table.find(hotbar, wanted)
-                if slot then break end
-                task.wait(0.05)
-            end
+            insertIntoHotbar()
         end
         if not slot then return false, displaced, inserted end
         for _ = 1, 3 do
@@ -5193,8 +5210,40 @@ do
                 end
                 task.wait(0.05)
             end
+            -- Some hotbar states keep the currently held fish/stone despite
+            -- a normal UnequipTool. Remove that non-rod blocker once, retry
+            -- the target, then restore it in restoreQuestItem afterwards.
+            local blockerUUID = tostring(Data.Player:Get("EquippedId") or "")
+            if blockerUUID ~= "" and blockerUUID ~= wanted and not displaced then
+                local blocker = S.Quest.findByUUID(blockerUUID)
+                if blocker and not (blocker.Data
+                    and blocker.Data.Type == "Fishing Rods")
+                    and table.find(Data.Player:Get("EquippedItems") or {}, blockerUUID)
+                then
+                    displaced = blocker
+                    pcall(function() Remote.unequipItem:FireServer(blockerUUID) end)
+                    deadline = os.clock() + 1.5
+                    while os.clock() < deadline
+                        and S.Quest.isActive(job, session)
+                        and table.find(Data.Player:Get("EquippedItems") or {}, blockerUUID)
+                    do task.wait(0.05) end
+                end
+            end
         end
         return false, displaced, inserted
+    end
+
+    S.Quest.getHotbarRodSlot = function()
+        local hotbar = Data.Player:Get("EquippedItems") or {}
+        for slot, uuid in ipairs(hotbar) do
+            local entry = S.Quest.findByUUID(uuid)
+            if entry and entry.Data and entry.Data.Type == "Fishing Rods" then
+                return slot, tostring(uuid)
+            end
+        end
+        -- Fish It reserves slot one for a rod; this also covers a one-frame
+        -- item-data replication delay.
+        return hotbar[1] and 1 or nil, hotbar[1] and tostring(hotbar[1]) or nil
     end
 
     S.Quest.restoreQuestItem = function(
@@ -5222,8 +5271,22 @@ do
             do task.wait(0.05) end
         end
         if restoreRod and Remote.equipTool then
-            local slotOne = (Data.Player:Get("EquippedItems") or {})[1]
-            if slotOne then pcall(function() Remote.equipTool:FireServer(1) end) end
+            -- A consumed lever can update EquippedItems one frame later.
+            -- Re-resolve the rod instead of assuming the first read is valid.
+            for _ = 1, 3 do
+                local rodSlot, rodUUID = S.Quest.getHotbarRodSlot()
+                if rodSlot then
+                    pcall(function() Remote.equipTool:FireServer(rodSlot) end)
+                    local deadline = os.clock() + 0.8
+                    while os.clock() < deadline do
+                        if tostring(Data.Player:Get("EquippedId") or "") == rodUUID then
+                            return
+                        end
+                        task.wait(0.05)
+                    end
+                end
+                task.wait(0.1)
+            end
         end
     end
 
@@ -5306,24 +5369,38 @@ do
         end, function()
             entry = S.Quest.findByUUID(uuid)
             if not entry then return end
-            local itemType = entry.Data and entry.Data.Type
-                or entry.Category or "Items"
+            -- Artifact data may arrive one replication frame after Inventory.
+            -- Try its known type before the raw collection fallback.
+            local itemType = entry.Data and entry.Data.Type or "Artifacts"
+            local fallbackTypes = {"Artifacts", "Items"}
+            if entry.Category then table.insert(fallbackTypes, 1, entry.Category) end
             local held, displaced, inserted = S.Quest.equipQuestItem(
-                job, session, uuid, itemType)
+                job, session, uuid, itemType,
+                fallbackTypes)
             if not held then
                 S.Quest.restoreQuestItem(uuid, displaced, true, inserted)
                 return
             end
+            local function isPlaced()
+                local state = S.Quest.get(stateKey) or {}
+                return state[typeName] == true
+            end
             for attempt = 1, 3 do
                 if not S.Quest.isActive(job, session) then break end
-                local state = S.Quest.get(stateKey) or {}
-                if state[typeName] == true then ok = true; break end
+                -- Re-read Replion before every retry.  Once the server has
+                -- acknowledged this item, no later retry may fire the remote.
+                if isPlaced() then
+                    ok = true
+                    S.Quest.refreshFromReplion()
+                    break
+                end
                 pcall(function() remote:FireServer(typeName) end)
-                local acked = S.Quest.waitJob(job, function()
-                    local current = S.Quest.get(stateKey) or {}
-                    return current[typeName] == true
-                end, 8, 0.1, session)
-                if acked then ok = true; break end
+                local acked = S.Quest.waitJob(job, isPlaced, 8, 0.1, session)
+                if acked then
+                    ok = true
+                    S.Quest.refreshFromReplion()
+                    break
+                end
                 if attempt < 3 then task.wait(1) end
             end
             S.Quest.restoreQuestItem(uuid, displaced, true, inserted)
@@ -5353,18 +5430,25 @@ do
                     return
                 end
             end
+            local function progressed()
+                return S.Quest.progress(questName, objectiveId, 1) > before
+                    or S.Quest.isCompleted(questName)
+            end
             for attempt = 1, 3 do
                 if not S.Quest.isActive(job, session) then break end
-                if S.Quest.progress(questName, objectiveId, 1) > before
-                    or S.Quest.isCompleted(questName)
-                then ok = true; break end
+                if progressed() then
+                    ok = true
+                    S.Quest.refreshFromReplion()
+                    break
+                end
                 if not Remote.dialogueEnded then break end
                 pcall(function() Remote.dialogueEnded:FireServer(table.unpack(args)) end)
-                local acked = S.Quest.waitJob(job, function()
-                    return S.Quest.progress(questName, objectiveId, 1) > before
-                        or S.Quest.isCompleted(questName)
-                end, 10, 0.1, session)
-                if acked then ok = true; break end
+                local acked = S.Quest.waitJob(job, progressed, 10, 0.1, session)
+                if acked then
+                    ok = true
+                    S.Quest.refreshFromReplion()
+                    break
+                end
                 if attempt < 3 then task.wait(2) end
             end
             if heldUUID then
@@ -5413,7 +5497,10 @@ do
             local consumed = S.Quest.waitJob(job, function()
                 return not S.Quest.hasUUID(uuid)
             end, 4, 0.05, session)
-            if consumed then ok = true end
+            if consumed then
+                ok = true
+                S.Quest.refreshFromReplion()
+            end
             S.Quest.restoreQuestItem(uuid, displaced, true, inserted)
         end, 10)
         return ok
@@ -5454,20 +5541,28 @@ do
                 S.Quest.restoreQuestItem(uuid, displaced, true, inserted)
                 return
             end
+            local function isPlaced()
+                local state = S.Quest.get("RuinPressurePlates") or {}
+                return state[definition.Name] == true
+            end
             for attempt = 1, 3 do
                 if not S.Quest.isActive(job, session) then break end
-                local plates = S.Quest.get("RuinPressurePlates") or {}
-                if plates[definition.Name] == true then ok = true; break end
+                if isPlaced() then
+                    ok = true
+                    S.Quest.refreshFromReplion()
+                    break
+                end
                 if Remote.placePressure then
                     pcall(function()
                         Remote.placePressure:FireServer(definition.Name)
                     end)
                 end
-                local acked = S.Quest.waitJob(job, function()
-                    local state = S.Quest.get("RuinPressurePlates") or {}
-                    return state[definition.Name] == true
-                end, 8, 0.1, session)
-                if acked then ok = true; break end
+                local acked = S.Quest.waitJob(job, isPlaced, 8, 0.1, session)
+                if acked then
+                    ok = true
+                    S.Quest.refreshFromReplion()
+                    break
+                end
                 if attempt < 3 then task.wait(1) end
             end
             if ok then
@@ -5547,7 +5642,10 @@ do
             local received = S.Quest.waitJob(job, function()
                 return S.Quest.owns("Diamond Rod")
             end, 8, 0.1, session)
-            if received then ok = true end
+            if received then
+                ok = true
+                S.Quest.refreshFromReplion()
+            end
             S.Quest.restoreQuestItem(
                 uuid, displaced, not received, inserted)
             if received then
@@ -5653,20 +5751,26 @@ do
         end
     end
 
-    -- startJobThread: one worker per job; sessions retire old workers safely.
+    -- A new session may begin immediately after a toggle restart.  The old
+    -- session is already invalid because isActive checks its generation; it
+    -- must never block its replacement from starting.
     S.Quest.startJobThread = function(job, fn, session)
         local existing = Runtime.Quest.Threads[job]
-        if existing then
+        if existing and Runtime.Quest.ThreadSessions[job] == session then
             return false
         end
         local thread = nil
         thread = task.spawn(function()
             pcall(fn, session)
-            if Runtime.Quest.Threads[job] == thread then
+            if Runtime.Quest.Threads[job] == thread
+                and Runtime.Quest.ThreadSessions[job] == session
+            then
                 Runtime.Quest.Threads[job] = nil
+                Runtime.Quest.ThreadSessions[job] = nil
             end
         end)
         Runtime.Quest.Threads[job] = thread
+        Runtime.Quest.ThreadSessions[job] = session
         return true
     end
 
@@ -5699,12 +5803,10 @@ do
                                     task.wait(0.15)
                                 end
                             end
-                            local placed = S.Quest.placeStateItem(
+                            lastTeleport = nil
+                            S.Quest.placeStateItem(
                                 "Artifact", session, Remote.placeLever,
                                 "TempleLevers", definition.Type)
-                            -- Do not discard the cache after a failed attempt:
-                            -- the next 0.4s pass is already at this lever.
-                            if placed then lastTeleport = nil end
                         else
                             -- item belum ada → teleport nunggu fishing dapat item
                             if lastTeleport ~= definition.Type
@@ -5789,6 +5891,15 @@ do
             task.wait(2)
         end
         if not S.Quest.isActive("Element", session) then return end
+        -- Artifact OFF must not suppress Element's own Ancient Jungle start
+        -- once Ghostfinn is owned. Do it before waiting for Replion's quest
+        -- state, whose first replication arrives only after the area change.
+        if not S.Quest.getMainline("Element Quest")
+            and not S.Quest.isCompleted("Element Quest")
+            and S.Quest.canNavigate("Element")
+        then
+            S.Quest.teleport("Ancient Jungle")
+        end
         while S.Quest.isActive("Element", session)
             and not S.Quest.getMainline("Element Quest")
             and not S.Quest.isCompleted("Element Quest")
@@ -6101,18 +6212,7 @@ do
         Runtime.Quest.Enabled[job] = true
         startPanelLoop()
         local runner = S.Quest.Runners[job]
-        if runner then
-            if not S.Quest.startJobThread(job, runner, session) then
-                task.spawn(function()
-                    while S.Quest.isActive(job, session)
-                        and Runtime.Quest.Threads[job]
-                    do task.wait(0.05) end
-                    if S.Quest.isActive(job, session) then
-                        S.Quest.startJobThread(job, runner, session)
-                    end
-                end)
-            end
-        end
+        if runner then S.Quest.startJobThread(job, runner, session) end
         return true
     end
 
@@ -6402,6 +6502,7 @@ do
         ActiveSessionId = nil,
         Managed = false,
         PendingOutgoing = false,
+        PendingIncoming = false,
         RequestReady = nil,
         Serial = 0,
     }
@@ -6730,8 +6831,9 @@ do
     -- avoids the startup nil window in the previous auto-accept listener.
     if Remote.tradeStarted then
         Remote.tradeStarted.OnClientEvent:Connect(function(sessionId)
-            local managed = S_Trade.PendingOutgoing or S.Trading.AutoAccept
+            local managed = S_Trade.PendingOutgoing or S_Trade.PendingIncoming or S.Trading.AutoAccept
             S_Trade.PendingOutgoing = false
+            S_Trade.PendingIncoming = false
             task.spawn(function()
                 local replion = nil
                 local elapsed = 0
@@ -6744,57 +6846,68 @@ do
         end)
     end
 
-    -- PromptController is the sole path that queues and renders the generic
-    -- trade-offer popup. Let TradeOfferController continue normally, but give
-    -- only this prompt an immediate "Yes" promise while Auto Accept is on.
-    local promptGateEnv = (type(getgenv) == "function" and getgenv()) or _G
-    local promptGate = promptGateEnv.__OrvionTradePromptGate or {}
-    promptGateEnv.__OrvionTradePromptGate = promptGate
-    promptGate.IsEnabled = function()
-        return S.Trading and S.Trading.AutoAccept == true
-    end
-
-    if not promptGate.Installed and type(hookfunction) == "function" then
-        local ok, promptController = pcall(require,
-            Service.ReplicatedStorage.Controllers.PromptController)
-        local promise = nil
-        pcall(function() promise = require(Service.ReplicatedStorage.Packages.Promise) end)
-        if ok and promptController and promise and type(promptController.FirePrompt) == "function" then
-            local originalFirePrompt
-            local hooked, original = pcall(function()
-                return hookfunction(promptController.FirePrompt, function(self, text, ...)
-                    local normalized = type(text) == "string" and text:lower() or ""
-                    local isTradeOffer = normalized:match("^trade request from .+ do you want to accept%?$") ~= nil
-                    if isTradeOffer and promptGate.IsEnabled and promptGate.IsEnabled() then
-                        return promise.new(function(resolve) resolve(true) end)
+    local function acceptIncomingTradePrompt(sender)
+        -- Prefer the game's own Accept button. Its controller then clears its
+        -- pending prompt state, unlike calling the remote behind its back.
+        local expected = ("trade request from " .. tostring(sender.DisplayName)):lower()
+        local deadline = os.clock() + 1.5
+        repeat
+            local playerGui = Service.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            if playerGui then
+                for _, label in ipairs(playerGui:GetDescendants()) do
+                    local isText = label:IsA("TextLabel") or label:IsA("TextButton")
+                    if isText and tostring(label.Text):lower():find(expected, 1, true) then
+                        local root = label
+                        while root.Parent and root.Parent ~= playerGui do root = root.Parent end
+                        for _, button in ipairs(root:GetDescendants()) do
+                            if button:IsA("TextButton") and button.Visible then
+                                local buttonText = tostring(button.Text):lower()
+                                if buttonText:find("accept", 1, true)
+                                    or buttonText == "yes" or buttonText == "confirm"
+                                then
+                                    local fired = false
+                                    if type(firesignal) == "function" then
+                                        fired = pcall(firesignal, button.Activated)
+                                    end
+                                    if not fired then fired = pcall(function() button:Activate() end) end
+                                    if fired then return true end
+                                end
+                            end
+                        end
                     end
-                    return originalFirePrompt(self, text, ...)
-                end)
-            end)
-            if hooked and type(original) == "function" then
-                originalFirePrompt = original
-                promptGate.Installed = true
+                end
             end
-        end
-    end
-    S.Trading.AutoAcceptSupported = promptGate.Installed == true
-
-    -- ====== SELECT PLAYER ======
-    -- UI Gen2 uses :Refresh(values, default), while older builds exposed
-    -- :SetValues(values). Keep this adapter local to Trading so the three
-    -- dynamic lists work across both revisions.
-    local function refreshTradeDropdown(dropdown, values, defaultValue)
-        if dropdown and type(dropdown.Refresh) == "function" then
-            dropdown:Refresh(values or {}, defaultValue or "Select Option")
-            return true
-        end
-        if dropdown and type(dropdown.SetValues) == "function" then
-            dropdown:SetValues(values or {})
-            return true
-        end
+            task.wait(0.05)
+        until os.clock() >= deadline
         return false
     end
 
+    if Remote.tradeOfferReceived then
+        Remote.tradeOfferReceived.OnClientEvent:Connect(function(sender)
+            if not S.Trading.AutoAccept or Service.LocalPlayer:GetAttribute("IsTrading") == true then return end
+            S_Trade.PendingIncoming = true
+            task.spawn(function()
+                -- The UI controller owns both the popup and its client state.
+                -- Direct remote is only a fallback when that prompt cannot be found.
+                local usedPrompt = acceptIncomingTradePrompt(sender)
+                if usedPrompt then
+                    local waited = 0
+                    while Service.LocalPlayer:GetAttribute("IsTrading") ~= true and waited < 3 do
+                        task.wait(0.05)
+                        waited = waited + 0.05
+                    end
+                end
+                if Service.LocalPlayer:GetAttribute("IsTrading") ~= true then
+                    local ok, accepted = pcall(function()
+                        return Remote.tradeAcceptOffer:InvokeServer(sender)
+                    end)
+                    if not ok or accepted == false then S_Trade.PendingIncoming = false end
+                end
+            end)
+        end)
+    end
+
+    -- ====== SELECT PLAYER ======
     local TradingPlayerSection = UI.Window:AddCollapsible(UI.TradingTab, "Select Player", false)
 
     local TradingPlayerDropdown = UI.Window:AddDropdown(
@@ -6810,7 +6923,7 @@ do
                     table.insert(list, p.Name)
                 end
             end
-            refreshTradeDropdown(TradingPlayerDropdown, list, "Select Option")
+            TradingPlayerDropdown:SetValues(list)
         end)
 
     -- ====== TRADE BY NAME ======
@@ -6832,7 +6945,7 @@ do
         function()
             local displayList, uuidMap = buildFishDisplayList()
             ByNameUUIDMap = uuidMap
-            refreshTradeDropdown(ByNameDropdown, displayList, "Select Option")
+            ByNameDropdown:SetValues(displayList)
         end)
 
     UI.Window:AddToggle(ByNameSection, "Start Trade by Name", "", false,
@@ -6981,7 +7094,7 @@ do
         function()
             local displayList, uuidMap = buildStoneDisplayList()
             ByStoneUUIDMap = uuidMap
-            refreshTradeDropdown(ByStoneDropdown, displayList, "Select Option")
+            ByStoneDropdown:SetValues(displayList)
         end)
 
     UI.Window:AddToggle(ByStoneSection, "Start Trade by Enchant Stone", "", false,
@@ -7047,13 +7160,6 @@ do
 
     UI.Window:AddToggle(AutoAcceptSection, "Auto Accept & Confirm Trade", "", false,
         function(state)
-            if state and not S.Trading.AutoAcceptSupported then
-                S.Trading.AutoAccept = false
-                UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="",
-                    Content="Prompt hook is unavailable on this executor.",
-                    Color=Color3.fromRGB(255,80,80), Delay=3 })
-                return
-            end
             S.Trading.AutoAccept = state
         end, "Toggle_Trade_AutoAccept")
 
@@ -7141,13 +7247,24 @@ do
         S.Quest.CrystallineSection, "Auto Ancient Ruin", "", false,
         function(state) S.Quest.toggleCallback("Crystalline", state) end)
 
+    -- Replion may publish Inventory and quest state in the same frame.  Batch
+    -- the UI writes into one deferred refresh, never a panel polling delay.
+    S.Quest.ReplionRefreshQueued = false
+    S.Quest.queueReplionRefresh = function()
+        if S.Quest.ReplionRefreshQueued then return end
+        S.Quest.ReplionRefreshQueued = true
+        task.defer(function()
+            S.Quest.ReplionRefreshQueued = false
+            S.Quest.refreshFromReplion()
+        end)
+    end
     for _, path in ipairs({
         "Inventory", "Quests", "CompletedQuests", "TempleLevers",
-        "RuinPressurePlates", "UnlockedTemple",
+        "RuinPressurePlates", "UnlockedTemple", "Level", "EquippedId",
     }) do
         pcall(function()
             return Data.Player:OnChange(path, function()
-                task.defer(Runtime.Quest.RefreshPanels)
+                S.Quest.queueReplionRefresh()
             end)
         end)
     end
