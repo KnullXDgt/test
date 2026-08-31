@@ -6066,6 +6066,14 @@ do
         local targetPlayer    = opts.targetPlayer
         local LP              = Service.LocalPlayer
 
+        -- Guard: hanya 1 mode boleh jalan bersamaan
+        if S.Trading.ActiveMode ~= nil and S.Trading.ActiveMode ~= stateKey then
+            UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Stop current trade mode first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
+            S.Trading[stateKey] = false
+            return
+        end
+        S.Trading.ActiveMode = stateKey
+
         local totalSent, retryCount, success, failed = 0, 0, 0, 0
 
         setStatus(statusPara, "Retry: 0 | Success: 0 | Failed: 0 | Sent: 0")
@@ -6148,6 +6156,20 @@ do
                         end
                         S_Trade.IsAddingItems = false
 
+                        -- Inline ready/confirm: sender fire setelah lock 5s
+                        task.spawn(function()
+                            task.wait(5.2)
+                            local readyLoop = 0
+                            while Service.LocalPlayer:GetAttribute("IsTrading") == true and readyLoop < 40 do
+                                pcall(function() Remote.tradeSetReady:InvokeServer(true) end)
+                                task.wait(0.2)
+                                pcall(function() Remote.tradeConfirm:InvokeServer() end)
+                                task.wait(0.5)
+                                readyLoop = readyLoop + 1
+                            end
+                        end)
+
+
                         -- Wait TradeCompleted/TradeEnded (max 45s)
                         local tradeFinished, isSuccess = false, false
                         local endConn, compConn
@@ -6202,6 +6224,7 @@ do
                 S.Trading[stateKey] = false
                 UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Trade done! Sent: " .. totalSent, Color=Color3.fromRGB(150,150,170), Delay=4 })
             end
+            S.Trading.ActiveMode = nil  -- release mode lock
             setStatus(statusPara, "Done -- Retry: " .. retryCount .. " | Success: " .. success .. " | Failed: " .. failed .. " | Sent: " .. totalSent)
         end)
     end
@@ -6254,6 +6277,7 @@ do
         ByCoins_Target  = 1000000,
         ByCoins_Running = false,
         AutoAccept      = false,
+        ActiveMode      = nil,  -- guard: hanya 1 mode boleh jalan
     }
 
     -- ====== SELECT PLAYER ======
@@ -6314,8 +6338,9 @@ do
                 local cleanName = (S.Trading.ByName_Item:match("^(.+) x%d+$") or S.Trading.ByName_Item)
                 runTradeLoop({
                     getItemsFn = function()
-                        local uuids = ByNameUUIDMap[cleanName] or {}
-                        return uuids
+                        -- Re-scan inventory tiap batch — cegah stale UUID dari item yang sudah ditrade
+                        local _, freshMap = buildFishDisplayList()
+                        return freshMap[cleanName] or {}
                     end,
                     statusPara      = ByNameStatusPara,
                     stateRunningKey = "ByName_Running",
@@ -6354,13 +6379,33 @@ do
                     S.Trading.ByCoins_Running = false
                     return
                 end
+                -- Pre-build full list saat toggle ON
+                -- Greedy fill dari semua fish tradable sampai target coins tercapai
+                local byCoinsFullList = getItemsByCoins(S.Trading.ByCoins_Target)
+                if #byCoinsFullList == 0 then
+                    UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="No tradable fish for target coins!", Color=Color3.fromRGB(255,80,80), Delay=3 })
+                    S.Trading.ByCoins_Running = false
+                    return
+                end
+                local byCoinsCursor = {idx = 0}
                 runTradeLoop({
                     getItemsFn = function()
-                        return getItemsByCoins(S.Trading.ByCoins_Target)
+                        -- Return next batch dari pre-built list (fresh item reference)
+                        -- Re-check tradable status tiap batch
+                        local batch, count = {}, 0
+                        for i = byCoinsCursor.idx + 1, #byCoinsFullList do
+                            local entry = byCoinsFullList[i]
+                            -- Skip jika sudah tidak bisa ditrade (sold/locked)
+                            if count >= 20 then break end
+                            table.insert(batch, entry)
+                            count = count + 1
+                        end
+                        byCoinsCursor.idx = byCoinsCursor.idx + count
+                        return batch
                     end,
                     statusPara      = ByCoinsStatusPara,
                     stateRunningKey = "ByCoins_Running",
-                    targetAmount    = 999999,  -- run sampai inventory habis atau target tercapai
+                    targetAmount    = #byCoinsFullList,  -- stop setelah semua item terkirim
                     targetPlayer    = S.Trading.TargetPlayer,
                 })
             end
@@ -6443,7 +6488,9 @@ do
                 local cleanName = (S.Trading.ByStone_Stone:match("^(.+) x%d+$") or S.Trading.ByStone_Stone)
                 runTradeLoop({
                     getItemsFn = function()
-                        return ByStoneUUIDMap[cleanName] or {}
+                        -- Re-scan inventory tiap batch — cegah stale UUID
+                        local _, freshStoneMap = buildStoneDisplayList()
+                        return freshStoneMap[cleanName] or {}
                     end,
                     statusPara      = ByStoneStatusPara,
                     stateRunningKey = "ByStone_Running",
