@@ -6787,6 +6787,21 @@ do
         S.setParagraphText(para, txt)
     end
 
+    -- Keep the visual control and runtime state inseparable.  A validation
+    -- failure used to change only S.Trading.*, leaving the Gen2 toggle drawn
+    -- as enabled even though its worker had already stopped.
+    local function setTradeRunning(stateKey, state)
+        if not S.Trading then return end
+        S.Trading[stateKey] = state == true
+        if state ~= true then
+            local controls = S.Trading.ToggleControls
+            local control = controls and controls[stateKey]
+            if control then
+                pcall(function() control:Set(false) end)
+            end
+        end
+    end
+
     local function runTradeLoop(opts)
         local getItemsFn      = opts.getItemsFn
         local statusPara      = opts.statusPara
@@ -6798,7 +6813,7 @@ do
         -- Satu worker outgoing per account: server hanya mengizinkan satu session.
         if S.Trading.ActiveMode ~= nil and S.Trading.ActiveMode ~= stateKey then
             UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Stop current trade mode first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-            S.Trading[stateKey] = false
+            setTradeRunning(stateKey, false)
             return
         end
         S.Trading.ActiveMode = stateKey
@@ -6811,7 +6826,7 @@ do
             while S.Trading[stateKey] == true and totalSent < targetAmount do
                 local target = game:GetService("Players"):FindFirstChild(targetPlayer)
                 if not target then
-                    S.Trading[stateKey] = false
+                    setTradeRunning(stateKey, false)
                     setStatus(statusPara, "Player not found. Stopped.")
                     break
                 end
@@ -6828,7 +6843,7 @@ do
 
                 local items = getItemsFn()
                 if #items == 0 then
-                    S.Trading[stateKey] = false
+                    setTradeRunning(stateKey, false)
                     setStatus(statusPara, "Done -- Inventory empty. Sent: " .. totalSent)
                     break
                 end
@@ -6932,18 +6947,34 @@ do
                         S_Trade.IsAddingItems = false
                         if S_Trade.RequestReady then S_Trade.RequestReady() end
 
-                        -- Wait TradeCompleted/TradeEnded (max 45s). Listeners were
-                        -- already live before the offer was sent.
-                        local waitElapsed = 0
+                        -- A whole trade may legitimately last longer than 45s
+                        -- when the counterpart is selecting/adding items.  Only
+                        -- 45 seconds with no server-replicated activity means
+                        -- the session is stale.  This also avoids cancelling a
+                        -- valid session just because the stock UI hitches while
+                        -- it cleans up a large inventory after completion.
+                        local lastObservedActivity = S_Trade.LastActivityAt or os.clock()
                         while not tradeFinished and LP:GetAttribute("IsTrading") == true
-                            and waitElapsed < 45 and S.Trading[stateKey] == true
+                            and S.Trading[stateKey] == true
                         do
-                            task.wait(1)
-                            waitElapsed = waitElapsed + 1
+                            local activityAt = S_Trade.LastActivityAt
+                            if type(activityAt) == "number" and activityAt > lastObservedActivity then
+                                lastObservedActivity = activityAt
+                            end
+                            if os.clock() - lastObservedActivity >= 45 then break end
+                            task.wait(0.25)
                         end
-                        -- Stuck: cancel
+                        -- Cancel only when the owner turned this worker off or
+                        -- the authoritative session has been silent for 45s.
+                        local activityAt = S_Trade.LastActivityAt
+                        if type(activityAt) == "number" and activityAt > lastObservedActivity then
+                            lastObservedActivity = activityAt
+                        end
+                        local inactiveFor = os.clock() - lastObservedActivity
                         if not tradeFinished and LP:GetAttribute("IsTrading") == true then
-                            pcall(function() Remote.tradeCancel:InvokeServer() end)
+                            if S.Trading[stateKey] ~= true or inactiveFor >= 45 then
+                                pcall(function() Remote.tradeCancel:InvokeServer() end)
+                            end
                             task.wait(1)
                         end
 
@@ -6977,7 +7008,7 @@ do
             end
 
             if S.Trading[stateKey] == true and totalSent >= targetAmount then
-                S.Trading[stateKey] = false
+                setTradeRunning(stateKey, false)
                 UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Trade done! Sent: " .. totalSent, Color=Color3.fromRGB(150,150,170), Delay=4 })
             end
             S.Trading.ActiveMode = nil  -- release mode lock
@@ -7004,6 +7035,7 @@ do
         -- ByCoins: no item selection, greedy all fish
         AutoAccept      = false,
         ActiveMode      = nil,  -- guard: hanya 1 mode boleh jalan
+        ToggleControls  = {},
     }
 
     -- All session listeners are installed only after S.Trading exists. This
@@ -7025,64 +7057,80 @@ do
         end)
     end
 
-    local function acceptIncomingTradePrompt(sender)
-        -- Prefer the game's own Accept button. Its controller then clears its
-        -- pending prompt state, unlike calling the remote behind its back.
-        local expected = ("trade request from " .. tostring(sender.DisplayName)):lower()
-        local deadline = os.clock() + 1.5
-        repeat
-            local playerGui = Service.LocalPlayer:FindFirstChildOfClass("PlayerGui")
-            if playerGui then
-                for _, label in ipairs(playerGui:GetDescendants()) do
-                    local isText = label:IsA("TextLabel") or label:IsA("TextButton")
-                    if isText and tostring(label.Text):lower():find(expected, 1, true) then
-                        local root = label
-                        while root.Parent and root.Parent ~= playerGui do root = root.Parent end
-                        for _, button in ipairs(root:GetDescendants()) do
-                            if button:IsA("TextButton") and button.Visible then
-                                local buttonText = tostring(button.Text):lower()
-                                if buttonText:find("accept", 1, true)
-                                    or buttonText == "yes" or buttonText == "confirm"
-                                then
-                                    local fired = false
-                                    if type(firesignal) == "function" then
-                                        fired = pcall(firesignal, button.Activated)
-                                    end
-                                    if not fired then fired = pcall(function() button:Activate() end) end
-                                    if fired then return true end
-                                end
-                            end
-                        end
+    -- Offer flow observed in the game's controller:
+    -- TradeOfferReceived -> PromptController:FirePrompt -> Prompt.Enabled.
+    -- Hooking FirePrompt lets TradeOfferController receive the same positive
+    -- result it would receive from a real click, before the popup is queued.
+    -- It is not a GUI scan/click and therefore has no visible-popup race.
+    local function installPassiveTradePromptGate()
+        local sharedEnv = type(getgenv) == "function" and getgenv() or _G
+        local gate = sharedEnv.__OrvionPassiveTradePromptGate
+        if type(gate) ~= "table" then
+            gate = {}
+            sharedEnv.__OrvionPassiveTradePromptGate = gate
+        end
+
+        -- Refresh this closure each execution; the hook itself is installed
+        -- once, so re-executing Orvion cannot stack wrapped functions.
+        gate.IsAutoAcceptEnabled = function()
+            return S.Trading ~= nil and S.Trading.AutoAccept == true
+        end
+
+        if gate.Installed then return gate.Available == true end
+        gate.Installed = true
+        gate.Available = false
+        if type(hookfunction) ~= "function" then return false end
+
+        local controllers = Service.ReplicatedStorage:FindFirstChild("Controllers")
+        local controllerModule = controllers and controllers:FindFirstChild("PromptController")
+        if not controllerModule then return false end
+
+        local okController, promptController = pcall(require, controllerModule)
+        local okPromise, promiseModule = pcall(require,
+            Service.ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Promise"))
+        if not okController or type(promptController) ~= "table"
+            or type(promptController.FirePrompt) ~= "function"
+            or not okPromise or type(promiseModule) ~= "table"
+            or type(promiseModule.new) ~= "function"
+        then return false end
+
+        local originalFirePrompt
+        local wrap = type(newcclosure) == "function" and newcclosure or function(fn) return fn end
+        local hooked = pcall(function()
+            originalFirePrompt = hookfunction(promptController.FirePrompt,
+                wrap(function(self, text, ...)
+                    local normalized = type(text) == "string" and text:lower() or ""
+                    local isTradeOffer = normalized:find("trade request from", 1, true) ~= nil
+                        and normalized:find("do you want to accept", 1, true) ~= nil
+                    if isTradeOffer and gate.IsAutoAcceptEnabled() then
+                        return promiseModule.new(function(resolve) resolve(true) end)
                     end
-                end
-            end
-            task.wait(0.05)
-        until os.clock() >= deadline
-        return false
+                    return originalFirePrompt(self, text, ...)
+                end))
+        end)
+        if not hooked or type(originalFirePrompt) ~= "function" then return false end
+        gate.Available = true
+        return true
     end
+
+    local PassiveTradePromptGateAvailable = installPassiveTradePromptGate()
 
     if Remote.tradeOfferReceived then
         Remote.tradeOfferReceived.OnClientEvent:Connect(function(sender)
             if not S.Trading.AutoAccept or Service.LocalPlayer:GetAttribute("IsTrading") == true then return end
             S_Trade.PendingIncoming = true
-            task.spawn(function()
-                -- The UI controller owns both the popup and its client state.
-                -- Direct remote is only a fallback when that prompt cannot be found.
-                local usedPrompt = acceptIncomingTradePrompt(sender)
-                if usedPrompt then
-                    local waited = 0
-                    while Service.LocalPlayer:GetAttribute("IsTrading") ~= true and waited < 3 do
-                        task.wait(0.05)
-                        waited = waited + 0.05
-                    end
-                end
-                if Service.LocalPlayer:GetAttribute("IsTrading") ~= true then
+            -- In supported executors the game controller accepts through the
+            -- resolved prompt gate above.  A direct remote fallback keeps auto
+            -- accept functional on minimal executors, but cannot promise that
+            -- their stock Prompt GUI will remain invisible.
+            if not PassiveTradePromptGateAvailable then
+                task.spawn(function()
                     local ok, accepted = pcall(function()
                         return Remote.tradeAcceptOffer:InvokeServer(sender)
                     end)
                     if not ok or accepted == false then S_Trade.PendingIncoming = false end
-                end
-            end)
+                end)
+            end
         end)
     end
 
@@ -7127,18 +7175,19 @@ do
             ByNameDropdown:Refresh(displayList, nil)
         end)
 
-    UI.Window:AddToggle(ByNameSection, "Start Trade by Name", "", false,
+    local ByNameToggle
+    ByNameToggle = UI.Window:AddToggle(ByNameSection, "Start Trade by Name", "", false,
         function(state)
             S.Trading.ByName_Running = state
             if state then
                 if S.Trading.TargetPlayer == "" or S.Trading.TargetPlayer == "Select Option" then
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a player first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    S.Trading.ByName_Running = false
+                    setTradeRunning("ByName_Running", false)
                     return
                 end
                 if S.Trading.ByName_Item == "" or S.Trading.ByName_Item == "Select Option" then
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select an item first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    S.Trading.ByName_Running = false
+                    setTradeRunning("ByName_Running", false)
                     return
                 end
                 local cleanName = (S.Trading.ByName_Item:match("^x%d+ (.+)$") or S.Trading.ByName_Item)
@@ -7158,6 +7207,7 @@ do
                 })
             end
         end, "Toggle_Trade_ByName")
+    S.Trading.ToggleControls.ByName_Running = ByNameToggle
 
     -- ====== TRADE BY COINS ======
     local ByCoinsSection = UI.Window:AddCollapsible(UI.TradingTab, "Trade by Coins", false)
@@ -7170,20 +7220,21 @@ do
 
     -- No dropdown: By Coins selects fish greedily by value automatically
 
-    UI.Window:AddToggle(ByCoinsSection, "Start Trade by Coins", "", false,
+    local ByCoinsToggle
+    ByCoinsToggle = UI.Window:AddToggle(ByCoinsSection, "Start Trade by Coins", "", false,
         function(state)
             S.Trading.ByCoins_Running = state
             if state then
                 if S.Trading.TargetPlayer == "" or S.Trading.TargetPlayer == "Select Option" then
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a player first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    S.Trading.ByCoins_Running = false
+                    setTradeRunning("ByCoins_Running", false)
                     return
                 end
                 -- Greedy all tradable fish sampai melebihi target coins
                 local byCoinsFullList = getItemsByCoins(S.Trading.ByCoins_Target)
                 if #byCoinsFullList == 0 then
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="No tradable fish for target coins!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    S.Trading.ByCoins_Running = false
+                    setTradeRunning("ByCoins_Running", false)
                     return
                 end
                 -- Freeze the chosen UUID set, then revalidate it every trade.
@@ -7215,6 +7266,7 @@ do
                 })
             end
         end, "Toggle_Trade_ByCoins")
+    S.Trading.ToggleControls.ByCoins_Running = ByCoinsToggle
 
 
     -- ====== TRADE BY RARITIES ======
@@ -7233,13 +7285,14 @@ do
         function(v) S.Trading.ByRarity_Amount = tonumber(v) or 1 end,
         "Input_Trade_ByRarity_Amount")
 
-    UI.Window:AddToggle(ByRaritySection, "Start Trade by Rarities", "", false,
+    local ByRarityToggle
+    ByRarityToggle = UI.Window:AddToggle(ByRaritySection, "Start Trade by Rarities", "", false,
         function(state)
             S.Trading.ByRarity_Running = state
             if state then
                 if S.Trading.TargetPlayer == "" or S.Trading.TargetPlayer == "Select Option" then
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a player first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    S.Trading.ByRarity_Running = false
+                    setTradeRunning("ByRarity_Running", false)
                     return
                 end
                 runTradeLoop({
@@ -7253,6 +7306,7 @@ do
                 })
             end
         end, "Toggle_Trade_ByRarity")
+    S.Trading.ToggleControls.ByRarity_Running = ByRarityToggle
 
     -- ====== TRADE ENCHANT STONE ======
     local ByStoneSection = UI.Window:AddCollapsible(UI.TradingTab, "Trade Enchant Stone", false)
@@ -7276,18 +7330,19 @@ do
             ByStoneDropdown:Refresh(displayList, nil)
         end)
 
-    UI.Window:AddToggle(ByStoneSection, "Start Trade by Enchant Stone", "", false,
+    local ByStoneToggle
+    ByStoneToggle = UI.Window:AddToggle(ByStoneSection, "Start Trade by Enchant Stone", "", false,
         function(state)
             S.Trading.ByStone_Running = state
             if state then
                 if S.Trading.TargetPlayer == "" or S.Trading.TargetPlayer == "Select Option" then
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a player first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    S.Trading.ByStone_Running = false
+                    setTradeRunning("ByStone_Running", false)
                     return
                 end
                 if S.Trading.ByStone_Stone == "" or S.Trading.ByStone_Stone == "Select Option" then
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a stone first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    S.Trading.ByStone_Running = false
+                    setTradeRunning("ByStone_Running", false)
                     return
                 end
                 local cleanName = (S.Trading.ByStone_Stone:match("^x%d+ (.+)$") or S.Trading.ByStone_Stone)
@@ -7333,6 +7388,7 @@ do
                 })
             end
         end, "Toggle_Trade_ByStone")
+    S.Trading.ToggleControls.ByStone_Running = ByStoneToggle
 
     -- ====== AUTO ACCEPT TRADE ======
     local AutoAcceptSection = UI.Window:AddCollapsible(UI.TradingTab, "Auto Accept Trade", false)
