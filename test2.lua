@@ -5870,7 +5870,7 @@ do
         for category, items in pairs(inventory) do
             if type(items) == "table" then
                 for _, item in ipairs(items) do
-                    if type(item) == "table" and item.Id and item.UUID and canTradeItem(item) then
+                    if type(item) == "table" and item.Id and item.UUID then
                         local ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, Data.ItemUtility, category, item.Id)
                         if not ok then ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, category, item.Id) end
                         if itemData and itemData.Data and itemData.Data.Type == "Fish" then
@@ -5905,7 +5905,7 @@ do
         for category, items in pairs(inventory) do
             if type(items) == "table" then
                 for _, item in ipairs(items) do
-                    if type(item) == "table" and item.Id and item.UUID and canTradeItem(item) then
+                    if type(item) == "table" and item.Id and item.UUID then
                         local ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, Data.ItemUtility, category, item.Id)
                         if not ok then ok, itemData = pcall(Data.ItemUtility.GetItemDataFromItemType, category, item.Id) end
                         if itemData and itemData.Data then
@@ -6363,8 +6363,11 @@ do
                 local cleanName = (S.Trading.ByName_Item:match("^x%d+ (.+)$") or S.Trading.ByName_Item)
                 runTradeLoop({
                     getItemsFn = function()
-                        -- Re-scan inventory tiap batch — cegah stale UUID dari item yang sudah ditrade
-                        local _, freshMap = buildFishDisplayList()
+                        -- Re-scan inventory tiap batch — cegah stale UUID
+                        -- canTradeItem filter di sini (display show all, trade skip locked/fav)
+                        local _, freshMap = buildFishDisplayList(function(item, _)
+                            return canTradeItem(item)
+                        end)
                         return freshMap[cleanName] or {}
                     end,
                     statusPara      = ByNameStatusPara,
@@ -6503,9 +6506,25 @@ do
                 local cleanName = (S.Trading.ByStone_Stone:match("^x%d+ (.+)$") or S.Trading.ByStone_Stone)
                 runTradeLoop({
                     getItemsFn = function()
-                        -- Re-scan inventory tiap batch — cegah stale UUID
+                        -- Re-scan tiap batch, filter hanya yang bisa ditrade
                         local _, freshStoneMap = buildStoneDisplayList()
-                        local entries = freshStoneMap[cleanName] or {}
+                        local allEntries = freshStoneMap[cleanName] or {}
+                        local entries = {}
+                        for _, e in ipairs(allEntries) do
+                            -- cek canTradeItem dari inventory langsung
+                            local inv = Data.Player:Get("Inventory") or {}
+                            for _, items2 in pairs(inv) do
+                                if type(items2) == "table" then
+                                    for _, it in ipairs(items2) do
+                                        if type(it) == "table" and it.UUID == e.UUID and canTradeItem(it) then
+                                            table.insert(entries, e)
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        local entries = entries
                         -- Sort: single UUID (qty=1) first → bisa batch 20
                         -- Stacked (qty>1) last → 1 per trade, server reject duplicate UUID
                         local singles, stackeds = {}, {}
