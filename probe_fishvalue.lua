@@ -48,13 +48,21 @@ pcall(function()
                         local name = itemData.Data.Name or tostring(item.Id)
                         local tier = itemData.Data.Tier or 0
                         local sellPrice = itemData.SellPrice or 0
-                        local favorited = item.Metadata and item.Metadata.Favorited or false
+                        -- Dump ALL metadata fields
+                        local metaStr = "nil"
+                        if item.Metadata and type(item.Metadata) == "table" then
+                            local parts = {}
+                            for k, v in pairs(item.Metadata) do
+                                table.insert(parts, tostring(k) .. "=" .. tostring(v))
+                            end
+                            metaStr = "{" .. table.concat(parts, ", ") .. "}"
+                        end
                         table.insert(fishList, {
                             name = name,
                             tier = tier,
                             sellPrice = sellPrice,
                             uuid = item.UUID or "?",
-                            favorited = favorited,
+                            meta = metaStr,
                         })
                     end
                 end
@@ -66,15 +74,14 @@ pcall(function()
     table.sort(fishList, function(a, b) return a.sellPrice > b.sellPrice end)
 
     log("Total fish in inventory: " .. tostring(#fishList))
-    log(string.format("%-40s | %-5s | %-12s | %-6s | UUID", "Name", "Tier", "SellPrice", "Fav"))
-    log(string.rep("-", 90))
+    log(string.format("%-40s | %-5s | %-12s | %s", "Name", "Tier", "SellPrice", "Metadata"))
+    log(string.rep("-", 100))
 
     local totalValue = 0
     for _, f in ipairs(fishList) do
         totalValue = totalValue + f.sellPrice
-        log(string.format("%-40s | T%-4s | %-12s | %-6s | %s",
-            f.name, tostring(f.tier), tostring(f.sellPrice),
-            tostring(f.favorited), tostring(f.uuid):sub(1, 8)))
+        log(string.format("%-40s | T%-4s | %-12s | %s",
+            f.name, tostring(f.tier), tostring(f.sellPrice), f.meta))
     end
 
     log(string.rep("-", 90))
