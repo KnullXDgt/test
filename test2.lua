@@ -6524,7 +6524,6 @@ do
                                 end
                             end
                         end
-                        local entries = entries
                         -- Sort: single UUID (qty=1) first → bisa batch 20
                         -- Stacked (qty>1) last → 1 per trade, server reject duplicate UUID
                         local singles, stackeds = {}, {}
