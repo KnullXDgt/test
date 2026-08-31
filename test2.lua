@@ -6603,7 +6603,9 @@ do
         return result
     end
 
-    -- Get items by coin value (greedy, melebihi target)
+    -- Prefer the most valuable fish that is still relevant to the requested
+    -- value.  Only when every fish exceeds the target do we use the smallest
+    -- possible overshoot.  This prevents a 5M T8 fish being chosen for 10k.
     local function getItemsByCoins(targetCoins)
         local inventory = getTradeInventory()
         local allFish = {}
@@ -6624,13 +6626,33 @@ do
                 end
             end
         end
-        -- Sort desc by SellPrice
+        targetCoins = math.max(1, tonumber(targetCoins) or 1)
         table.sort(allFish, function(a, b) return a.SellPrice > b.SellPrice end)
         local result, total = {}, 0
+        -- Main path: high value first, but never begin with an item whose
+        -- individual price already dwarfs the target.
         for _, f in ipairs(allFish) do
-            if total >= targetCoins then break end
-            table.insert(result, {UUID=f.UUID, ItemType=f.ItemType})
-            total = total + f.SellPrice
+            if f.SellPrice <= targetCoins then
+                table.insert(result, {UUID=f.UUID, ItemType=f.ItemType})
+                total = total + f.SellPrice
+                if total >= targetCoins then return result end
+            end
+        end
+        -- No combination of relevant values can reach target. Add exactly one
+        -- smallest over-target fish, never the first/most expensive one.
+        local smallestOvershoot = nil
+        for _, f in ipairs(allFish) do
+            if f.SellPrice > targetCoins
+                and (not smallestOvershoot or f.SellPrice < smallestOvershoot.SellPrice)
+            then
+                smallestOvershoot = f
+            end
+        end
+        if smallestOvershoot then
+            table.insert(result, {
+                UUID=smallestOvershoot.UUID,
+                ItemType=smallestOvershoot.ItemType,
+            })
         end
         return result
     end
@@ -6867,13 +6889,65 @@ do
             return
         end
         S.Trading.ActiveMode = stateKey
+        S.Trading.RunSerial = (S.Trading.RunSerial or 0) + 1
+        local runSerial = S.Trading.RunSerial
+
+        local function runActive()
+            return S.Trading.RunSerial == runSerial
+                and S.Trading.ActiveMode == stateKey
+                and S.Trading[stateKey] == true
+        end
+
+        -- A declined/cancelled offer never changes inventory.  Therefore
+        -- create a fresh candidate snapshot immediately before *every* new
+        -- offer, rather than keeping the first snapshot for the full toggle
+        -- lifetime.  `acknowledged` remains the only cross-trade memory, so a
+        -- successfully transferred UUID still cannot appear again.
+        local acknowledged = {}
+
+        -- Read the authoritative local inventory once per check.  Besides
+        -- being much lighter on a 4k+ inventory, Quantity makes the receipt
+        -- check correct for a stacked stone whose UUID remains after one unit
+        -- has been transferred.
+        local function readOwnedQuantities()
+            local quantities = {}
+            local inventory = getTradeInventory()
+            for _, items in pairs(inventory or {}) do
+                if type(items) == "table" then
+                    for _, item in ipairs(items) do
+                        if type(item) == "table" and item.UUID then
+                            local uuid = tostring(item.UUID)
+                            local quantity = tonumber(item.Quantity) or 1
+                            quantities[uuid] = (quantities[uuid] or 0) + math.max(quantity, 1)
+                        end
+                    end
+                end
+            end
+            return quantities
+        end
+
+        local function pendingPlanItems()
+            local result = {}
+            local owned = readOwnedQuantities()
+            local seen = {}
+            for _, entry in ipairs(getItemsFn() or {}) do
+                local uuid = entry and entry.UUID and tostring(entry.UUID)
+                if uuid and not seen[uuid] and not acknowledged[uuid]
+                    and (owned[uuid] or 0) > 0
+                then
+                    seen[uuid] = true
+                    table.insert(result, {UUID=entry.UUID, ItemType=entry.ItemType})
+                end
+            end
+            return result
+        end
 
         local totalSent, retryCount, success, failed = 0, 0, 0, 0
 
         setStatus(statusPara, "Retry: 0 | Success: 0 | Failed: 0 | Sent: 0")
 
         task.spawn(function()
-            while S.Trading[stateKey] == true and totalSent < targetAmount do
+            while runActive() and totalSent < targetAmount do
                 local target = game:GetService("Players"):FindFirstChild(targetPlayer)
                 if not target then
                     setTradeRunning(stateKey, false)
@@ -6889,9 +6963,9 @@ do
                     task.wait(0.5)
                     waitClear = waitClear + 0.5
                 end
-                if not S.Trading[stateKey] then break end
+                if not runActive() then break end
 
-                local items = getItemsFn()
+                local items = pendingPlanItems()
                 if #items == 0 then
                     setTradeRunning(stateKey, false)
                     setStatus(statusPara, "Done -- Inventory empty. Sent: " .. totalSent)
@@ -6952,7 +7026,7 @@ do
                 else
                     -- Wait TradeStarted (max 15s)
                     local waited = 0
-                    while not tradeStarted and waited < 15 and S.Trading[stateKey] == true do
+                    while not tradeStarted and waited < 15 and runActive() do
                         task.wait(0.5)
                         waited = waited + 0.5
                     end
@@ -6984,10 +7058,14 @@ do
                             task.wait(2.5)
                         else
                         -- Add items
+                        -- Quantity before AddItem is the receipt baseline.
+                        -- Fish usually disappear entirely; stacked stones may
+                        -- keep their UUID but their Quantity must decrease.
+                        local beforeBatchQuantities = readOwnedQuantities()
                         S_Trade.IsAddingItems = true
                         local addedCount = 0
                         for _, itemData in ipairs(batch) do
-                            if LP:GetAttribute("IsTrading") ~= true then break end
+                            if not runActive() or LP:GetAttribute("IsTrading") ~= true then break end
                             local ok2, added = pcall(function()
                                 return Remote.tradeAddItem:InvokeServer(itemData.ItemType, itemData.UUID)
                             end)
@@ -7005,7 +7083,7 @@ do
                         -- it cleans up a large inventory after completion.
                         local lastObservedActivity = S_Trade.LastActivityAt or os.clock()
                         while not tradeFinished and LP:GetAttribute("IsTrading") == true
-                            and S.Trading[stateKey] == true
+                            and runActive()
                         do
                             local activityAt = S_Trade.LastActivityAt
                             if type(activityAt) == "number" and activityAt > lastObservedActivity then
@@ -7022,7 +7100,7 @@ do
                         end
                         local inactiveFor = os.clock() - lastObservedActivity
                         if not tradeFinished and LP:GetAttribute("IsTrading") == true then
-                            if S.Trading[stateKey] ~= true or inactiveFor >= 45 then
+                            if not runActive() or inactiveFor >= 45 then
                                 pcall(function() Remote.tradeCancel:InvokeServer() end)
                             end
                             task.wait(1)
@@ -7035,9 +7113,48 @@ do
                             cleanWait = cleanWait + 0.5
                         end
 
-                        if isSuccess then
-                            success = success + 1
-                            totalSent = totalSent + addedCount
+                        if isSuccess and runActive() then
+                            -- A successful remote response is not yet a safe
+                            -- count. Confirm that each planned UUID was removed
+                            -- or its stack Quantity decreased before another
+                            -- trade may be planned; otherwise stale Replion data
+                            -- can leak a Crystal Crab into the next mode.
+                            local receiptDeadline = os.clock() + 8
+                            local confirmed = {}
+                            repeat
+                                local currentQuantities = readOwnedQuantities()
+                                for _, itemData in ipairs(batch) do
+                                    local uuid = tostring(itemData.UUID)
+                                    if (currentQuantities[uuid] or 0) < (beforeBatchQuantities[uuid] or 0) then
+                                        confirmed[uuid] = true
+                                    end
+                                end
+                                local allConfirmed = true
+                                for _, itemData in ipairs(batch) do
+                                    if not confirmed[tostring(itemData.UUID)] then
+                                        allConfirmed = false
+                                        break
+                                    end
+                                end
+                                if allConfirmed then break end
+                                task.wait(0.05)
+                            until os.clock() >= receiptDeadline or not runActive()
+
+                            local confirmedCount = 0
+                            for uuid in pairs(confirmed) do
+                                if not acknowledged[uuid] then
+                                    acknowledged[uuid] = true
+                                    confirmedCount = confirmedCount + 1
+                                end
+                            end
+                            if confirmedCount ~= #batch then
+                                failed = failed + 1
+                                setTradeRunning(stateKey, false)
+                                setStatus(statusPara, "Inventory sync timeout. Trade stopped safely.")
+                            else
+                                success = success + 1
+                                totalSent = totalSent + confirmedCount
+                            end
                         else
                             failed = failed + 1
                         end
@@ -7057,11 +7174,13 @@ do
                 pcall(function() Remote.tradeCancel:InvokeServer() end)
             end
 
-            if S.Trading[stateKey] == true and totalSent >= targetAmount then
+            if runActive() and totalSent >= targetAmount then
                 setTradeRunning(stateKey, false)
                 UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Trade done! Sent: " .. totalSent, Color=Color3.fromRGB(150,150,170), Delay=4 })
             end
-            S.Trading.ActiveMode = nil  -- release mode lock
+            if S.Trading.RunSerial == runSerial then
+                S.Trading.ActiveMode = nil  -- release mode lock
+            end
             setStatus(statusPara, "Done -- Retry: " .. retryCount .. " | Success: " .. success .. " | Failed: " .. failed .. " | Sent: " .. totalSent)
         end)
     end
@@ -7085,6 +7204,7 @@ do
         -- ByCoins: no item selection, greedy all fish
         AutoAccept      = false,
         ActiveMode      = nil,  -- guard: hanya 1 mode boleh jalan
+        RunSerial       = 0,    -- invalidates an older worker of the same mode
         ToggleControls  = {},
     }
 
@@ -7268,9 +7388,10 @@ do
                     setTradeRunning("ByRarity_Running", false)
                     return
                 end
+                local selectedRarity = S.Trading.ByRarity_Rarity
                 runTradeLoop({
                     getItemsFn = function()
-                        return getItemsByRarity(S.Trading.ByRarity_Rarity)
+                        return getItemsByRarity(selectedRarity)
                     end,
                     statusPara      = ByRarityStatusPara,
                     stateRunningKey = "ByRarity_Running",
