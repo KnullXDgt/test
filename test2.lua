@@ -1,7 +1,7 @@
 -- ====================================================================
 --                 INSTANT FISHING V2 - CLEAN
 --          Fishing + AutoSell + Auto Small Notification
--- Fish-tier + Quest/Trade transaction hardening build: 20260901-R20
+-- Fish-tier + Quest/Trade transaction hardening build: 20260901-R21
 -- ====================================================================
 
 -- ====== SERVICES ======
@@ -6221,39 +6221,133 @@ do
         return ok
     end
 
+    S.Quest.loadDiamondDialogue = function()
+        if S.Quest.DiamondDialogue and S.Quest.DiamondDialogueTree then
+            return S.Quest.DiamondDialogue, S.Quest.DiamondDialogueTree
+        end
+        local controllers = Service.ReplicatedStorage:FindFirstChild("Controllers")
+        local controller = controllers and controllers:FindFirstChild("DialogueController")
+        local internal = controller and controller:FindFirstChild("Internal")
+        local dialogue = internal and internal:FindFirstChild("Dialogue")
+        local tree = internal and internal:FindFirstChild("DialogueTree")
+        if not dialogue or not tree then return nil end
+        local ok, module, data = pcall(function() return require(dialogue), require(tree) end)
+        if not ok or type(module) ~= "table" or type(data) ~= "table" then return nil end
+        S.Quest.DiamondDialogue, S.Quest.DiamondDialogueTree = module, data
+        return module, data
+    end
+
+    -- Only a currently rendered, enabled quest option may be selected. Never
+    -- invent a path/index or call DialogueEnded as an activation fallback.
+    S.Quest.diamondDialogueOption = function(active, tree)
+        if not active or active.dead or active.animating or active.selectionMade
+            or active.name ~= "Diamond Researcher" then return nil end
+        local paths = tree and tree[active.name]
+        local branch = paths and paths[active.path]
+        if type(branch) == "function" then
+            local ok, evaluated = pcall(branch)
+            if not ok then return nil end
+            branch = evaluated
+        end
+        if type(branch) ~= "table" or type(branch.Dialogue) ~= "table" then return nil end
+        local gui = active.instance
+        local content = gui and gui:FindFirstChild("Content")
+        local inside = content and content:FindFirstChild("Inside")
+        local list = inside and inside:FindFirstChild("List")
+        if not list or gui.Enabled == false or not content.Visible or not inside.Visible
+            or not list.Visible then return nil end
+        for index, option in pairs(branch.Dialogue) do
+            if type(option) == "table" and option.Reply == "Diamond Researcher Quest"
+                and not option.Blocked and not option.Void and not option.Disabled then
+                local button = list:FindFirstChild(tostring(index))
+                local items = button and button:FindFirstChild("Items")
+                local label = items and items:FindFirstChild("QuestLabel")
+                if button and button.Visible and button.Active and label
+                    and label.Text == option.Reply then
+                    return index, option
+                end
+            end
+        end
+        return nil
+    end
+
     S.Quest.startDiamondQuest = function(session)
-        if not Remote.dialogueEnded then return false end
-        local started = false
+        local started, reason = false, "Dialogue unavailable"
         S.Quest.withSellHold("Dialogue:DiamondStart", function()
             return S.Quest.isActive("Diamond", session)
         end, function()
+            local ownedDialogue, dialogueModule = nil, nil
+            local previousDialogue, openedNPC, promptFired = nil, nil, false
+            local function activeSession() return S.Quest.isActive("Diamond", session) end
             local function isStarted()
                 return S.Quest.getMainline("Diamond Researcher") ~= nil
                     or S.Quest.isCompleted("Diamond Researcher")
-                    or S.Quest.owns("Diamond Key")
-                    or S.Quest.owns("Diamond Rod")
+                    or S.Quest.owns("Diamond Key") or S.Quest.owns("Diamond Rod")
             end
-            for attempt = 1, 1 do
-                if not S.Quest.isActive("Diamond", session) then break end
-                if isStarted() then
-                    started = true
-                    S.Quest.refreshFromReplion()
-                    break
+            local ok, err = pcall(function()
+                if isStarted() then started = true return end
+                if not S.Quest.approachDiamondResearcher("Diamond", session) then return end
+                local tree
+                dialogueModule, tree = S.Quest.loadDiamondDialogue()
+                if not dialogueModule or type(fireproximityprompt) ~= "function" then return end
+                local previous = dialogueModule._activeInstance
+                if previous and not previous.dead then reason = "Another dialogue is open" return end
+                local npc = S.Quest.getNPC("Diamond Researcher")
+                local prompt = npc and npc:FindFirstChildWhichIsA("ProximityPrompt", true)
+                if not prompt or not prompt.Enabled or not activeSession() then return end
+                previousDialogue, openedNPC, promptFired = previous, npc, true
+                fireproximityprompt(prompt)
+                local opened = S.Quest.waitJob("Diamond", function()
+                    local current = dialogueModule._activeInstance
+                    if current and current ~= previous and not current.dead
+                        and current.name == "Diamond Researcher" and current.basePart
+                        and current.basePart:IsDescendantOf(npc) then
+                        ownedDialogue = current
+                        return true
+                    end
+                    return false
+                end, 3, 0.05, session)
+                if not opened or not activeSession() then return end
+                -- Opening a UI alone is not proof of eligibility: this game's
+                -- dumped dialogue exposes the quest option without a rod check.
+                if not S.Quest.owns("Element Rod") then
+                    reason = "Element Rod required - quest not accepted"
+                    S.Quest.waitJob("Diamond", function() return ownedDialogue.dead end, 1, 0.05, session)
+                    return
                 end
-                if not S.Quest.approachDiamondResearcher("Diamond", session) then
-                    break
-                end
-                pcall(function()
-                    -- NPCQuestGivers: Path 1, Index 2.
-                    Remote.dialogueEnded:FireServer("Diamond Researcher", 1, 2)
-                end)
-                if S.Quest.waitJob("Diamond", isStarted, 8, 0.1, session) then
-                    started = true
-                    S.Quest.refreshFromReplion()
-                    break
-                end
+                local available = S.Quest.waitJob("Diamond", function()
+                    return dialogueModule._activeInstance ~= ownedDialogue or ownedDialogue.dead
+                        or S.Quest.diamondDialogueOption(ownedDialogue, tree) ~= nil
+                end, 3, 0.05, session)
+                if not available or not activeSession() or not S.Quest.owns("Element Rod")
+                    or dialogueModule._activeInstance ~= ownedDialogue or ownedDialogue.dead then return end
+                local index, option = S.Quest.diamondDialogueOption(ownedDialogue, tree)
+                if not index then reason = "Lary has no available quest option" return end
+                -- Same selection method used by the game's rendered option.
+                -- It displays the response and owns its own DialogueEnded event.
+                ownedDialogue:confirmSelection(ownedDialogue.path, index, option)
+                started = S.Quest.waitJob("Diamond", isStarted, 8, 0.1, session)
+                reason = started and nil or "Quest acknowledgement not received"
+            end)
+            -- Close only the dialogue opened by this action, including OFF and
+            -- error paths. Native stop restores camera/rod and unlocks prompts.
+            if not ownedDialogue and promptFired and dialogueModule then
+                local current = dialogueModule._activeInstance
+                if current and current ~= previousDialogue and not current.dead
+                    and current.name == "Diamond Researcher" and current.basePart
+                    and current.basePart:IsDescendantOf(openedNPC) then ownedDialogue = current end
             end
+            if ownedDialogue and dialogueModule._activeInstance == ownedDialogue
+                and not ownedDialogue.dead then pcall(function() ownedDialogue:stop() end) end
+            if not ok then Runtime.LastError = "Diamond dialogue: " .. tostring(err) end
+            if started then S.Quest.refreshFromReplion() end
         end, 12, "Diamond", session)
+        if not started and S.Quest.isActive("Diamond", session) then
+            if Runtime.Quest.DiamondDialogueNotice ~= session then
+                Runtime.Quest.DiamondDialogueNotice = session
+                UI.Library:Notify({Title="Orvion", Subtitle="Hub", Content=reason})
+            end
+        end
         return started
     end
 
