@@ -1,7 +1,7 @@
 -- ====================================================================
 --                 INSTANT FISHING V2 - CLEAN
 --          Fishing + AutoSell + Auto Small Notification
--- Fish-tier + Quest/Trade transaction hardening build: 20260901-R19
+-- Fish-tier + Quest/Trade transaction hardening build: 20260901-R20
 -- ====================================================================
 
 -- ====== SERVICES ======
@@ -180,7 +180,7 @@ Remote.DisableStockTradeOfferConnections = function(attempts)
                 pcall(function() connection:Disable() end)
             end
         end
-        if found or attempt >= wantedAttempts then break end
+        if attempt >= wantedAttempts then break end
         task.wait(0.1)
     end
     return found
@@ -204,9 +204,22 @@ Remote.RefreshTradeOfferRouter = function(attempts)
             if Remote.TradeOfferRouter.Enabled == true
                 and Service.LocalPlayer:GetAttribute("IsTrading") ~= true
             then
+                local coord = Remote.RuntimeCoord
+                if not coord then return end
+                local token = coord.beginTradeGate()
+                local generation = Remote.TradeOfferRouter.Generation
+                local epoch = Remote.TradeOfferRouter.AcceptEpoch
+                local function active()
+                    return Remote.TradeOfferRouter.Enabled
+                        and Remote.TradeOfferRouter.Generation == generation
+                        and Remote.TradeOfferRouter.AcceptEpoch == epoch
+                end
                 pcall(function()
-                    Remote.tradeAcceptOffer:InvokeServer(sender)
+                    if coord.waitTradeSafe(active) then
+                        coord.callRemote("tradeAcceptOffer", 10, active, sender)
+                    end
                 end)
+                coord.endTradeGate(token)
             end
         end)
     return true
@@ -282,28 +295,48 @@ Data.resolveFishTier = function(raw)
     return tonumber(data.Tier)
 end
 
+Data.normaliseFishIcon = function(icon)
+    if type(icon) == "number" then
+        return icon > 0 and ("rbxassetid://" .. tostring(icon)) or nil
+    end
+    if type(icon) ~= "string" then return nil end
+    if icon:match("^%d+$") then return tonumber(icon) > 0 and ("rbxassetid://" .. icon) or nil end
+    local assetId = icon:match("^rbxassetid://(%d+)$")
+    if assetId then return tonumber(assetId) > 0 and icon or nil end
+    if icon:match("^https?://") then return icon end
+    return nil
+end
+
 Data.registerFish = function(raw)
     local data = type(raw) == "table" and raw.Data or nil
     if type(data) ~= "table" or data.Type ~= "Fish" then return nil end
     local id = tonumber(data.Id) or data.Id
-    local name = tostring(data.Name or id or "Unknown")
-    if id == nil or Data.FishCatalog.ById[id] then
-        return id ~= nil and Data.FishCatalog.ById[id] or nil
-    end
-    local icon = raw.Icon or data.Icon
-    local record = {
-        Id = id,
-        Name = name,
-        Icon = icon,
-        Tier = Data.resolveFishTier(raw),
-    }
+    if id == nil then return nil end
+    local name = tostring(data.Name or id)
+    local previous = Data.FishCatalog.ById[id]
+    if previous then
+        if Data.FishCatalog.ByName[previous.Name] == previous then Data.FishCatalog.ByName[previous.Name] = nil end
+        if previous.Icon then Data.FishCatalog.Pictures = Data.FishCatalog.Pictures - 1 end
+    else Data.FishCatalog.Total = Data.FishCatalog.Total + 1 end
+    local record = {Id=id, Name=name, Icon=Data.normaliseFishIcon(raw.Icon or data.Icon),
+        Tier=Data.resolveFishTier(raw)}
     Data.FishCatalog.ById[id] = record
     Data.FishCatalog.ByName[name] = record
-    Data.FishCatalog.Total = Data.FishCatalog.Total + 1
-    if icon ~= nil and tostring(icon) ~= "" then
-        Data.FishCatalog.Pictures = Data.FishCatalog.Pictures + 1
-    end
+    if record.Icon then Data.FishCatalog.Pictures = Data.FishCatalog.Pictures + 1 end
+    if Data.OnFishRegistered then Data.OnFishRegistered(record, previous) end
     return record
+end
+
+Data.refreshFishCatalog = function()
+    local ok, fishList = pcall(function() return Data.ItemUtility:GetFish() end)
+    Data.FishCatalog.LastRefresh = os.clock()
+    if not ok or type(fishList) ~= "table" then
+        Data.FishCatalog.LastError = tostring(fishList)
+        return false
+    end
+    for _, raw in pairs(fishList) do Data.registerFish(raw) end
+    Data.FishCatalog.LastError = nil
+    return true
 end
 
 Data.getFishRecord = function(idOrName, raw)
@@ -315,9 +348,11 @@ Data.getFishRecord = function(idOrName, raw)
         Data.FishCatalog.ById[idKey]
         or Data.FishCatalog.ByName[tostring(key)]
     ) or nil
+    if type(raw) == "table" and raw.Data then return Data.registerFish(raw) end
     if record then return record end
-    if type(raw) == "table" and raw.Data then
-        return Data.registerFish(raw)
+    if os.clock() - (Data.FishCatalog.LastRefresh or -30) >= 30 then
+        Data.refreshFishCatalog()
+        return Data.FishCatalog.ById[idKey] or Data.FishCatalog.ByName[tostring(key)]
     end
     return nil
 end
@@ -342,16 +377,9 @@ Data.getFishTier = function(idOrItem, raw)
 end
 
 do
-    local ok, fishList = pcall(function()
-        return Data.ItemUtility:GetFish()
-    end)
-    if ok and type(fishList) == "table" then
-        for _, raw in pairs(fishList) do
-            Data.registerFish(raw)
-        end
-    end
-    print(("%d fish pics loaded, all set."):format(
-        Data.FishCatalog.Pictures))
+    local loaded = Data.refreshFishCatalog()
+    print(loaded and ("%d fish pics loaded, all set."):format(Data.FishCatalog.Pictures)
+        or "Fish pics load failed; waiting for catalogue retry.")
 end
 
 Data.getFishCount = function()
@@ -415,6 +443,8 @@ local Config = {
 
 -- Shared runtime state. Kept in one table to stay light on Luau locals.
 local Runtime = {
+    RemoteCalls = {},
+    Trade = { Gates={}, Serial=0, SessionId=nil },
     StableResult = false,
     Random = Random.new(),
     Fishing = {
@@ -465,8 +495,11 @@ local Runtime = {
             Job=nil, Session=nil,
         },
         Failures = {},
+        RouteRetry = {},
+        CompletionNotified = {},
+        FallbackUntil = 0,
         Paused = false,
-        ForcePerfect = false,
+
         Panels = {},
         LastLocation = nil, -- dipakai fallback/teleportNPC
         OnFishCaught = function() end,
@@ -770,6 +803,63 @@ Runtime.getCastWaterY = function(power)
     return waterY
 end
 
+-- Bounded local waits do not undo a request already received by the server.
+Runtime.callRemote = function(key, timeout, alive, ...)
+    if not Remote[key] then return false, "remote unavailable: " .. key end
+    if Runtime.RemoteCalls[key] then return false, "remote busy: " .. key end
+    if alive and not alive() then return false, "cancelled" end
+    local args, token = table.pack(...), {}
+    Runtime.RemoteCalls[key] = token
+    local done, result = false, nil
+    local thread = task.spawn(function()
+        result = table.pack(pcall(function()
+            return Remote[key]:InvokeServer(table.unpack(args, 1, args.n))
+        end))
+        done = true
+    end)
+    local deadline = os.clock() + (timeout or 8)
+    task.delay((timeout or 8) + 0.05, function()
+        if Runtime.RemoteCalls[key] == token then
+            if not done then pcall(task.cancel, thread) end
+            Runtime.RemoteCalls[key] = nil
+        end
+    end)
+    while not done and os.clock() < deadline and (not alive or alive()) do task.wait(0.05) end
+    if not done then pcall(task.cancel, thread) end
+    if Runtime.RemoteCalls[key] == token then Runtime.RemoteCalls[key] = nil end
+    if not done then return false, "timeout/cancelled: " .. key end
+    if alive and not alive() then return false, "cancelled" end
+    return table.unpack(result, 1, result.n)
+end
+
+Runtime.isTrading = function()
+    local char = Service.LocalPlayer.Character
+    return next(Runtime.Trade.Gates) ~= nil or Runtime.Trade.SessionId ~= nil
+        or Service.LocalPlayer:GetAttribute("IsTrading") == true
+        or (char and char:GetAttribute("IsTrading") == true) or false
+end
+Runtime.beginTradeGate = function()
+    Runtime.Trade.Serial = Runtime.Trade.Serial + 1
+    local token = Runtime.Trade.Serial
+    Runtime.Trade.Gates[token] = true
+    return token
+end
+Runtime.endTradeGate = function(token)
+    Runtime.Trade.Gates[token] = nil
+    if SupportState.recheckAutoEquipRod then SupportState.recheckAutoEquipRod(0.1) end
+end
+Runtime.waitTradeSafe = function(alive)
+    local deadline = os.clock() + 8
+    repeat
+        if alive and not alive() then return false end
+        if Runtime.Fishing.Owner == nil and Runtime.Fishing.Phase == "Idle"
+            and not Runtime.Sell.Busy and not Runtime.Quest.Action.Busy
+            and Runtime.Quest.SellHold == 0 then return true end
+        task.wait(0.05)
+    until os.clock() >= deadline
+    return false
+end
+
 Runtime.Fishing.IsModeActive = function(mode)
     if mode == "V1" then return Config.InstantFishing end
     if mode == "V2" then return FishingModes.V2.Active end
@@ -777,31 +867,32 @@ Runtime.Fishing.IsModeActive = function(mode)
     return true
 end
 
-Runtime.Fishing.IsBlocked = function()
-    local character = Service.LocalPlayer.Character
-    return character and character:GetAttribute("IsTrading") == true or false
-end
+Remote.RuntimeCoord = Runtime
+Runtime.Fishing.IsBlocked = Runtime.isTrading
 
+Runtime.Fishing.CanContinue = function(mode)
+    return Runtime.Fishing.IsModeActive(mode) and Runtime.Fishing.Owner == mode
+        and not Runtime.isTrading()
+end
 Runtime.Fishing.WaitReady = function(mode)
     while Runtime.Fishing.IsModeActive(mode) do
-        if Runtime.Quest.SellHold > 0 then
+        local character = Service.LocalPlayer.Character
+        if Runtime.Sell.Pending and Runtime.Sell.CanFlush() then Runtime.Sell.Flush() end
+        if Runtime.Quest.SellHold > 0 or Runtime.Quest.Action.Busy
+            or Runtime.Fishing.Owner ~= nil or Runtime.isTrading()
+            or Runtime.Sell.Busy or (character and character:GetAttribute("SellAll") == true)
+        then
             task.wait(0.05)
-        elseif Runtime.Fishing.Owner and Runtime.Fishing.Owner ~= mode then
-            task.wait(0.05)
+        elseif SupportState.autoEquipRodEnabled
+            and tostring(Data.Player:Get("EquippedId") or "") == ""
+        then
+            SupportState.recheckAutoEquipRod()
+            task.wait(0.1)
         else
-            local character = Service.LocalPlayer.Character
-            if character and character:GetAttribute("SellAll") == true then
-                Runtime.Sell.Wait(Runtime.Sell.Ticket)
-                -- Sell.Wait yields. Re-enter the coordinator gate because a
-                -- Quest transaction or another fishing owner may have begun.
-                continue
-            end
-            if not Runtime.Fishing.IsBlocked() then
-                Runtime.Fishing.Owner = mode
-                return true
-            else
-                task.wait(0.05)
-            end
+            Runtime.Fishing.Owner = mode
+            Runtime.Fishing.Phase = "Charging"
+            FishingModes.Active = true
+            return true
         end
     end
     return false
@@ -811,43 +902,52 @@ Runtime.Fishing.Recover = function(mode)
     if Runtime.Fishing.Owner == mode then
         Runtime.Fishing.Owner = nil
         Runtime.Fishing.Phase = "Idle"
+        FishingModes.Active = false
     end
 end
-
 Runtime.Fishing.ResetServer = function(mode)
     Runtime.Fishing.Failures[mode] = 0
-    Runtime.Fishing.Owner = nil
-    Runtime.Fishing.Phase = "Idle"
-    if Remote.cancel then
-        pcall(function() Remote.cancel:InvokeServer(true) end)
+    if Runtime.Fishing.Owner and Runtime.Fishing.Owner ~= mode then return false end
+    if Runtime.isTrading() or Runtime.Quest.Action.Busy then
+        Runtime.Fishing.Recover(mode)
+        return false
     end
+    Runtime.Fishing.Owner = mode
+    Runtime.Fishing.Phase = "Resetting"
+    Runtime.callRemote("cancel", 2, function()
+        return Runtime.Fishing.Owner == mode and not Runtime.isTrading()
+    end, true)
+    Runtime.Fishing.Recover(mode)
+    return true
 end
-
-Runtime.Fishing.HandleResult = function(mode, ok)
+Runtime.Fishing.HandleResult = function(mode, ok, err)
+    Runtime.Fishing.Recover(mode)
     if ok then
         Runtime.Fishing.Failures[mode] = 0
         return
     end
+    Runtime.Fishing.LastError = tostring(err or "cast failed")
+    Runtime.Fishing.LastErrorAt = os.clock()
     Runtime.Fishing.Failures[mode] = (Runtime.Fishing.Failures[mode] or 0) + 1
     if Runtime.Fishing.Failures[mode] >= 2 then
         Runtime.Fishing.ResetServer(mode)
         task.wait(0.15)
-    else
-        Runtime.Fishing.Recover(mode)
     end
+    if SupportState.recheckAutoEquipRod then SupportState.recheckAutoEquipRod() end
+    if Runtime.Sell.Pending and Runtime.Sell.CanFlush() then Runtime.Sell.Flush() end
     task.wait(0.35)
 end
 
 Runtime.Fishing.AwaitCatch = function(mode, catchSerial)
     Runtime.Fishing.Phase = "AwaitCatch"
     local deadline = os.clock() + 3
-    while Runtime.Fishing.IsModeActive(mode)
+    while Runtime.Fishing.CanContinue(mode)
         and Runtime.Fishing.CatchSerial <= catchSerial
         and os.clock() < deadline
     do
         task.wait(0.03)
     end
-    if Runtime.Fishing.CatchSerial <= catchSerial then
+    if not Runtime.Fishing.CanContinue(mode) or Runtime.Fishing.CatchSerial <= catchSerial then
         Runtime.Fishing.Recover(mode)
         return false
     end
@@ -867,15 +967,14 @@ Runtime.Fishing.AwaitCatch = function(mode, catchSerial)
         Runtime.Fishing.Recover(mode)
         return false
     end
-    Runtime.Fishing.Owner = nil
-    Runtime.Fishing.Phase = "Idle"
+    Runtime.Fishing.Recover(mode)
     return true
 end
 
 Runtime.requestConfiguredCast = function(mode)
     if not Runtime.Fishing.WaitReady(mode) then return false end
 
-    local forcePerfect = Config.PerfectCast or Runtime.Quest.ForcePerfect
+    local forcePerfect = Config.PerfectCast
     local targetPower = forcePerfect and 0.99 or 0.10
     if Config.RandomResults and not forcePerfect then
         -- Uniform two-decimal result: 0.10, 0.11, ... 0.98, 0.99.
@@ -883,9 +982,8 @@ Runtime.requestConfiguredCast = function(mode)
     end
     -- Native ChargeFishingRod returns (accepted, authoritative start time).
     Runtime.Fishing.Phase = "Charging"
-    local chargeCallOk, chargeAccepted, serverChargeStart = pcall(function()
-        return Remote.charge:InvokeServer()
-    end)
+    local chargeCallOk, chargeAccepted, serverChargeStart = Runtime.callRemote(
+        "charge", 5, function() return Runtime.Fishing.CanContinue(mode) end)
     if not chargeCallOk or not chargeAccepted
         or type(serverChargeStart) ~= "number"
     then
@@ -894,7 +992,7 @@ Runtime.requestConfiguredCast = function(mode)
     end
 
     local deadline = workspace:GetServerTimeNow() + 2
-    while workspace:GetServerTimeNow() < deadline do
+    while Runtime.Fishing.CanContinue(mode) and workspace:GetServerTimeNow() < deadline do
         local powerOk, currentPower = pcall(function()
             return Data.FishingConstants:GetPower(serverChargeStart)
         end)
@@ -905,10 +1003,9 @@ Runtime.requestConfiguredCast = function(mode)
             local requestTime = workspace:GetServerTimeNow()
             local waterY = Runtime.getCastWaterY(currentPower)
             Runtime.Fishing.Phase = "Minigame"
-            local minigameCallOk, started = pcall(function()
-                return Remote.minigame:InvokeServer(
-                    waterY, currentPower, requestTime)
-            end)
+            local minigameCallOk, started = Runtime.callRemote("minigame", 5,
+                function() return Runtime.Fishing.CanContinue(mode) end,
+                waterY, currentPower, requestTime)
             if minigameCallOk and started ~= false then return true end
             Runtime.Fishing.Recover(mode)
             return false
@@ -938,10 +1035,10 @@ FishingModes.V1.Start = function()
         Runtime.Fishing.ResetServer("V1")
         task.wait(0.1)
         while Config.InstantFishing do
-            FishingModes.Active = true
-            local ok = pcall(function()
+            local ok, err = pcall(function()
                 if not Runtime.requestConfiguredCast("V1") then error("V1 cast request rejected") end
                 if Config.CastWait > 0 then task.wait(Config.CastWait) end
+                if not Runtime.Fishing.CanContinue("V1") then error("cast interrupted") end
                 local catchSerial = Runtime.Fishing.CatchSerial
                 Runtime.Fishing.Phase = "Completing"
                 if not pcall(function() Remote.fishing:FireServer() end) then
@@ -952,7 +1049,7 @@ FishingModes.V1.Start = function()
                 end
                 task.wait(0.3)
             end)
-            Runtime.Fishing.HandleResult("V1", ok)
+            Runtime.Fishing.HandleResult("V1", ok, err)
             FishingModes.Active = false
         end
         FishingModes.Active = false
@@ -1064,20 +1161,18 @@ end
 
 FishingModes.Blatant.Start = function()
     FishingModes.Blatant.Stop(true)
-    Runtime.Fishing.Owner = nil
-    Runtime.Fishing.Phase = "Idle"
     Config.BlatantActive = true
     FishingModes.Blatant.Generation = FishingModes.Blatant.Generation + 1
     FishingModes.Blatant.Thread = task.spawn(function()
         Runtime.Fishing.ResetServer("Blatant")
         task.wait(0.1)
         while Config.BlatantActive do
-            FishingModes.Active = true
-            local ok = pcall(function()
+            local ok, err = pcall(function()
                 if not Runtime.requestConfiguredCast("Blatant") then
                     error("Blatant cast request rejected")
                 end
                 if Config.BlatantDelay > 0 then task.wait(Config.BlatantDelay) end
+                if not Runtime.Fishing.CanContinue("Blatant") then error("cast interrupted") end
                 FishingModes.Blatant.Visual.nextTicket = FishingModes.Blatant.Visual.nextTicket + 1
                 local ticket = FishingModes.Blatant.Visual.nextTicket
                 FishingModes.Blatant.Visual.pending[ticket] = FishingModes.Blatant.Visual.captureBadge()
@@ -1095,7 +1190,7 @@ FishingModes.Blatant.Start = function()
                     error("Blatant catch acknowledgement timeout")
                 end
             end)
-            Runtime.Fishing.HandleResult("Blatant", ok)
+            Runtime.Fishing.HandleResult("Blatant", ok, err)
             task.wait(0.1)
             FishingModes.Active = false
         end
@@ -1121,10 +1216,10 @@ FishingModes.V2.Start = function()
         Runtime.Fishing.ResetServer("V2")
         task.wait(0.1)
         while FishingModes.V2.Active do
-            FishingModes.Active = true
-            local ok = pcall(function()
+            local ok, err = pcall(function()
                 if not Runtime.requestConfiguredCast("V2") then error("V2 cast request rejected") end
                 if FishingModes.V2.Delay > 0 then task.wait(FishingModes.V2.Delay) end
+                if not Runtime.Fishing.CanContinue("V2") then error("cast interrupted") end
                 local catchSerial = Runtime.Fishing.CatchSerial
                 Runtime.Fishing.Phase = "Completing"
                 local completed = pcall(function() Remote.fishing:FireServer() end)
@@ -1134,7 +1229,7 @@ FishingModes.V2.Start = function()
                 end
                 task.wait(0.05)
             end)
-            Runtime.Fishing.HandleResult("V2", ok)
+            Runtime.Fishing.HandleResult("V2", ok, err)
             FishingModes.Active = false
         end
         FishingModes.Active = false
@@ -1181,6 +1276,7 @@ Runtime.Sell.Wait = function(ticket)
 end
 
 Runtime.Sell.Execute = function()
+    if Runtime.isTrading() then return false end
     if Runtime.Quest.SellHold > 0 then
         Runtime.Sell.Pending = true
         Runtime.Sell.Reason = Runtime.Sell.Reason or "QuestHold"
@@ -1223,7 +1319,7 @@ Runtime.Sell.Execute = function()
         end
     end
     if Runtime.Sell.Busy or Runtime.Sell.Phase ~= "Idle" then return false end
-    if os.clock() - Runtime.Sell.LastCall < 0.25 then return false end
+    if os.clock() - Runtime.Sell.LastCall < 0.25 or (Runtime.Sell.RetryAt or 0) > os.clock() then return false end
     if not Remote.sell then return false end
     local character = Service.LocalPlayer.Character
     if character and (character:GetAttribute("SellAll") == true
@@ -1241,12 +1337,25 @@ Runtime.Sell.Execute = function()
     local startedAt = os.clock()
     local sawSellAll = false
     local callDone = false
+    local callSucceeded = false
+    local epoch = Runtime.Sell.RequestEpoch
+    local function finishAttempt()
+        local retry = not sawSellAll and not callSucceeded and Runtime.Sell.RequestEpoch == epoch
+        if retry then
+            Runtime.Sell.RetryAt = os.clock() + 2
+            Runtime.Sell.LastError = callDone and "Sell request rejected" or "Sell acknowledgement timeout"
+        end
+        Runtime.Sell.Finish(ticket)
+        if retry then Runtime.Sell.Queue(Runtime.Sell.Reason) end
+    end
 
     -- The request and its watchdog are separate so a stalled RF cannot pin
     -- every fishing loop forever on low-end/mobile executors.
     Runtime.Sell.Worker = task.spawn(function()
-        pcall(function() return Remote.sell:InvokeServer() end)
+        local ok, result = pcall(function() return Remote.sell:InvokeServer() end)
         if ticket ~= Runtime.Sell.Ticket then return end
+        callSucceeded = ok and result ~= false
+        if not ok then Runtime.Sell.LastError = tostring(result) end
         callDone = true
     end)
     Runtime.Sell.Monitor = task.spawn(function()
@@ -1259,10 +1368,10 @@ Runtime.Sell.Execute = function()
             elseif sawSellAll
                 or (callDone and os.clock() - startedAt >= 0.35)
             then
-                Runtime.Sell.Finish(ticket)
+                finishAttempt()
                 return
             elseif os.clock() - startedAt >= 5 then
-                Runtime.Sell.Finish(ticket)
+                finishAttempt()
                 return
             end
             task.wait(0.05)
@@ -1272,14 +1381,44 @@ Runtime.Sell.Execute = function()
     return true
 end
 
+Runtime.Sell.CanFlush = function()
+    if Runtime.isTrading() or Runtime.Quest.Action.Busy
+        or Runtime.Quest.SellHold > 0 or Runtime.Sell.Busy then return false end
+    local phase = Runtime.Fishing.Phase
+    if phase ~= "Idle" and phase ~= "PostCatch" then return false end
+    if Runtime.Fishing.Owner and phase ~= "PostCatch" then return false end
+    if phase == "Idle" then
+        local guid = nil
+        pcall(function()
+            local controller = FishingModes.Controller
+            if controller then
+                guid = controller.GetCurrentGUID and controller:GetCurrentGUID() or controller.CurrentGUID
+            end
+        end)
+        if guid ~= nil and (Runtime.Sell.CatchWindowUntil or -math.huge) <= os.clock() then return false end
+    end
+    local character = Service.LocalPlayer.Character
+    return not (character and character:GetAttribute("SellAll") == true)
+end
 Runtime.Sell.Flush = function()
-    if not Runtime.Sell.Pending then return false end
+    if not Runtime.Sell.Pending or not Runtime.Sell.CanFlush() then return false end
     return Runtime.Sell.Execute()
 end
 
 Runtime.Sell.Queue = function(reason)
+    Runtime.Sell.RequestEpoch = (Runtime.Sell.RequestEpoch or 0) + 1
     Runtime.Sell.Pending = true
     Runtime.Sell.Reason = reason or Runtime.Sell.Reason or "Manual"
+    if not Runtime.Sell.PendingWorker then
+        Runtime.Sell.PendingWorker = true
+        task.spawn(function()
+            while Runtime.Sell.Pending do
+                if Runtime.Sell.CanFlush() then Runtime.Sell.Flush() end
+                task.wait(0.5)
+            end
+            Runtime.Sell.PendingWorker = false
+        end)
+    end
     local nativeAuto = false
     local currentGUID = nil
     pcall(function()
@@ -1329,6 +1468,7 @@ Runtime.Sell.CheckCount = function()
 end
 
 Runtime.Sell.Stop = function()
+    Runtime.Sell.RequestEpoch = (Runtime.Sell.RequestEpoch or 0) + 1
     Config.AutoSell = false
     Runtime.Sell.Pending = false
     Runtime.Sell.CountSeen = -1
@@ -1348,6 +1488,7 @@ Runtime.Sell.Start = function()
         local lastSellTick = os.clock()
 
         while Config.AutoSell do
+            if Runtime.Sell.Pending and Runtime.Sell.CanFlush() then Runtime.Sell.Flush() end
             if currentMode ~= Config.AutoSellMode
                 or seenRevision ~= Runtime.Sell.Revision
             then
@@ -1378,6 +1519,10 @@ end
 
 -- ====== SMALL NOTIFICATION (AUTO ON) ======
 FishingModes.FishNameToId = {}
+Data.OnFishRegistered = function(record, previous)
+    if previous and previous.Name ~= record.Name then FishingModes.FishNameToId[previous.Name] = nil end
+    FishingModes.FishNameToId[record.Name] = record.Id
+end
 
 for name, fish in pairs(Data.FishCatalog.ByName) do
     FishingModes.FishNameToId[name] = fish.Id
@@ -1731,7 +1876,7 @@ do
             then
                 local ok, err = pcall(refreshVisualInventoryTiles, ticket)
                 if not ok then
-                    warn("[Orvion] inventory visual refresh failed:", err)
+                    Runtime.LastError = "Inventory visual refresh: " .. tostring(err)
                 end
             end
             if ticket == FishingModes.Blatant.Visual.refreshTicket then
@@ -1834,6 +1979,7 @@ do
         Remote.fishCaught.OnClientEvent:Connect(function(fishName, fishMetadata, _, _, visualData)
             Runtime.Fishing.CatchSerial = Runtime.Fishing.CatchSerial + 1
             Runtime.Fishing.LastCatchAt = os.clock()
+            Runtime.Sell.CatchWindowUntil = os.clock() + 0.35
             pcall(Runtime.Quest.OnFishCaught, fishName, fishMetadata)
             -- Manual/native fishing has no custom loop boundary, so process its
             -- queued sell after Replion receives the newly caught item.
@@ -1844,6 +1990,10 @@ do
                 end
             end)
             local fishItemId = FishingModes.FishNameToId[fishName]
+            if not fishItemId then
+                local record = Data.getFishRecord(fishName)
+                fishItemId = record and record.Id
+            end
             if not fishItemId then return end
 
             local ticket, badgeBaseline = next(FishingModes.Blatant.Visual.pending)
@@ -1933,37 +2083,60 @@ end
 -- transaction owns it. A transaction can finish after the only EquipId change
 -- has already happened, so recheck after the owner releases it.
 SupportState.recheckAutoEquipRod = function(delay)
+    if SupportState.autoEquipWorker or not SupportState.autoEquipRodEnabled then return end
+    SupportState.autoEquipWorker = true
     task.spawn(function()
         if delay and delay > 0 then task.wait(delay) end
-        if not SupportState.autoEquipRodEnabled
-            or Runtime.Quest.SellHold > 0
-            or Runtime.Quest.Action.Busy
-            or Runtime.Sell.Busy
-            or FishingModes.Active
-        then return end
-        local equipped = Data.Player:Get("EquippedId")
-        if not equipped or equipped == "" then
-            pcall(function() Remote.equipTool:FireServer(1) end)
-        end
-    end)
-end
-
-SupportState.setAutoEquipRod = function(state)
-    if SupportState.autoEquipRodConn then SupportState.autoEquipRodConn:Disconnect() SupportState.autoEquipRodConn = nil end
-    SupportState.autoEquipRodEnabled = state == true
-    if state then
-        SupportState.recheckAutoEquipRod()
-        -- Event-driven: tiap EquippedId kosong → pasang rod
-        -- task.spawn+wait(0.1): debounce supaya tidak flicker saat EquippedId bounce cepat
-        SupportState.autoEquipRodConn = Data.Player:OnChange("EquippedId", function(value)
-            if not value or value == "" then
-                if Runtime.Quest.SellHold > 0
-                    or Runtime.Quest.Action.Busy
-                    or Runtime.Sell.Busy or FishingModes.Active
-                then return end
-                SupportState.recheckAutoEquipRod(0.3)
+        local ok, err = pcall(function()
+            if not SupportState.autoEquipRodEnabled or Runtime.isTrading()
+                or Runtime.Quest.SellHold > 0 or Runtime.Quest.Action.Busy
+                or Runtime.Sell.Busy or Runtime.Fishing.Owner
+                or Runtime.Fishing.Phase ~= "Idle"
+            then return end
+            if tostring(Data.Player:Get("EquippedId") or "") ~= "" then return end
+            Runtime.Fishing.Owner = "AutoEquip"
+            Runtime.Fishing.Phase = "Equipping"
+            for _ = 1, 3 do
+                if not SupportState.autoEquipRodEnabled or Runtime.isTrading()
+                    or Runtime.Quest.Action.Busy or Runtime.Quest.SellHold > 0 then break end
+                local hotbar = Data.Player:Get("EquippedItems") or {}
+                local uuid = hotbar[1]
+                if not uuid then break end
+                Remote.equipTool:FireServer(1)
+                local deadline = os.clock() + 0.6
+                repeat
+                    if tostring(Data.Player:Get("EquippedId") or "") == tostring(uuid) then return end
+                    if not SupportState.autoEquipRodEnabled or Runtime.isTrading() then return end
+                    task.wait(0.05)
+                until os.clock() >= deadline
             end
         end)
+        if Runtime.Fishing.Owner == "AutoEquip" then
+            Runtime.Fishing.Owner = nil
+            Runtime.Fishing.Phase = "Idle"
+        end
+        SupportState.autoEquipWorker = false
+        if not ok then Runtime.Fishing.LastError = "AutoEquip: " .. tostring(err) end
+    end)
+end
+SupportState.setAutoEquipRod = function(state)
+    SupportState.autoEquipRodEnabled = state == true
+    if SupportState.autoEquipRodConn then SupportState.autoEquipRodConn:Disconnect() SupportState.autoEquipRodConn = nil end
+    if state then
+        SupportState.autoEquipRodConn = Data.Player:OnChange("EquippedId", function(value)
+            if not value or value == "" then SupportState.recheckAutoEquipRod(0.1) end
+        end)
+        SupportState.recheckAutoEquipRod()
+        if not SupportState.autoEquipMonitor then
+            SupportState.autoEquipMonitor = true
+            task.spawn(function()
+                while SupportState.autoEquipRodEnabled do
+                    SupportState.recheckAutoEquipRod()
+                    task.wait(0.5)
+                end
+                SupportState.autoEquipMonitor = false
+            end)
+        end
     end
 end
 
@@ -3328,7 +3501,7 @@ Navigation.pauseQuestForEvent = function(state)
     if Runtime.Quest.Paused == state then return end
     Runtime.Quest.Paused = state
     if state then
-        Runtime.Quest.ForcePerfect = false
+
     end
     for _, job in ipairs({"DeepSea","Artifact","Element","Diamond","Crystalline"}) do
         local oldSession = Runtime.Quest.Sessions[job]
@@ -4437,7 +4610,7 @@ do
                 S.enchantActionTicket = nil
             end
             if not workerOk and S.enchantSession == workerSession then
-                warn("[Orvion] Auto Enchant worker error: " .. tostring(workerErr))
+                Runtime.LastError = "Auto Enchant: " .. tostring(workerErr)
                 UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Auto Enchant stopped safely"})
                 pcall(function() S.enchantToggle:Set(false) end)
             end
@@ -4709,7 +4882,7 @@ do
                 S.transcendedActionTicket = nil
             end
             if not workerOk and S.transcendedSession == workerSession then
-                warn("[Orvion] Transcended worker error: " .. tostring(workerErr))
+                Runtime.LastError = "Transcended: " .. tostring(workerErr)
                 S.transcendedThread = nil
                 setPara(S.transcendedPara,"Stopped","Worker error; action lock released")
                 UI.Library:Notify({Title="Orvion",Subtitle="Hub",Content="Create Transcended stopped safely"})
@@ -4741,18 +4914,54 @@ UI.Window:AddDropdown(S.RodSection, "Select Rod", "", S.ROD_LIST, false, Config.
     Config.SelectedRod = v or "Starter Rod"
 end, "Dropdown_Select Rod")
 
+-- Latest explicit purchase of each kind supersedes its older equip request.
+S.queuePurchasedEquip = function(kind, id)
+    S.PurchasedEquip = S.PurchasedEquip or {}
+    local pending = {Id=id}
+    S.PurchasedEquip[kind] = pending
+    task.spawn(function()
+        local function active() return S.PurchasedEquip[kind] == pending end
+        while active() do
+            if S.Quest then
+                local done = false
+                S.Quest.withSellHold("PurchaseEquip:" .. kind, active, function()
+                    for _ = 1, 3 do
+                        if not active() then return end
+                        if kind == "Baits" then
+                            if tonumber(Data.Player:Get("EquippedBaitId")) == tonumber(id) then done=true return end
+                            Remote.equipBait:FireServer(id)
+                        else
+                            if tostring(Data.Player:Get("EquippedId") or "") == tostring(id) then done=true return end
+                            if not S.Quest.findByUUID(id) then return end
+                            Remote.equipItem:FireServer(id, "Fishing Rods")
+                            task.wait(0.2)
+                            if not active() then return end
+                            local slot = table.find(Data.Player:Get("EquippedItems") or {}, tostring(id))
+                            if slot then Remote.equipTool:FireServer(slot) end
+                        end
+                        task.wait(0.8)
+                    end
+                end, 3)
+                if done then if active() then S.PurchasedEquip[kind] = nil end return end
+            end
+            task.wait(1)
+        end
+    end)
+end
+
 UI.Window:AddButton(S.RodSection, "Buy Rod", "", "rbxassetid://16932740082", function()
     local rodId = S.ROD_MAP[Config.SelectedRod]
     if not rodId or not Remote.purchaseRod then
         UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
-    local ok, success, uuid = pcall(function() return Remote.purchaseRod:InvokeServer(rodId) end)
+    local selectedRod = Config.SelectedRod
+    local ok, success, uuid = Runtime.callRemote("purchaseRod", 10, nil, rodId)
     if ok then
         if success and uuid and Remote.equipItem then
-            pcall(function() Remote.equipItem:FireServer(uuid, "Fishing Rods") end)
+            S.queuePurchasedEquip("Fishing Rods", uuid)
         end
-        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content=Config.SelectedRod .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content=selectedRod .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
     else
         UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content="Purchase failed", Color=Color3.fromRGB(150,150,170), Delay=2 })
     end
@@ -4781,12 +4990,13 @@ UI.Window:AddButton(S.BaitSection, "Buy Bait", "", "rbxassetid://16932740082", f
         UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content="Remote not found", Color=Color3.fromRGB(150,150,170), Delay=2 })
         return
     end
-    local ok, success, shouldEquip = pcall(function() return Remote.purchaseBait:InvokeServer(baitId) end)
+    local selectedBait = Config.SelectedBait
+    local ok, success, shouldEquip = Runtime.callRemote("purchaseBait", 10, nil, baitId)
     if ok then
         if shouldEquip and Remote.equipBait then
-            pcall(function() Remote.equipBait:FireServer(baitId) end)
+            S.queuePurchasedEquip("Baits", baitId)
         end
-        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content=Config.SelectedBait .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
+        UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content=selectedBait .. (success and " bought" or " failed"), Color=Color3.fromRGB(150,150,170), Delay=3 })
     else
         UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Content="Purchase failed", Color=Color3.fromRGB(150,150,170), Delay=2 })
     end
@@ -5349,7 +5559,7 @@ do
     end
 
     -- waitJob: poll predicate sampai true/timeout, exit kalau Enabled[job] false
-    -- Tidak pakai job/generation — cukup cek Enabled[job]
+    -- Every wait observes the exact toggle generation.
     S.Quest.waitJob = function(job, predicate, timeout, interval, session)
         local deadline = timeout and (os.clock() + timeout) or nil
         while S.Quest.isActive(job, session) do
@@ -5369,7 +5579,17 @@ do
     end
 
     -- teleport helper tanpa LastLocation tracking
-    S.Quest.teleport = function(destination)
+    S.Quest.teleport = function(destination, job, session)
+        if job then
+            if not S.Quest.isActive(job, session) then return false end
+            local action = Runtime.Quest.Action
+            if action.Busy then
+                if action.Job ~= job or action.Session ~= session then return false end
+            elseif job == "Crystalline" then
+                if not S.Quest.canCrystallineNavigate(session) then return false end
+            elseif not S.Quest.canNavigate(job, session) then return false end
+        end
+        if Runtime.isTrading() or (Runtime.Quest.FallbackUntil or 0) > os.clock() then return false end
         if typeof(destination) == "CFrame" then
             local character = Service.LocalPlayer.Character
             local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -5406,6 +5626,7 @@ do
     -- Establish actual NPC proximity first, but do not fire the prompt itself:
     -- that would open a client dialogue UI which a direct remote cannot close.
     S.Quest.approachDiamondResearcher = function(job, session)
+        if not S.Quest.isActive(job, session) or Runtime.isTrading() then return false end
         local npc = S.Quest.getNPC("Diamond Researcher")
         local character = Service.LocalPlayer.Character
         local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -5460,9 +5681,10 @@ do
 
     S.Quest.acquireAction = function(
         owner, shouldContinue, timeout, job, session)
-        local holdToken = S.Quest.addHold(owner, job, session)
+        local holdToken = nil
         local deadline = os.clock() + (timeout or 10)
-        while Runtime.Quest.Action.Busy do
+        while Runtime.Quest.Action.Busy or (Runtime.Quest.RestorePending and owner ~= "Restore") or Runtime.isTrading()
+            or (Runtime.Quest.FallbackUntil or 0) > os.clock() do
             if shouldContinue and not shouldContinue() then
                 S.Quest.removeHold(holdToken)
                 return nil
@@ -5473,6 +5695,8 @@ do
             end
             task.wait(0.05)
         end
+        if shouldContinue and not shouldContinue() then return nil end
+        holdToken = S.Quest.addHold(owner, job, session)
         Runtime.Quest.Action.Ticket = Runtime.Quest.Action.Ticket + 1
         local ticket = Runtime.Quest.Action.Ticket
         Runtime.Quest.Action.Busy = true
@@ -5484,7 +5708,7 @@ do
             if shouldContinue and not shouldContinue() then break end
             local character = Service.LocalPlayer.Character
             local selling = character and character:GetAttribute("SellAll") == true
-            local trading = character and character:GetAttribute("IsTrading") == true
+            local trading = Runtime.isTrading()
             if Runtime.Fishing.Phase == "Idle"
                 and Runtime.Fishing.Owner == nil
                 and not Runtime.Sell.Busy and not selling and not trading
@@ -5534,7 +5758,15 @@ do
             owner, shouldContinue, timeout, job, session)
         if not ticket then return false, "action unavailable" end
         local packed = table.pack(pcall(fn))
+        local restore = Runtime.Quest.Action.Restore
+        if restore then
+            local ok, done = pcall(S.Quest.restoreQuestItem, restore.Target,
+                restore.Displaced, restore.RestoreRod, restore.Inserted)
+            if not ok or not done then Runtime.Quest.RestorePending = restore end
+            Runtime.Quest.Action.Restore = nil
+        end
         S.Quest.releaseAction(ticket)
+        if Runtime.Quest.RestorePending then S.Quest.retryRestore() end
         return table.unpack(packed, 1, packed.n)
     end
 
@@ -5635,6 +5867,7 @@ do
         then
             return false, nil
         end
+        if not S.Quest.isActive(job, session) then return false, nil end
         pcall(function() Remote.unequipTool:FireServer() end)
         local deadline = os.clock() + 1
         while os.clock() < deadline and S.Quest.isActive(job, session) do
@@ -5646,6 +5879,7 @@ do
         local slot = table.find(hotbar, wanted)
         local inserted = slot == nil
         local displaced = nil
+        Runtime.Quest.Action.Restore = {Target=wanted, Inserted=inserted, RestoreRod=true}
         local function insertIntoHotbar()
             local tried = {}
             local types = {itemType}
@@ -5685,6 +5919,7 @@ do
                         and entry.Data.Type == "Fishing Rods")
                     then
                         displaced = entry
+                        Runtime.Quest.Action.Restore.Displaced = entry
                         pcall(function()
                             Remote.unequipItem:FireServer(evictUUID)
                         end)
@@ -5726,6 +5961,7 @@ do
                     and table.find(Data.Player:Get("EquippedItems") or {}, blockerUUID)
                 then
                     displaced = blocker
+                    Runtime.Quest.Action.Restore.Displaced = blocker
                     pcall(function() Remote.unequipItem:FireServer(blockerUUID) end)
                     deadline = os.clock() + 1.5
                     while os.clock() < deadline
@@ -5751,48 +5987,64 @@ do
         return hotbar[1] and 1 or nil, hotbar[1] and tostring(hotbar[1]) or nil
     end
 
-    S.Quest.restoreQuestItem = function(
-        targetUUID, displaced, restoreRod, removeInserted)
+    S.Quest.restoreQuestItem = function(targetUUID, displaced, restoreRod, removeInserted)
         local wanted = tostring(targetUUID or "")
-        if removeInserted and wanted ~= "" and table.find(
-            Data.Player:Get("EquippedItems") or {}, wanted)
-        then
-            pcall(function() Remote.unequipItem:FireServer(targetUUID) end)
-            local deadline = os.clock() + 1.5
-            while os.clock() < deadline and table.find(
-                Data.Player:Get("EquippedItems") or {}, wanted)
-            do task.wait(0.05) end
+        local function check()
+            local hotbar = Data.Player:Get("EquippedItems") or {}
+            local insertedGone = not removeInserted or not table.find(hotbar, wanted)
+            local displacedUUID = displaced and displaced.Item and tostring(displaced.Item.UUID)
+            local displacedBack = not displacedUUID or not S.Quest.findByUUID(displacedUUID)
+                or table.find(hotbar, displacedUUID) ~= nil
+            local rodSlot, rodUUID = S.Quest.getHotbarRodSlot()
+            local rodBack = not restoreRod or (rodUUID and tostring(Data.Player:Get("EquippedId") or "") == rodUUID)
+            return insertedGone and displacedBack and rodBack, insertedGone, displacedBack, rodBack, rodSlot
         end
-        if displaced and displaced.Item and Remote.equipItem then
-            local kind = displaced.Data and displaced.Data.Type
-                or displaced.Category or "Items"
-            pcall(function()
-                Remote.equipItem:FireServer(displaced.Item.UUID, kind)
-            end)
-            local deadline = os.clock() + 1.5
-            while os.clock() < deadline and not table.find(
-                Data.Player:Get("EquippedItems") or {},
-                tostring(displaced.Item.UUID))
-            do task.wait(0.05) end
-        end
-        if restoreRod and Remote.equipTool then
-            -- A consumed lever can update EquippedItems one frame later.
-            -- Re-resolve the rod instead of assuming the first read is valid.
-            for _ = 1, 3 do
-                local rodSlot, rodUUID = S.Quest.getHotbarRodSlot()
-                if rodSlot then
-                    pcall(function() Remote.equipTool:FireServer(rodSlot) end)
-                    local deadline = os.clock() + 0.8
-                    while os.clock() < deadline do
-                        if tostring(Data.Player:Get("EquippedId") or "") == rodUUID then
-                            return
-                        end
-                        task.wait(0.05)
-                    end
-                end
-                task.wait(0.1)
+        for _ = 1, 3 do
+            local done, insertedGone, displacedBack, rodBack, rodSlot = check()
+            if done then
+                Runtime.Quest.Action.Restore = nil
+                return true
             end
+            if not insertedGone then
+                pcall(function() Remote.unequipItem:FireServer(wanted) end)
+            elseif not displacedBack then
+                pcall(function()
+                    Remote.equipItem:FireServer(displaced.Item.UUID,
+                        displaced.Data and displaced.Data.Type or displaced.Category or "Items")
+                end)
+            elseif not rodBack and rodSlot then
+                pcall(function() Remote.equipTool:FireServer(rodSlot) end)
+            end
+            local deadline = os.clock() + 0.8
+            repeat
+                if check() then Runtime.Quest.Action.Restore = nil return true end
+                task.wait(0.05)
+            until os.clock() >= deadline
         end
+        return false
+    end
+
+    S.Quest.retryRestore = function()
+        if Runtime.Quest.RestoreWorker then return end
+        Runtime.Quest.RestoreWorker = true
+        task.spawn(function()
+            while Runtime.Quest.RestorePending do
+                local pending = Runtime.Quest.RestorePending
+                local ticket = S.Quest.acquireAction("Restore", function()
+                    return Runtime.Quest.RestorePending == pending
+                end, 3)
+                if ticket then
+                    local ok, done = pcall(S.Quest.restoreQuestItem, pending.Target,
+                        pending.Displaced, pending.RestoreRod, pending.Inserted)
+                    if ok and done and Runtime.Quest.RestorePending == pending then
+                        Runtime.Quest.RestorePending = nil
+                    end
+                    S.Quest.releaseAction(ticket)
+                end
+                task.wait(1)
+            end
+            Runtime.Quest.RestoreWorker = false
+        end)
     end
 
     S.Quest.equipRodAggressive = function(job, session, uuid)
@@ -5808,6 +6060,7 @@ do
                 if tostring(hotbar[1] or "") == wanted then break end
                 task.wait(0.05)
             end
+            if not S.Quest.isActive(job, session) then return false end
             pcall(function() Remote.equipTool:FireServer(1) end)
             deadline = os.clock() + 0.8
             while os.clock() < deadline do
@@ -5821,7 +6074,7 @@ do
     end
 
     -- equipRodCanonical: equip progression rod agresif (mirip buy rod)
-    -- Tidak pakai withSellHold — rod bukan ikan yang bisa kejual
+    -- Serialized through the shared equipment action lock.
     S.Quest.equipRodCanonical = function(job, session, uuid)
         local equipped = false
         S.Quest.withSellHold("Rod:" .. job, function()
@@ -5833,7 +6086,7 @@ do
     end
 
     -- equipRodWithRetry: retry 5x cek Replion EquippedId dinamis
-    -- Tidak pakai withSellHold — rod tidak perlu lindungi dari autosell
+    -- Retry only while this exact Quest toggle generation is active.
     S.Quest.equipRodWithRetry = function(job, session, uuid)
         local equipped = false
         for attempt = 1, 5 do
@@ -5950,6 +6203,7 @@ do
                 end
                 if not Remote.dialogueEnded then break end
                 if prepareAction and not prepareAction() then break end
+                if not S.Quest.isActive(job, session) then break end
                 pcall(function() Remote.dialogueEnded:FireServer(table.unpack(args)) end)
                 local acked = S.Quest.waitJob(job, progressed, 10, 0.1, session)
                 if acked then
@@ -5979,7 +6233,7 @@ do
                     or S.Quest.owns("Diamond Key")
                     or S.Quest.owns("Diamond Rod")
             end
-            for attempt = 1, 3 do
+            for attempt = 1, 1 do
                 if not S.Quest.isActive("Diamond", session) then break end
                 if isStarted() then
                     started = true
@@ -5998,7 +6252,6 @@ do
                     S.Quest.refreshFromReplion()
                     break
                 end
-                if attempt < 3 then task.wait(1) end
             end
         end, 12, "Diamond", session)
         return started
@@ -6159,7 +6412,7 @@ do
                 return
             end
             -- Setelah key di tangan, baru teleport ke door
-            S.Quest.teleport(S.Quest.DiamondDoor)
+            if not S.Quest.teleport(S.Quest.DiamondDoor, job, session) then return end
             local prompt = nil
             local promptReady = S.Quest.waitJob(job, function()
                 local doors = Service.CollectionService:GetTagged("DiamondDoor")
@@ -6184,7 +6437,7 @@ do
                 return
             end
             task.wait(0.25)
-            if not Remote.claimItem then
+            if not S.Quest.isActive(job, session) or not Remote.claimItem then
                 S.Quest.restoreQuestItem(uuid, displaced, true, inserted)
                 return
             end
@@ -6230,7 +6483,7 @@ do
     -- ====== INDEPENDENT RUNNERS — table assignment pattern ======
 
     S.Quest.jobComplete = function(job)
-        if job == "DeepSea" then return S.Quest.owns("Ghostfinn Rod") end
+        if job == "DeepSea" then return S.Quest.owns("Ghostfinn Rod") or S.Quest.isCompleted("Deep Sea Quest") end
         if job == "Artifact" then
             if S.Quest.get("UnlockedTemple") == true then return true end
             local levers = S.Quest.get("TempleLevers")
@@ -6240,8 +6493,8 @@ do
             end
             return true
         end
-        if job == "Element" then return S.Quest.owns("Element Rod") end
-        if job == "Diamond" then return S.Quest.owns("Diamond Rod") end
+        if job == "Element" then return S.Quest.owns("Element Rod") or S.Quest.isCompleted("Element Quest") end
+        if job == "Diamond" then return S.Quest.owns("Diamond Rod") or S.Quest.isCompleted("Diamond Researcher") end
         if job == "Crystalline" then
             local plates = S.Quest.get("RuinPressurePlates") or {}
             for _, definition in ipairs(S.Quest.Pressure) do
@@ -6256,42 +6509,50 @@ do
     -- a time. Artifact precedes Element, so Element automatically takes over
     -- only after all four lever acknowledgements arrive or Artifact is OFF.
     S.Quest.MovementOrder = {"DeepSea", "Artifact", "Element", "Diamond"}
-    S.Quest.canNavigate = function(job)
-        if not S.Quest.isActive(job) then return false end
-        local character = Service.LocalPlayer.Character
-        if Service.LocalPlayer:GetAttribute("IsTrading") == true
-            or (character and character:GetAttribute("IsTrading") == true)
-        then return false end
-        if Runtime.Quest.Action.Busy then return false end
-        for _, candidate in ipairs(S.Quest.MovementOrder) do
-            if candidate == job then return true end
-            if Runtime.Quest.Enabled[candidate] == true
-                and not S.Quest.jobComplete(candidate)
-            then
-                return false
-            end
-        end
-        return true
+    S.Quest.routeReady = function(job)
+        return Runtime.Quest.Enabled[job] == true
+            and not S.Quest.jobComplete(job)
+            and (Runtime.Quest.RouteRetry[job] or 0) <= os.clock()
     end
 
-    S.Quest.canCrystallineNavigate = function()
-        if not S.Quest.isActive("Crystalline") then return false end
-        if Runtime.Quest.Action.Busy then return false end
-        -- Strict overlay rule: Crystalline may own movement only when every
-        -- route toggle is OFF. A completed-but-still-ON route still prevents
-        -- Crystalline from teleporting.
+    S.Quest.canNavigate = function(job, session)
+        if not S.Quest.isActive(job, session) or not S.Quest.routeReady(job)
+            or Runtime.isTrading() or Runtime.Quest.Action.Busy
+            or (Runtime.Quest.FallbackUntil or 0) > os.clock()
+        then return false end
+        local visit = Runtime.Quest.Visit
+        if visit and visit.Until > os.clock()
+            and S.Quest.isActive(visit.Job, visit.Session)
+            and S.Quest.routeReady(visit.Job)
+        then return visit.Job == job and visit.Session == session end
+        for _, candidate in ipairs(S.Quest.MovementOrder) do
+            if S.Quest.routeReady(candidate) then return candidate == job end
+        end
+        return false
+    end
+
+    S.Quest.canCrystallineNavigate = function(session)
+        if not S.Quest.isActive("Crystalline", session)
+            or Runtime.isTrading() or Runtime.Quest.Action.Busy
+            or (Runtime.Quest.FallbackUntil or 0) > os.clock()
+        then return false end
         for _, job in ipairs(S.Quest.MovementOrder) do
-            if Runtime.Quest.Enabled[job] then return false end
+            if S.Quest.routeReady(job) then return false end
         end
         return true
     end
 
     S.Quest.completeJob = function(job, session)
-        if Runtime.Quest.Sessions[job] ~= session then return end
-        if job == "Diamond" then Runtime.Quest.ForcePerfect = false end
-        -- Completion ends the current runner at its call site, but never
-        -- mutates the user's toggle.  This keeps UI and Enabled state aligned
-        -- and lets the user turn every Quest off manually.
+        if not S.Quest.isActive(job, session) then return end
+        Runtime.Quest.RouteRetry[job] = nil
+        if Runtime.Quest.CompletionNotified[job] ~= session then
+            Runtime.Quest.CompletionNotified[job] = session
+            local labels = { Artifact="Artifact lever", DeepSea="Deep sea quest",
+                Element="Element quest", Diamond="Diamond rod quest",
+                Crystalline="Crystalline passage" }
+            UI.Library:Notify({Title="Orvion", Subtitle="Hub",
+                Content=(labels[job] or job) .. " has completed!"})
+        end
         S.Quest.refreshFromReplion()
     end
 
@@ -6307,6 +6568,7 @@ do
         thread = task.spawn(function()
             local issue = S.Quest.getStartIssue(job)
             while issue and S.Quest.isActive(job, session) do
+                Runtime.Quest.RouteRetry[job] = os.clock() + 2
                 task.wait(1)
                 issue = S.Quest.getStartIssue(job)
             end
@@ -6326,6 +6588,7 @@ do
                 end
                 return
             end
+            Runtime.Quest.RouteRetry[job] = nil
             local ok, err = pcall(fn, session)
             if Runtime.Quest.Threads[job] == thread
                 and Runtime.Quest.ThreadSessions[job] == session
@@ -6346,8 +6609,7 @@ do
             end
             local failures = (Runtime.Quest.Failures[job] or 0) + 1
             Runtime.Quest.Failures[job] = failures
-            warn(("[Orvion] %s Quest worker error (%d): %s"):format(
-                tostring(job), failures, tostring(err)))
+            Runtime.LastError = ("%s Quest (%d): %s"):format(tostring(job), failures, tostring(err))
             if failures >= 3 then
                 Runtime.Quest.Stop(job)
                 local toggle = S.Quest.Toggles and S.Quest.Toggles[job]
@@ -6383,19 +6645,19 @@ do
                 for _, definition in ipairs(S.Quest.Artifacts) do
                     if levers[definition.Type] ~= true then
                         allDone = false
-                        if not S.Quest.canNavigate("Artifact") then break end
+                        if not S.Quest.canNavigate("Artifact", session) then break end
                         local entry = S.Quest.findByName(definition.Type)
                         if entry then
                             local near = S.Quest.isNear(definition.CFrame, 30)
                             if not near then
-                                local moved = S.Quest.teleport(definition.CFrame)
+                                local moved = S.Quest.teleport(definition.CFrame, "Artifact", session)
                                 if moved then
                                     near = S.Quest.waitJob("Artifact", function()
                                         return S.Quest.isNear(definition.CFrame, 30)
                                     end, 2, 0.05, session)
                                 end
                             end
-                            if near and S.Quest.canNavigate("Artifact") then
+                            if near and S.Quest.canNavigate("Artifact", session) then
                                 lastTeleport = nil
                                 S.Quest.placeStateItem(
                                     "Artifact", session, Remote.placeLever,
@@ -6404,7 +6666,7 @@ do
                         elseif lastTeleport ~= definition.Type
                             or not S.Quest.isNear(definition.CFrame, 80)
                         then
-                            if S.Quest.teleport(definition.CFrame) then
+                            if S.Quest.teleport(definition.CFrame, "Artifact", session) then
                                 lastTeleport = definition.Type
                             end
                         end
@@ -6430,17 +6692,21 @@ do
             and not S.Quest.isCompleted("Deep Sea Quest")
             and not S.Quest.owns("Ghostfinn Rod")
         do
-            if S.Quest.canNavigate("DeepSea") then
-                S.Quest.teleport("Sisyphus Statue")
-                S.Quest.waitJob("DeepSea", function()
+            if S.Quest.canNavigate("DeepSea", session) then
+                S.Quest.teleport("Sisyphus Statue", "DeepSea", session)
+                local accepted = S.Quest.waitJob("DeepSea", function()
                     return S.Quest.getMainline("Deep Sea Quest") ~= nil
                         or S.Quest.isCompleted("Deep Sea Quest")
                 end, 8, 0.1, session)
+                if not accepted then Runtime.Quest.RouteRetry.DeepSea = os.clock() + 20 end
             end
             task.wait(0.5)
         end
         local lastTeleport = nil
         while S.Quest.isActive("DeepSea", session) do
+            if S.Quest.isCompleted("Deep Sea Quest") and Runtime.Quest.CompletionNotified.DeepSea ~= session then
+                S.Quest.completeJob("DeepSea", session)
+            end
             local ghostfinn = S.Quest.findByName("Ghostfinn Rod")
             if ghostfinn then
                 local uuid = ghostfinn.Item and ghostfinn.Item.UUID
@@ -6466,50 +6732,40 @@ do
             elseif objective == 2 or objective == 3 then
                 targetLoc = "Sisyphus Statue"
             end
-            if targetLoc and S.Quest.canNavigate("DeepSea")
+            if targetLoc and S.Quest.canNavigate("DeepSea", session)
                 and (lastTeleport ~= targetLoc
                     or not S.Quest.isNear(targetLoc, 150))
             then
-                S.Quest.teleport(targetLoc)
+                S.Quest.teleport(targetLoc, "DeepSea", session)
                 lastTeleport = targetLoc
             end
             task.wait(0.5)
         end
     end
 
-    -- ELEMENT: silent wait eligibility (Ghostfinn), activate di AJ, loop per objective
+    -- ELEMENT: user-selected route; activation and progress are server-authoritative.
     S.Quest.Runners.Element = function(session)
-        -- Silent eligibility: tunggu Ghostfinn Rod via Replion, tidak update panel
-        while S.Quest.isActive("Element", session) do
-            if S.Quest.owns("Ghostfinn Rod") then break end
-            task.wait(2)
-        end
-        if not S.Quest.isActive("Element", session) then return end
-        -- Artifact OFF must not suppress Element's own Ancient Jungle start
-        -- once Ghostfinn is owned. Do it before waiting for Replion's quest
-        -- state, whose first replication arrives only after the area change.
-        if not S.Quest.getMainline("Element Quest")
-            and not S.Quest.isCompleted("Element Quest")
-            and S.Quest.canNavigate("Element")
-        then
-            S.Quest.teleport("Ancient Jungle")
-        end
         while S.Quest.isActive("Element", session)
             and not S.Quest.getMainline("Element Quest")
             and not S.Quest.isCompleted("Element Quest")
             and not S.Quest.owns("Element Rod")
         do
-            if S.Quest.canNavigate("Element") then
-                S.Quest.teleport("Ancient Jungle")
-                S.Quest.waitJob("Element", function()
+            if S.Quest.canNavigate("Element", session) then
+                S.Quest.teleport("Ancient Jungle", "Element", session)
+                local accepted = S.Quest.waitJob("Element", function()
                     return S.Quest.getMainline("Element Quest") ~= nil
                         or S.Quest.isCompleted("Element Quest")
                 end, 8, 0.1, session)
+                if not accepted then Runtime.Quest.RouteRetry.Element = os.clock() + 20 end
             end
             task.wait(0.5)
         end
+
         local lastTeleport = nil
         while S.Quest.isActive("Element", session) do
+            if S.Quest.isCompleted("Element Quest") and Runtime.Quest.CompletionNotified.Element ~= session then
+                S.Quest.completeJob("Element", session)
+            end
             if S.Quest.owns("Element Rod") then
                 local rod = S.Quest.findByName("Element Rod")
                 local uuid = rod and rod.Item and rod.Item.UUID
@@ -6522,7 +6778,7 @@ do
                     break
                 end
             end
-            if not S.Quest.canNavigate("Element") then
+            if not S.Quest.canNavigate("Element", session) then
                 task.wait(0.35)
                 continue
             end
@@ -6530,12 +6786,11 @@ do
             if S.Quest.progress("Element Quest", 2, 1) < 1 then
                 targetLoc = "Ancient Jungle"
             elseif S.Quest.progress("Element Quest", 3, 1) < 1 then
-                if S.Quest.get("UnlockedTemple") == true then
-                    targetLoc = "Sacred Temple"
-                end
-                -- else: STAY — UnlockedTemple false, loop 0.35s sampai Replion update
+                targetLoc = "Sacred Temple"
             elseif S.Quest.progress("Element Quest", 4, 3) < 3 then
                 local level = tonumber(S.Quest.get("Level")) or 0
+                targetLoc = S.Quest.get("UnlockedTemple") == true
+                    and "Sacred Temple" or "Ancient Jungle"
                 if level >= 200 then
                     local secret = S.Quest.findSecret()
                     if secret then
@@ -6555,38 +6810,34 @@ do
             if targetLoc and (lastTeleport ~= targetLoc
                 or not S.Quest.isNear(targetLoc, 150))
             then
-                S.Quest.teleport(targetLoc)
+                S.Quest.teleport(targetLoc, "Element", session)
                 lastTeleport = targetLoc
             end
             task.wait(0.35)
         end
     end
 
-    -- DIAMOND: silent wait eligibility, activate quest, loop per objective
+    -- DIAMOND: attempt the NPC on request; rejected activation yields the route.
     S.Quest.Runners.Diamond = function(session)
-        -- Element Rod is a hard inventory prerequisite. Objective progress,
-        -- a cached quest state, Ruby, or Lochness never substitutes for it.
-        while S.Quest.isActive("Diamond", session) do
-            if S.Quest.owns("Element Rod")
-                or S.Quest.owns("Diamond Rod")
-            then break end
-            task.wait(2)
-        end
-        if not S.Quest.isActive("Diamond", session) then return end
-        while S.Quest.isActive("Diamond", session)
-            and not S.Quest.canNavigate("Diamond")
-        do task.wait(0.5) end
         while S.Quest.isActive("Diamond", session)
             and not S.Quest.getMainline("Diamond Researcher")
             and not S.Quest.isCompleted("Diamond Researcher")
             and not S.Quest.owns("Diamond Key")
             and not S.Quest.owns("Diamond Rod")
         do
-            S.Quest.startDiamondQuest(session)
+            if S.Quest.canNavigate("Diamond", session) then
+                local accepted = S.Quest.startDiamondQuest(session)
+                Runtime.Quest.Visit = nil
+                if not accepted then Runtime.Quest.RouteRetry.Diamond = os.clock() + 30 end
+            end
             task.wait(0.5)
         end
-        local lastTeleport = nil  -- cache: cegah teleport spam tiap 0.4s ke lokasi sama
+
+            local lastTeleport = nil  -- cache: cegah teleport spam tiap 0.4s ke lokasi sama
         while S.Quest.isActive("Diamond", session) do
+            if S.Quest.isCompleted("Diamond Researcher") and Runtime.Quest.CompletionNotified.Diamond ~= session then
+                S.Quest.completeJob("Diamond", session)
+            end
             if S.Quest.owns("Diamond Rod") then
                 local rod = S.Quest.findByName("Diamond Rod")
                 local uuid = rod and rod.Item and rod.Item.UUID
@@ -6599,34 +6850,34 @@ do
                     break
                 end
             end
-            if not S.Quest.canNavigate("Diamond") then
-                Runtime.Quest.ForcePerfect = false
+            if not S.Quest.canNavigate("Diamond", session) then
+
                 task.wait(0.4)
                 continue
             end
             if S.Quest.owns("Diamond Key") then
-                Runtime.Quest.ForcePerfect = false
+
                 lastTeleport = nil
                 local key = S.Quest.findByName("Diamond Key")
                 S.Quest.openAndClaimDiamond("Diamond", session, key)
             elseif S.Quest.progress("Diamond Researcher", 2, 1) < 1 then
-                Runtime.Quest.ForcePerfect = false
+
                 if lastTeleport ~= "Coral Reefs"
                     or not S.Quest.isNear("Coral Reefs", 150)
                 then
-                    S.Quest.teleport("Coral Reefs")
+                    S.Quest.teleport("Coral Reefs", "Diamond", session)
                     lastTeleport = "Coral Reefs"
                 end
             elseif S.Quest.progress("Diamond Researcher", 3, 1) < 1 then
-                Runtime.Quest.ForcePerfect = false
+
                 if lastTeleport ~= "Tropical Grove"
                     or not S.Quest.isNear("Tropical Grove", 150)
                 then
-                    S.Quest.teleport("Tropical Grove")
+                    S.Quest.teleport("Tropical Grove", "Diamond", session)
                     lastTeleport = "Tropical Grove"
                 end
             elseif S.Quest.progress("Diamond Researcher", 4, 1) < 1 then
-                Runtime.Quest.ForcePerfect = false
+
                 local ruby = S.Quest.findFish(243, "Gemstone")
                 if ruby then
                     lastTeleport = nil
@@ -6640,11 +6891,11 @@ do
                 elseif lastTeleport ~= "Treasure Room"
                     or not S.Quest.isNear("Treasure Room", 150)
                 then
-                    S.Quest.teleport("Treasure Room")
+                    S.Quest.teleport("Treasure Room", "Diamond", session)
                     lastTeleport = "Treasure Room"
                 end
             elseif S.Quest.progress("Diamond Researcher", 5, 1) < 1 then
-                Runtime.Quest.ForcePerfect = false
+
                 local lochness = S.Quest.findFish(228)
                 if lochness then
                     lastTeleport = nil
@@ -6658,18 +6909,18 @@ do
                 elseif lastTeleport ~= "Kohana"
                     or not S.Quest.isNear("Kohana", 150)
                 then
-                    S.Quest.teleport("Kohana")
+                    S.Quest.teleport("Kohana", "Diamond", session)
                     lastTeleport = "Kohana"
                 end
             elseif S.Quest.progress("Diamond Researcher", 6, 1000) < 1000 then
-                Runtime.Quest.ForcePerfect = true
+
                 lastTeleport = nil
             else
-                Runtime.Quest.ForcePerfect = false
+
             end
             task.wait(0.4)
         end
-        Runtime.Quest.ForcePerfect = false
+
     end
 
     -- CRYSTALLINE: event-driven placement plus an Ancient Jungle fallback
@@ -6803,11 +7054,11 @@ do
                 -- If none exists, fish at Ancient Jungle; it can produce all
                 -- four pressure targets, including Sacred Guardian Squid.
                 if not placedOrAvailable
-                    and S.Quest.canCrystallineNavigate()
+                    and S.Quest.canCrystallineNavigate(session)
                     and (lastTeleport ~= "Ancient Jungle"
                         or not S.Quest.isNear("Ancient Jungle", 150))
                 then
-                    S.Quest.teleport("Ancient Jungle")
+                    S.Quest.teleport("Ancient Jungle", "Crystalline", session)
                     lastTeleport = "Ancient Jungle"
                 end
             end
@@ -6821,7 +7072,16 @@ do
         local session = Runtime.Quest.Sessions[job]
         Runtime.Quest.Enabled[job] = true
         Runtime.Quest.Failures[job] = 0
+        Runtime.Quest.CompletionNotified[job] = nil
+        Runtime.Quest.RouteRetry[job] = nil
         startPanelLoop()
+        if S.Quest.jobComplete(job) then
+            S.Quest.completeJob(job, session)
+            return true
+        end
+        if job == "Diamond" and not S.Quest.getMainline("Diamond Researcher") then
+            Runtime.Quest.Visit = {Job=job, Session=session, Until=os.clock()+15}
+        end
         local runner = S.Quest.Runners[job]
         if runner then S.Quest.startJobThread(job, runner, session) end
         local issue = S.Quest.getStartIssue(job)
@@ -6839,8 +7099,10 @@ do
         if Runtime.Quest.Enabled[job] ~= true then return false end
         local endedSession = Runtime.Quest.Sessions[job]
         Runtime.Quest.Enabled[job] = false
+        Runtime.Quest.RouteRetry[job] = nil
+        if Runtime.Quest.Visit and Runtime.Quest.Visit.Job == job then Runtime.Quest.Visit = nil end
         Runtime.Quest.Sessions[job] = (endedSession or 0) + 1
-        if job == "Diamond" then Runtime.Quest.ForcePerfect = false end
+
         S.Quest.scheduleSessionCleanup(job, endedSession)
         return true
     end
@@ -6909,15 +7171,25 @@ do
     end
 
     S.Quest.fallback = function(key, destination)
-        Runtime.Quest.LastLocation = nil
-        if typeof(destination) == "CFrame" then
-            local character = Service.LocalPlayer.Character
-            local root = character and character:FindFirstChild("HumanoidRootPart")
-            Navigation.tryMoveRoot(root, destination, true)
-        else
-            Navigation.teleportTo(destination, true)
-        end
-        Runtime.Quest.LastLocation = nil
+        Runtime.Quest.FallbackSerial = (Runtime.Quest.FallbackSerial or 0) + 1
+        local serial = Runtime.Quest.FallbackSerial
+        task.spawn(function()
+            local deadline = os.clock() + 12
+            while Runtime.Quest.Action.Busy or Runtime.isTrading() do
+                if serial ~= Runtime.Quest.FallbackSerial or os.clock() >= deadline then return end
+                task.wait(0.1)
+            end
+            if serial ~= Runtime.Quest.FallbackSerial then return end
+            Runtime.Quest.FallbackUntil = os.clock() + 5
+            Runtime.Quest.LastLocation = nil
+            if typeof(destination) == "CFrame" then
+                local character = Service.LocalPlayer.Character
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+                Navigation.tryMoveRoot(root, destination, true)
+            else
+                Navigation.teleportTo(destination, true)
+            end
+        end)
     end
 
     S.Quest.teleportNPC = function()
@@ -6927,7 +7199,7 @@ do
         local root = character and character:FindFirstChild("HumanoidRootPart")
         if not npc or not root then return end
         local target = npc:GetPivot() * CFrame.new(0, 0, 4)
-        Navigation.tryMoveRoot(root, target, true)
+        S.Quest.fallback("DiamondNPC", target)
     end
 
 
@@ -7194,10 +7466,12 @@ do
             end
         end
 
+        local ended = false
         local otherOfferRevision = 0
         local otherOfferChangedAt = os.clock()
         local otherOfferItemCount = 0
         local readyForKey = nil
+        local readyRun = 0
         local confirmLoopKey = nil
         local connections = {}
 
@@ -7211,7 +7485,7 @@ do
         S_Trade.LastActivityAt = os.clock()
 
         local function alive()
-            return S_Trade.Serial == serial
+            return not ended and S_Trade.Serial == serial
                 and S_Trade.ActiveSession == tradeReplion
                 and not tradeReplion.Destroyed
                 and LP:GetAttribute("IsTrading") == true
@@ -7280,7 +7554,7 @@ do
                     and otherOfferIsQuiet()
                     and confirmLoopKey == key
                 do
-                    pcall(function() Remote.tradeConfirm:InvokeServer() end)
+                    Runtime.callRemote("tradeConfirm", 6, function() return alive() and S_Trade.Managed end)
                     task.wait(0.35)
                 end
                 if confirmLoopKey == key then confirmLoopKey = nil end
@@ -7296,6 +7570,8 @@ do
             local key = tostring(modified) .. ":" .. tostring(offerRevision)
             if readyForKey == key then return end
             readyForKey = key
+            readyRun = readyRun + 1
+            local readyTicket = readyRun
             task.spawn(function()
                 while alive() and sessionIsAdding() do task.wait(0.05) end
                 if not alive() then return end
@@ -7307,7 +7583,7 @@ do
                 local offerDelay = 5 - (os.clock() - otherOfferChangedAt)
                 local delay = math.max(serverDelay, offerDelay, 0)
                 if delay > 0 then task.wait(delay + 0.1) end
-                if not alive() or sessionIsAdding()
+                if not alive() or not S_Trade.Managed or readyTicket ~= readyRun or sessionIsAdding()
                     or S_Trade.BlockedSessionId == sessionKey
                 then return end
                 if (tonumber(tradeReplion.Data.LastModifiedTime) or 0) ~= modified then return end
@@ -7318,7 +7594,7 @@ do
                 else
                     -- Retry SetReady until the local Replion branch acknowledges
                     -- IsReady=true, but stop immediately if this offer changes.
-                    while alive() and S_Trade.Managed
+                    while alive() and S_Trade.Managed and readyTicket == readyRun
                         and not sessionIsAdding()
                         and S_Trade.BlockedSessionId ~= sessionKey
                         and (tonumber(tradeReplion.Data.LastModifiedTime) or 0)
@@ -7329,9 +7605,7 @@ do
                         mine = tradeReplion.Data.Players
                             and tradeReplion.Data.Players[myId]
                         if mine and mine.IsReady then break end
-                        pcall(function()
-                            Remote.tradeSetReady:InvokeServer(true)
-                        end)
+                        Runtime.callRemote("tradeSetReady", 6, function() return alive() and S_Trade.Managed end, true)
                         task.wait(0.35)
                     end
                     mine = tradeReplion.Data.Players
@@ -7377,11 +7651,26 @@ do
                 end
             ))
         end
-        S_Trade.RequestReady = scheduleReady
+        local function finishSession(eventSession)
+            if eventSession ~= nil and type(eventSession) ~= "boolean"
+                and tostring(eventSession) ~= sessionKey then return end
+            ended = true
+            readyForKey, confirmLoopKey = nil, nil
+            if S_Trade.Serial == serial then S_Trade.Managed = false end
+            if Runtime.Trade.SessionId == sessionKey then Runtime.Trade.SessionId = nil end
+            SupportState.recheckAutoEquipRod(0.2)
+        end
+        for _, event in ipairs({Remote.tradeCompleted, Remote.tradeEnded}) do
+            if event then table.insert(connections, event.OnClientEvent:Connect(finishSession)) end
+        end
+        S_Trade.RequestReady = function()
+            readyForKey = nil
+            scheduleReady()
+        end
         if owner and owner.Cancelled then
             task.defer(function()
                 if alive() and S_Trade.ActiveOwnerToken == owner.Token then
-                    pcall(function() Remote.tradeCancel:InvokeServer() end)
+                    Runtime.callRemote("tradeCancel", 5, nil)
                 end
             end)
         else
@@ -7394,13 +7683,15 @@ do
                 -- 45s without *any* authoritative Replion activity is stuck.
                 local lastActivity = S_Trade.LastActivityAt or os.clock()
                 if S_Trade.Managed and os.clock() - lastActivity >= 45 then
-                    pcall(function() Remote.tradeCancel:InvokeServer() end)
+                    Runtime.callRemote("tradeCancel", 5, nil)
                     break
                 end
                 task.wait(0.25)
             end
             for _, connection in ipairs(connections) do pcall(function() connection:Disconnect() end) end
             if S_Trade.Serial == serial then
+                if Runtime.Trade.SessionId == sessionKey then Runtime.Trade.SessionId = nil end
+                SupportState.recheckAutoEquipRod(0.2)
                 S_Trade.ActiveSession = nil
                 S_Trade.ActiveSessionId = nil
                 S_Trade.ActiveOtherUserId = nil
@@ -7557,6 +7848,14 @@ do
         setStatus(statusPara, "Retry: 0 | Success: 0 | Failed: 0 | Sent: 0")
 
         task.spawn(function()
+            local gate = Runtime.beginTradeGate()
+            local batchConnections = {}
+            local workerOk, workerErr = pcall(function()
+            if not Runtime.waitTradeSafe(runActive) then
+                setTradeRunning(stateKey, false)
+                setStatus(statusPara, "Waiting for item/fishing action timed out. Stopped.")
+                return
+            end
             while runActive() and totalSent < targetAmount do
                 local target = game:GetService("Players"):FindFirstChild(targetPlayer)
                 if not target then
@@ -7657,10 +7956,9 @@ do
                     end)
                 end
 
+                batchConnections = {startConn, endConn, compConn}
                 S_Trade.PendingOutgoing = batchOwner
-                local ok, sendResult = pcall(function()
-                    return Remote.tradeSendOffer:InvokeServer(target)
-                end)
+                local ok, sendResult = Runtime.callRemote("tradeSendOffer", 10, runActive, target)
                 if not ok or sendResult == false then
                     clearPendingOwner()
                     if startConn then pcall(function() startConn:Disconnect() end) end
@@ -7707,7 +8005,7 @@ do
                             -- A session with a different target/owner is never
                             -- cancelled or mutated by this outgoing worker.
                             if S_Trade.ActiveOwnerToken == batchOwner.Token then
-                                pcall(function() Remote.tradeCancel:InvokeServer() end)
+                                Runtime.callRemote("tradeCancel", 5, nil)
                             end
                             failed = failed + 1
                             if startConn then pcall(function() startConn:Disconnect() end) end
@@ -7729,9 +8027,9 @@ do
                                 or LP:GetAttribute("IsTrading") ~= true
                                 or not exactSessionReady()
                             then break end
-                            local ok2, added = pcall(function()
-                                return Remote.tradeAddItem:InvokeServer(itemData.ItemType, itemData.UUID)
-                            end)
+                            local ok2, added = Runtime.callRemote("tradeAddItem", 6,
+                                function() return runActive() and exactSessionReady() end,
+                                itemData.ItemType, itemData.UUID)
                             if ok2 and added == true then addedCount = addedCount + 1 end
                             task.wait(math.random(1, 3) / 8)
                         end
@@ -7750,7 +8048,7 @@ do
                         if not offerVerified then
                             S_Trade.BlockedSessionId = sessionKey
                             if exactSessionReady() then
-                                pcall(function() Remote.tradeCancel:InvokeServer() end)
+                                Runtime.callRemote("tradeCancel", 5, nil)
                             end
                         end
                         if S_Trade.AddingSessionId == sessionKey then
@@ -7786,7 +8084,7 @@ do
                         local inactiveFor = os.clock() - lastObservedActivity
                         if not tradeFinished and LP:GetAttribute("IsTrading") == true then
                             if not runActive() or inactiveFor >= 45 then
-                                pcall(function() Remote.tradeCancel:InvokeServer() end)
+                                Runtime.callRemote("tradeCancel", 5, nil)
                             end
                             task.wait(1)
                         end
@@ -7865,7 +8163,7 @@ do
                 and tostring(S_Trade.ActiveOwnerToken):match(
                     "^" .. tostring(runSerial) .. ":")
             then
-                pcall(function() Remote.tradeCancel:InvokeServer() end)
+                Runtime.callRemote("tradeCancel", 5, nil)
             end
 
             if runActive() and totalSent >= targetAmount then
@@ -7876,6 +8174,18 @@ do
                 S.Trading.ActiveMode = nil  -- release mode lock
             end
             setStatus(statusPara, "Done -- Retry: " .. retryCount .. " | Success: " .. success .. " | Failed: " .. failed .. " | Sent: " .. totalSent)
+            end)
+            for _, connection in pairs(batchConnections) do pcall(function() connection:Disconnect() end) end
+            if S_Trade.PendingOutgoing and S_Trade.PendingOutgoing.RunSerial == runSerial then
+                S_Trade.PendingOutgoing = nil
+            end
+            Runtime.endTradeGate(gate)
+            if S.Trading.RunSerial == runSerial then S.Trading.ActiveMode = nil end
+            if not workerOk and S.Trading.RunSerial == runSerial then
+                setTradeRunning(stateKey, false)
+                Runtime.LastError = "Trade: " .. tostring(workerErr)
+                setStatus(statusPara, "Trade stopped after an error; local gate released.")
+            end
         end)
     end
 
@@ -7906,6 +8216,7 @@ do
     -- avoids the startup nil window in the previous auto-accept listener.
     if Remote.tradeStarted then
         Remote.tradeStarted.OnClientEvent:Connect(function(sessionId)
+            Runtime.Trade.SessionId = tostring(sessionId)
             local owner = S_Trade.PendingOutgoing
             if type(owner) == "table" then
                 owner.SessionId = tostring(sessionId)
@@ -7920,16 +8231,49 @@ do
             task.spawn(function()
                 local replion = nil
                 local elapsed = 0
-                while not replion and elapsed < 3 do
+                while not replion and elapsed < 3 and Runtime.Trade.SessionId == tostring(sessionId) do
                     pcall(function() replion = Data.Replion.Client:GetReplion(sessionId) end)
                     if not replion then task.wait(0.05) elapsed = elapsed + 0.05 end
                 end
-                if replion then
-                    runTradeSession(replion, sessionId, managed, owner)
-                end
+                if replion and Runtime.Trade.SessionId == tostring(sessionId) then
+                    local deadline = os.clock() + 2
+                    while Service.LocalPlayer:GetAttribute("IsTrading") ~= true
+                        and os.clock() < deadline and Runtime.Trade.SessionId == tostring(sessionId)
+                    do task.wait(0.05) end
+                    if Runtime.Trade.SessionId == tostring(sessionId) then
+                        runTradeSession(replion, sessionId, managed, owner)
+                    end
+                elseif Runtime.Trade.SessionId == tostring(sessionId)
+                    and Service.LocalPlayer:GetAttribute("IsTrading") ~= true
+                then Runtime.Trade.SessionId = nil end
             end)
         end)
     end
+
+    -- Register terminal events even if the session Replion arrived too late.
+    for _, event in ipairs({Remote.tradeCompleted, Remote.tradeEnded}) do
+        if event then event.OnClientEvent:Connect(function(sessionId)
+            local current = Runtime.Trade.SessionId
+            if current and (sessionId == nil or type(sessionId) == "boolean"
+                or tostring(sessionId) == current) then
+                Runtime.Trade.SessionId = nil
+                SupportState.recheckAutoEquipRod(0.2)
+            end
+        end) end
+    end
+    -- A missing TradeEnded must not leave a local session gate forever.
+    Service.LocalPlayer:GetAttributeChangedSignal("IsTrading"):Connect(function()
+        if Service.LocalPlayer:GetAttribute("IsTrading") ~= true then
+            local current = Runtime.Trade.SessionId
+            task.delay(0.5, function()
+                if Runtime.Trade.SessionId == current
+                    and Service.LocalPlayer:GetAttribute("IsTrading") ~= true then
+                    Runtime.Trade.SessionId = nil
+                    SupportState.recheckAutoEquipRod()
+                end
+            end)
+        end
+    end)
 
     -- ====== SELECT PLAYER ======
     local TradingPlayerSection = UI.Window:AddCollapsible(UI.TradingTab, "Select Player", false)
@@ -7948,6 +8292,7 @@ do
                 end
             end
             TradingPlayerDropdown:Refresh(list, nil)
+            UI.Library:Notify({Title="Orvion", Subtitle="Hub", Content="Player list refreshed: " .. tostring(#list)})
         end)
 
     -- ====== TRADE BY NAME ======
@@ -7970,6 +8315,7 @@ do
             local displayList, uuidMap = buildFishDisplayList()
             ByNameUUIDMap = uuidMap
             ByNameDropdown:Refresh(displayList, nil)
+            UI.Library:Notify({Title="Orvion", Subtitle="Hub", Content=#displayList > 0 and ("Fish list refreshed: " .. #displayList .. " types") or "No fish found"})
         end)
 
     local ByNameToggle
@@ -8126,6 +8472,7 @@ do
             local displayList, uuidMap = buildStoneDisplayList()
             ByStoneUUIDMap = uuidMap
             ByStoneDropdown:Refresh(displayList, nil)
+            UI.Library:Notify({Title="Orvion", Subtitle="Hub", Content=#displayList > 0 and ("Enchant stones found: " .. #displayList .. " types") or "No enchant stones found"})
         end)
 
     local ByStoneToggle
@@ -8194,8 +8541,14 @@ do
     UI.Window:AddToggle(AutoAcceptSection, "Auto Accept & Confirm Trade", "", false,
         function(state)
             S.Trading.AutoAccept = state
+            Remote.TradeOfferRouter.AcceptEpoch = (Remote.TradeOfferRouter.AcceptEpoch or 0) + 1
             Remote.TradeOfferRouter.Enabled = state == true
             if state == true then
+                if S_Trade.ActiveSession and S_Trade.ActiveOwnerToken == nil then
+                    S_Trade.Managed = true
+                    S_Trade.BlockedSessionId = nil
+                    if S_Trade.RequestReady then S_Trade.RequestReady() end
+                end
                 task.spawn(function()
                     Remote.RefreshTradeOfferRouter(10)
                 end)
@@ -8203,11 +8556,8 @@ do
                 and S_Trade.ActiveOwnerToken == nil
                 and S_Trade.Managed
             then
-                -- OFF revokes an incoming auto-accept session immediately;
-                -- its pending Ready/Confirm retry loops observe Managed=false.
-                S_Trade.BlockedSessionId = S_Trade.ActiveSessionId
+                -- Leave the live trade under manual control; OFF revokes retries.
                 S_Trade.Managed = false
-                pcall(function() Remote.tradeCancel:InvokeServer() end)
             end
         end, "Toggle_Trade_AutoAccept")
 
