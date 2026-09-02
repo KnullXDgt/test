@@ -8798,17 +8798,17 @@ end
     UI.Window:AddTextHeader(FishCaught, "Webhook Fish Global")
     UI.Window:AddInput(FishCaught, "Discord ID (For Tag)", "", "Write your Discord ID here...", function() end, "Webhook_Global_Discord")
     UI.Window:AddToggle(FishCaught, "Send Webhook Global", "Only Secret & Forgotten", false, function() end, "Webhook_Global_Send")
-    local ServerWebhook = UI.Window:AddCollapsible(UI.WebhookTab, "Server Webhook", false)
-    UI.Window:AddTextHeader(ServerWebhook, "Webhook Protection")
-    UI.Window:AddToggle(ServerWebhook, "Censored Name", "", false, function() end, "Webhook_Server_Censored")
-    UI.Window:AddTextHeader(ServerWebhook, "Webhook Fish Caught Server")
-    UI.Window:AddInput(ServerWebhook, "Server Webhook URL", "", "Write your input here...", function() end, "Webhook_Server_URL")
+    local WebhookOneServer = UI.Window:AddCollapsible(UI.WebhookTab, "Webhook One-server", false)
+    UI.Window:AddTextHeader(WebhookOneServer, "Webhook Protection")
+    UI.Window:AddToggle(WebhookOneServer, "Censored Name", "", false, function() end, "Webhook_OneServer_Censored")
+    UI.Window:AddTextHeader(WebhookOneServer, "Webhook Fish Caught One-server")
+    UI.Window:AddInput(WebhookOneServer, "One-server Webhook URL", "", "Write your input here...", function() end, "Webhook_OneServer_URL")
     for _, label in ipairs({"Evolved Enchant Stone", "Runic Enchant Stone", "Ruby Gemstone", "Withering Core", "Secret & Forgotten"}) do
-        UI.Window:AddToggle(ServerWebhook, label, "", false, function() end, "Webhook_Server_" .. label:gsub("[^%w]", "_"))
+        UI.Window:AddToggle(WebhookOneServer, label, "", false, function() end, "Webhook_OneServer_" .. label:gsub("[^%w]", "_"))
     end
-    UI.Window:AddTextHeader(ServerWebhook, "Webhook Server Join / Leave")
-    UI.Window:AddInput(ServerWebhook, "Webhook Server Join / Leave URL", "", "Write your input here...", function() end, "Webhook_JoinLeave_URL")
-    UI.Window:AddToggle(ServerWebhook, "Send Webhook Global Join / Leave", "", false, function() end, "Webhook_JoinLeave_Send")
+    UI.Window:AddTextHeader(WebhookOneServer, "Webhook One-server Join / Leave")
+    UI.Window:AddInput(WebhookOneServer, "Webhook One-server Join / Leave URL", "", "Write your input here...", function() end, "Webhook_OneServer_JoinLeave_URL")
+    UI.Window:AddToggle(WebhookOneServer, "Send Webhook One-server Join / Leave", "", false, function() end, "Webhook_OneServer_JoinLeave_Send")
 
 -- ====== STARTUP ======
 SupportState.updateBigPopup()
