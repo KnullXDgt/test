@@ -5433,37 +5433,79 @@ do
         return math.clamp(tonumber(objective and objective.Progress) or 0, 0, goal)
     end
 
+    -- Quest resolver R22: catalog identity, not name suffixes, determines type.
+    S.Quest.ItemDataRetryAt = {}
+    S.Quest.sameItemId = function(a, b)
+        if (type(a) ~= "number" and type(a) ~= "string")
+            or (type(b) ~= "number" and type(b) ~= "string")
+        then return false end
+        if tostring(a) == "" or tostring(b) == "" then return false end
+        local na, nb = tonumber(a), tonumber(b)
+        if na and nb then return na == nb end
+        return tostring(a) == tostring(b)
+    end
+
+    S.Quest.resolveItemData = function(category, id)
+        local key = tostring(category) .. ":" .. tostring(id)
+        local function valid(raw, expectedType)
+            local d = type(raw) == "table" and raw.Data
+            return type(d) == "table" and S.Quest.sameItemId(d.Id, id)
+                and type(d.Name) == "string" and type(d.Type) == "string"
+                and (not expectedType or expectedType == "Items"
+                    or d.Type == expectedType
+                    or (expectedType == "Artifacts" and d.Type == "Gears"))
+        end
+        local cached = S.Quest.ItemDataCache[key]
+        if valid(cached, category) then
+            return cached, cached.Data.Type
+        end
+        -- A transient catalog failure must not disable a quest permanently.
+        if (S.Quest.ItemDataRetryAt[key] or 0) > os.clock() then return nil, category end
+        local function lookup(itemType)
+            local ok, raw = pcall(function()
+                return Data.ItemUtility.GetItemDataFromItemType(itemType, id)
+            end)
+            if ok and valid(raw, itemType) then return raw end
+        end
+        local raw = lookup(category)
+        -- Only the mixed Items collection (and legacy Artifact alias) may
+        -- cross catalog types. Typed collections must not collide by ID.
+        if not raw and (category == "Items" or category == "Artifacts") then
+            local ambiguous = false
+            for _, itemType in ipairs(S.Quest.ItemTypes) do
+                if category == "Items" or itemType == "Gears" or itemType == "Artifacts" then
+                    local candidate = lookup(itemType)
+                    if candidate then
+                        if raw and (raw.Data.Type ~= candidate.Data.Type
+                            or raw.Data.Name ~= candidate.Data.Name)
+                        then
+                            ambiguous = true
+                            break
+                        end
+                        raw = candidate
+                    end
+                end
+            end
+            if ambiguous then raw = nil end
+        end
+        S.Quest.ItemDataCache[key] = raw
+        if raw then
+            S.Quest.ItemDataRetryAt[key] = nil
+        else
+            S.Quest.ItemDataRetryAt[key] = os.clock() + 0.5
+        end
+        return raw, raw and raw.Data.Type or category
+    end
+
     S.Quest.eachInventoryItem = function(callback)
         local inventory = S.Quest.inventory()
         if type(inventory) ~= "table" then return nil end
         for category, items in pairs(inventory) do
             if type(items) == "table" then
-                for _, item in ipairs(items) do
+                for _, item in pairs(items) do
                     if type(item) == "table" and item.Id ~= nil then
-                        -- Id values are not globally unique across all
-                        -- inventory collections; cache by collection + Id.
-                        local cacheKey = tostring(category) .. ":" .. tostring(item.Id)
-                        local itemData = S.Quest.ItemDataCache[cacheKey]
-                        local resolvedCategory = category
-                        if itemData == nil then
-                            pcall(function()
-                                itemData = Data.ItemUtility.GetItemDataFromItemType(category, item.Id)
-                            end)
-                            for _, itemType in ipairs(S.Quest.ItemTypes) do
-                                if itemData then break end
-                                pcall(function()
-                                    itemData = Data.ItemUtility.GetItemDataFromItemType(itemType, item.Id)
-                                end)
-                                if itemData then
-                                    resolvedCategory = itemType
-                                end
-                            end
-                            S.Quest.ItemDataCache[cacheKey] = itemData or false
-                        elseif itemData == false then
-                            itemData = nil
-                        end
-                        local data = itemData and itemData.Data or nil
-                        local result = callback(item, resolvedCategory, data)
+                        local raw, resolvedCategory = S.Quest.resolveItemData(category, item.Id)
+                        local result = callback(item, resolvedCategory, raw and raw.Data)
                         if result ~= nil then return result end
                     end
                 end
@@ -5472,50 +5514,52 @@ do
         return nil
     end
 
-    S.Quest.findItem = function(predicate)
-        return S.Quest.eachInventoryItem(function(item, category, data)
+    S.Quest.findItem = function(predicate, preferHotbar)
+        local selected, bestScore
+        local held, hotbar = nil, {}
+        if preferHotbar then
+            held = S.Quest.get("EquippedId")
+            local equipped = S.Quest.get("EquippedItems")
+            if type(equipped) == "table" then
+                for _, uuid in pairs(equipped) do hotbar[tostring(uuid)] = true end
+            end
+        end
+        local result = S.Quest.eachInventoryItem(function(item, category, data)
             if predicate(item, category, data) then
-                return { Item=item, Category=category, Data=data }
+                local entry = { Item=item, Category=category, Data=data }
+                if not preferHotbar then return entry end
+                local uuid = tostring(item.UUID or "")
+                local score = uuid ~= "" and held ~= nil and uuid == tostring(held)
+                    and 3 or (hotbar[uuid] and 2 or 1)
+                if not selected or score > bestScore then
+                    selected, bestScore = entry, score
+                end
             end
         end)
+        return result or selected
     end
 
     S.Quest.findById = function(id, itemType, variant)
         return S.Quest.findItem(function(item, _, data)
-            if tonumber(item.Id) ~= tonumber(id) then return false end
-            local metadata = item.Metadata or {}
+            if not S.Quest.sameItemId(item.Id, id) then return false end
+            local metadata = type(item.Metadata) == "table" and item.Metadata or {}
             if variant and metadata.Variant ~= variant
                 and metadata.VariantId ~= variant
-            then
-                return false
-            end
-            return not itemType or not data or data.Type == itemType
-                or itemType == "Items"
-        end)
+            then return false end
+            -- Never submit an unresolved item as a Fish merely because its ID matches.
+            return data ~= nil and (not itemType or itemType == "Items"
+                or data.Type == itemType)
+        end, true)
     end
 
-    S.Quest.findByName = function(name)
-        local id = S.Quest.KnownIds[name]
-        local resolvedType = string.find(name, "Artifact", 1, true)
-            and "Artifacts"
-            or (string.find(name, "Rod", 1, true) and "Fishing Rods")
-            or (name == "Diamond Key" and "Gears")
-            or nil
-        if not id then
-            for _, itemType in ipairs(S.Quest.ItemTypes) do
-                local itemData = nil
-                pcall(function()
-                    itemData = Data.ItemUtility.GetItemDataFromItemType(itemType, name)
-                end)
-                if itemData and itemData.Data then
-                    id = itemData.Data.Id
-                    resolvedType = itemType
-                    S.Quest.KnownIds[name] = id
-                    break
-                end
-            end
-        end
-        return id and S.Quest.findById(id, resolvedType) or nil
+    S.Quest.findByName = function(name, expectedType)
+        if type(name) ~= "string" or name == "" then return nil end
+        local entry = S.Quest.findItem(function(_, _, data)
+            return data ~= nil and data.Name == name
+                and (not expectedType or data.Type == expectedType)
+        end, true)
+        if entry then S.Quest.KnownIds[name] = entry.Item.Id end
+        return entry
     end
 
     S.Quest.findFish = function(id, variant)
@@ -5532,11 +5576,12 @@ do
     end
 
     S.Quest.hasUUID = function(uuid)
+        if uuid == nil or tostring(uuid) == "" then return false end
         local inventory = S.Quest.inventory()
         if type(inventory) ~= "table" then return false end
         for _, items in pairs(inventory) do
             if type(items) == "table" then
-                for _, item in ipairs(items) do
+                for _, item in pairs(items) do
                     if type(item) == "table"
                         and tostring(item.UUID or "") == tostring(uuid or "")
                     then
@@ -5838,8 +5883,17 @@ do
             required.claimItem = "RF/ClaimItem"
         end
         for key, remoteName in pairs(required) do
-            if not Remote[key] then Remote[key] = Remote.Resolve(remoteName) end
-            if not Remote[key] then return remoteName .. " unavailable" end
+            local expectedClass = remoteName:sub(1, 3) == "RF/"
+                and "RemoteFunction" or "RemoteEvent"
+            local function usable(remote)
+                return typeof(remote) == "Instance" and remote:IsA(expectedClass)
+                    and remote.Parent ~= nil and remote:IsDescendantOf(Remote.Net)
+            end
+            if not usable(Remote[key]) then
+                local ok, resolved = pcall(Remote.Resolve, remoteName)
+                Remote[key] = ok and usable(resolved) and resolved or nil
+            end
+            if not Remote[key] then return remoteName .. " unavailable or wrong class" end
         end
         if not Data.Player or type(Data.Player.Get) ~= "function" then
             return "player Replion unavailable"
@@ -6421,23 +6475,9 @@ do
         return ok
     end
 
-    -- findPressureFish: lookup via category "Items" (confirmed dari probe4 controller)
+    -- Resolve the actual inventory entry; no dependency on the Items name alias.
     S.Quest.findPressureFish = function(fishName)
-        local inventory = S.Quest.inventory()
-        if type(inventory) ~= "table" then return nil end
-        local itemData = nil
-        pcall(function()
-            itemData = Data.ItemUtility.GetItemDataFromItemType("Items", fishName)
-        end)
-        if not itemData or not itemData.Data then return nil end
-        local targetId = itemData.Data.Id
-        local items = inventory.Items or {}
-        for _, item in ipairs(items) do
-            if type(item) == "table" and tonumber(item.Id) == tonumber(targetId) then
-                return { Item = item, Category = "Items", Data = itemData.Data }
-            end
-        end
-        return nil
+        return S.Quest.findByName(fishName, "Fish")
     end
 
     -- placePressureFishEntry: equip ikan + fire + waitJob ack, max 3 retry
