@@ -205,12 +205,13 @@ if type(Remote.TradeOfferRouter) ~= "table" then
 end
 local Router = Remote.TradeOfferRouter
 
+-- R25 receiver ownership hardening.
 -- One-time migration from R22: that build disabled every TradeOfferReceived
 -- connection but did not retain the stock handles for OFF/re-execute restore.
 -- Recover those disabled native handlers before disconnecting the old Orvion
 -- listener so the first R23 execution does not require a rejoin.
 local previousRouterConnection = Router.Connection
-if Router.LifecycleVersion ~= 24 and Remote.tradeOfferReceived
+if Router.LifecycleVersion ~= 25 and Remote.tradeOfferReceived
     and type(getconnections) == "function"
 then
     local ok, connections = pcall(getconnections, Remote.tradeOfferReceived.OnClientEvent)
@@ -222,7 +223,7 @@ then
         end
     end
 end
-Router.LifecycleVersion = 24
+Router.LifecycleVersion = 25
 
 -- Clean the previous router deterministically.  Native connections disabled by
 -- Orvion are restored before the new generation starts.
@@ -234,6 +235,10 @@ Router.PendingAccept = nil
 if Router.RefreshWorker then
     pcall(task.cancel, Router.RefreshWorker)
     Router.RefreshWorker = nil
+end
+if Router.SuppressWorker then
+    pcall(task.cancel, Router.SuppressWorker)
+    Router.SuppressWorker = nil
 end
 if Router.Connection then
     pcall(function() Router.Connection:Disconnect() end)
@@ -358,6 +363,31 @@ end
 -- Compatibility name used by the older UI callback.
 Remote.RefreshTradeOfferRouter = Remote.RequestTradeOfferRefresh
 
+-- R25: native TradingController may subscribe to TradeOfferReceived well after
+-- the startup/autoload refresh burst. Keep ownership of that signal for the
+-- entire time Auto Accept is enabled instead of assuming controller load has
+-- finished within four seconds. The watchdog only suppresses TradeOfferReceived
+-- handlers; it never touches TradeStarted/Ended/Completed or trade session UI.
+Remote.StartTradeOfferSuppressWatchdog = function()
+    if not routerAlive() or Router.Enabled ~= true then return false end
+    if Router.SuppressWorker then return true end
+    Router.SuppressWorker = task.spawn(function()
+        while routerAlive() and Router.Enabled == true do
+            Remote.RequestTradeOfferRefresh(1)
+            task.wait(0.75)
+        end
+        if routerAlive() then Router.SuppressWorker = nil end
+    end)
+    return true
+end
+
+Remote.StopTradeOfferSuppressWatchdog = function()
+    if Router.SuppressWorker then
+        pcall(task.cancel, Router.SuppressWorker)
+        Router.SuppressWorker = nil
+    end
+end
+
 Remote.SetTradeOfferRouterEnabled = function(state)
     if not routerAlive() then return false end
     Router.AcceptEpoch = (Router.AcceptEpoch or 0) + 1
@@ -377,7 +407,11 @@ Remote.SetTradeOfferRouterEnabled = function(state)
                 end
             end)
         end
+        -- Unlike R23/R24, suppression does not stop after the startup burst.
+        -- Different clients can initialize TradingController at different times.
+        Remote.StartTradeOfferSuppressWatchdog()
     else
+        Remote.StopTradeOfferSuppressWatchdog()
         if Router.RefreshWorker then
             pcall(task.cancel, Router.RefreshWorker)
             Router.RefreshWorker = nil
@@ -391,8 +425,17 @@ Remote.InstallTradeOfferRouter = function()
     if not Remote.tradeOfferReceived or not routerAlive() then return false end
 
     Router.HandleOffer = function(sender)
-        if not routerAlive() or Router.Enabled ~= true
-            or Service.LocalPlayer:GetAttribute("IsTrading") == true
+        if not routerAlive() or Router.Enabled ~= true then return end
+
+        -- R25 emergency pass: if a native popup listener subscribed between two
+        -- watchdog ticks, suppress it synchronously as soon as Orvion observes
+        -- the offer. This is a second line of defense; normal suppression is the
+        -- continuous watchdog above. Disconnecting this connection while its
+        -- callback is already running is safe; ConnectTradeOfferRouter recreates
+        -- the receiver immediately.
+        Remote.DisableStockTradeOfferConnections(1)
+
+        if Service.LocalPlayer:GetAttribute("IsTrading") == true
             or Router.PendingAccept ~= nil
         then return end
 
