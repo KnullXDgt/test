@@ -1,7 +1,7 @@
 -- ====================================================================
 --                 INSTANT FISHING V2 - CLEAN
 --          Fishing + AutoSell + Auto Small Notification
--- Fish-tier + Quest/Trade transaction hardening build: 20260901-R21
+-- Fish-tier + Quest/Trade lifecycle hardening build: 20260903-R23
 -- ====================================================================
 
 -- ====== SERVICES ======
@@ -87,6 +87,31 @@ Remote.tradeStarted       = Remote.Resolve("RE/Trading/TradeStarted")
 Remote.tradeEnded         = Remote.Resolve("RE/Trading/TradeEnded")
 Remote.tradeCompleted     = Remote.Resolve("RE/Trading/TradeCompleted")
 
+-- Trade remotes are discovered heuristically by this project.  Validate the
+-- resolved Instance class before any worker can retry against a wrong sibling.
+for key, expectedClass in pairs({
+    tradeSendOffer="RemoteFunction", tradeAcceptOffer="RemoteFunction",
+    tradeDeclineOffer="RemoteFunction", tradeAddItem="RemoteFunction",
+    tradeSetReady="RemoteFunction", tradeConfirm="RemoteFunction",
+    tradeCancel="RemoteFunction", tradeOfferReceived="RemoteEvent",
+    tradeStarted="RemoteEvent", tradeEnded="RemoteEvent",
+    tradeCompleted="RemoteEvent",
+}) do
+    local remote = Remote[key]
+    local valid = remote ~= nil
+    if valid then
+        local ok, isExpected = pcall(function() return remote:IsA(expectedClass) end)
+        valid = ok and isExpected == true
+    end
+    if not valid then
+        if remote ~= nil then
+            warn("[Orvion Trade] invalid resolver mapping: " .. tostring(key)
+                .. " expected " .. expectedClass)
+        end
+        Remote[key] = nil
+    end
+end
+
 -- Support Features state
 local SupportState = {
     cutsceneConns = {
@@ -144,108 +169,249 @@ local Data = {
     Events = nil, -- lazy-loaded saat weather feature dipakai
 }
 
--- Trade Offer UI suppression: the game controller is subscribed directly to
--- TradeOfferReceived.  Disable its existing connection before creating the
--- Orvion listener, then accept through the same remote immediately.  No GUI
--- scan/click and no controller-method hook are involved.
-Remote.TradeOfferRouter = (type(getgenv) == "function" and getgenv() or _G).__OrvionTradeOfferRouter
+-- Trade Offer lifecycle.  R23 keeps receiver-side connections generation-owned:
+-- Auto Accept OFF restores native handling, refreshes are serialized, and a stale
+-- script generation cannot disable or accept for the current generation.
+local TradeEnv = (type(getgenv) == "function" and getgenv() or _G)
+
+Remote.TradeLifecycle = TradeEnv.__OrvionTradeLifecycle
+if type(Remote.TradeLifecycle) ~= "table" then
+    Remote.TradeLifecycle = { Generation = 0, Connections = {} }
+    TradeEnv.__OrvionTradeLifecycle = Remote.TradeLifecycle
+end
+-- Invalidate delayed callbacks/tasks from the previous execution first.
+Remote.TradeLifecycle.Generation = (Remote.TradeLifecycle.Generation or 0) + 1
+local TradeLifecycleGeneration = Remote.TradeLifecycle.Generation
+for connection in pairs(Remote.TradeLifecycle.Connections or {}) do
+    pcall(function() connection:Disconnect() end)
+end
+Remote.TradeLifecycle.Connections = {}
+
+Remote.TrackTradeConnection = function(connection)
+    if connection then Remote.TradeLifecycle.Connections[connection] = true end
+    return connection
+end
+Remote.UntrackTradeConnection = function(connection)
+    if connection then Remote.TradeLifecycle.Connections[connection] = nil end
+end
+Remote.TradeGenerationAlive = function(generation)
+    return Remote.TradeLifecycle.Generation == (generation or TradeLifecycleGeneration)
+end
+
+Remote.TradeOfferRouter = TradeEnv.__OrvionTradeOfferRouter
 if type(Remote.TradeOfferRouter) ~= "table" then
     Remote.TradeOfferRouter = {}
-    (type(getgenv) == "function" and getgenv() or _G).__OrvionTradeOfferRouter = Remote.TradeOfferRouter
+    TradeEnv.__OrvionTradeOfferRouter = Remote.TradeOfferRouter
 end
-Remote.TradeOfferRouter.Enabled = false
-if Remote.TradeOfferRouter.Connection then
-    pcall(function() Remote.TradeOfferRouter.Connection:Disconnect() end)
-    Remote.TradeOfferRouter.Connection = nil
-end
-if Remote.TradeOfferRouter.RespawnConnection then
-    pcall(function() Remote.TradeOfferRouter.RespawnConnection:Disconnect() end)
-    Remote.TradeOfferRouter.RespawnConnection = nil
-end
-Remote.TradeOfferRouter.Generation =
-    (Remote.TradeOfferRouter.Generation or 0) + 1
+local Router = Remote.TradeOfferRouter
 
-Remote.DisableStockTradeOfferConnections = function(attempts)
-    if not Remote.tradeOfferReceived or type(getconnections) ~= "function" then
-        return false
-    end
-    local wantedAttempts = math.max(1, tonumber(attempts) or 1)
-    local found = false
-    for attempt = 1, wantedAttempts do
-        local ok, connections = pcall(getconnections,
-            Remote.tradeOfferReceived.OnClientEvent)
-        if ok and type(connections) == "table" then
-            for _, connection in ipairs(connections) do
-                found = true
-                pcall(function() connection:Disable() end)
+-- One-time migration from R22: that build disabled every TradeOfferReceived
+-- connection but did not retain the stock handles for OFF/re-execute restore.
+-- Recover those disabled native handlers before disconnecting the old Orvion
+-- listener so the first R23 execution does not require a rejoin.
+local previousRouterConnection = Router.Connection
+if Router.LifecycleVersion ~= 23 and Remote.tradeOfferReceived
+    and type(getconnections) == "function"
+then
+    local ok, connections = pcall(getconnections, Remote.tradeOfferReceived.OnClientEvent)
+    if ok and type(connections) == "table" then
+        for _, connection in ipairs(connections) do
+            if connection ~= previousRouterConnection then
+                pcall(function() connection:Enable() end)
             end
         end
-        if attempt >= wantedAttempts then break end
-        task.wait(0.1)
+    end
+end
+Router.LifecycleVersion = 23
+
+-- Clean the previous router deterministically.  Native connections disabled by
+-- Orvion are restored before the new generation starts.
+Router.Generation = (Router.Generation or 0) + 1
+local RouterGeneration = Router.Generation
+Router.Enabled = false
+Router.AcceptEpoch = (Router.AcceptEpoch or 0) + 1
+Router.PendingAccept = nil
+if Router.RefreshWorker then
+    pcall(task.cancel, Router.RefreshWorker)
+    Router.RefreshWorker = nil
+end
+if Router.Connection then
+    pcall(function() Router.Connection:Disconnect() end)
+    Router.Connection = nil
+end
+if Router.RespawnConnection then
+    pcall(function() Router.RespawnConnection:Disconnect() end)
+    Router.RespawnConnection = nil
+end
+for _, connection in ipairs(Router.StockConnections or {}) do
+    pcall(function() connection:Enable() end)
+end
+Router.StockConnections = {}
+Router.RefreshRequested = 0
+Router.RefreshHandled = 0
+Router.RefreshAttempts = 0
+
+local function routerAlive()
+    return Router.Generation == RouterGeneration
+        and Remote.TradeGenerationAlive(TradeLifecycleGeneration)
+end
+
+Remote.RestoreStockTradeOfferConnections = function()
+    if Router.Generation ~= RouterGeneration then return false end
+    local restored = false
+    for _, connection in ipairs(Router.StockConnections or {}) do
+        pcall(function() connection:Enable() end)
+        restored = true
+    end
+    Router.StockConnections = {}
+    return restored
+end
+
+Remote.DisableStockTradeOfferConnections = function(attempts)
+    if not routerAlive() or Router.Enabled ~= true
+        or not Remote.tradeOfferReceived or type(getconnections) ~= "function"
+    then return false end
+    local wantedAttempts = math.max(1, tonumber(attempts) or 1)
+    local found = false
+    local known = {}
+    for _, connection in ipairs(Router.StockConnections or {}) do known[connection] = true end
+    for attempt = 1, wantedAttempts do
+        if not routerAlive() or Router.Enabled ~= true then break end
+        local ok, connections = pcall(getconnections, Remote.tradeOfferReceived.OnClientEvent)
+        if ok and type(connections) == "table" then
+            for _, connection in ipairs(connections) do
+                -- Never disable our current listener.  Only remember connections
+                -- that this generation actually disabled so OFF can restore them.
+                if connection ~= Router.Connection and not known[connection] then
+                    local disabled = pcall(function() connection:Disable() end)
+                    if disabled then
+                        known[connection] = true
+                        table.insert(Router.StockConnections, connection)
+                        found = true
+                    end
+                end
+            end
+        end
+        if attempt < wantedAttempts then task.wait(0.1) end
     end
     return found
 end
 
-Remote.RefreshTradeOfferRouter = function(attempts)
-    if not Remote.tradeOfferReceived then return false end
-    Remote.TradeOfferRouter.RefreshSerial =
-        (Remote.TradeOfferRouter.RefreshSerial or 0) + 1
-    local refreshSerial = Remote.TradeOfferRouter.RefreshSerial
-    if Remote.TradeOfferRouter.Connection then
-        pcall(function() Remote.TradeOfferRouter.Connection:Disconnect() end)
-        Remote.TradeOfferRouter.Connection = nil
-    end
-    Remote.DisableStockTradeOfferConnections(attempts)
-    if Remote.TradeOfferRouter.RefreshSerial ~= refreshSerial then
-        return false
-    end
-    Remote.TradeOfferRouter.Connection =
-        Remote.tradeOfferReceived.OnClientEvent:Connect(function(sender)
-            if Remote.TradeOfferRouter.Enabled == true
-                and Service.LocalPlayer:GetAttribute("IsTrading") ~= true
-            then
-                local coord = Remote.RuntimeCoord
-                if not coord then return end
-                local token = coord.beginTradeGate()
-                local generation = Remote.TradeOfferRouter.Generation
-                local epoch = Remote.TradeOfferRouter.AcceptEpoch
-                local function active()
-                    return Remote.TradeOfferRouter.Enabled
-                        and Remote.TradeOfferRouter.Generation == generation
-                        and Remote.TradeOfferRouter.AcceptEpoch == epoch
+-- All refresh requests feed one worker.  Stale startup/autoload/respawn requests
+-- can queue work, but they can no longer mutate connections concurrently.
+Remote.RequestTradeOfferRefresh = function(attempts)
+    if not routerAlive() or Router.Enabled ~= true then return false end
+    Router.RefreshRequested = (Router.RefreshRequested or 0) + 1
+    Router.RefreshAttempts = math.max(Router.RefreshAttempts or 0,
+        math.max(1, tonumber(attempts) or 1))
+    if Router.RefreshWorker then return true end
+    Router.RefreshWorker = task.spawn(function()
+        while routerAlive() and Router.Enabled == true
+            and (Router.RefreshHandled or 0) < (Router.RefreshRequested or 0)
+        do
+            local request = Router.RefreshRequested
+            local scanAttempts = math.max(1, Router.RefreshAttempts or 1)
+            Router.RefreshAttempts = 0
+            Remote.DisableStockTradeOfferConnections(scanAttempts)
+            if not routerAlive() then break end
+            Router.RefreshHandled = request
+            task.wait()
+        end
+        if routerAlive() then Router.RefreshWorker = nil end
+    end)
+    return true
+end
+
+-- Compatibility name used by the older UI callback.
+Remote.RefreshTradeOfferRouter = Remote.RequestTradeOfferRefresh
+
+Remote.SetTradeOfferRouterEnabled = function(state)
+    if not routerAlive() then return false end
+    Router.AcceptEpoch = (Router.AcceptEpoch or 0) + 1
+    Router.PendingAccept = nil
+    Router.Enabled = state == true
+    if Router.Enabled then
+        -- Close the immediate ON race synchronously, then let the serialized
+        -- worker catch subscriptions that appear during later loading frames.
+        Remote.DisableStockTradeOfferConnections(1)
+        Remote.RequestTradeOfferRefresh(20)
+        -- Late controller subscriptions are submitted to the same serialized
+        -- refresh worker instead of running competing getconnections scans.
+        for _, delay in ipairs({0.5, 1, 2, 4}) do
+            task.delay(delay, function()
+                if routerAlive() and Router.Enabled == true then
+                    Remote.RequestTradeOfferRefresh(1)
                 end
-                pcall(function()
-                    if coord.waitTradeSafe(active) then
-                        coord.callRemote("tradeAcceptOffer", 10, active, sender)
-                    end
-                end)
-                coord.endTradeGate(token)
-            end
-        end)
+            end)
+        end
+    else
+        if Router.RefreshWorker then
+            pcall(task.cancel, Router.RefreshWorker)
+            Router.RefreshWorker = nil
+        end
+        Remote.RestoreStockTradeOfferConnections()
+    end
     return true
 end
 
 Remote.InstallTradeOfferRouter = function()
-    if not Remote.tradeOfferReceived then return false end
-    local generation = Remote.TradeOfferRouter.Generation
-    Remote.RefreshTradeOfferRouter(20)
-    task.spawn(function()
-        -- Controllers that subscribe during the final loading frames are
-        -- disabled too. Each pass reconnects our listener after the scan.
-        for _, delay in ipairs({0.5, 1, 2, 4}) do
-            task.wait(delay)
-            if Remote.TradeOfferRouter.Generation ~= generation then return end
-            Remote.RefreshTradeOfferRouter(1)
-        end
-    end)
-    Remote.TradeOfferRouter.RespawnConnection =
-        Service.LocalPlayer.CharacterAdded:Connect(function()
-            task.delay(1, function()
-                if Remote.TradeOfferRouter.Generation == generation then
-                    Remote.RefreshTradeOfferRouter(5)
+    if not Remote.tradeOfferReceived or not routerAlive() then return false end
+    Router.Connection = Remote.tradeOfferReceived.OnClientEvent:Connect(function(sender)
+        if not routerAlive() or Router.Enabled ~= true
+            or Service.LocalPlayer:GetAttribute("IsTrading") == true
+            or Router.PendingAccept ~= nil
+        then return end
+
+        -- Reserve this offer immediately.  A second incoming offer cannot wait in
+        -- parallel during the fishing/sell/quest safe-point window.
+        local reservation = {
+            Generation = RouterGeneration,
+            Epoch = Router.AcceptEpoch,
+            Sender = sender,
+        }
+        Router.PendingAccept = reservation
+        task.spawn(function()
+            local coord = Remote.RuntimeCoord
+            if not coord then
+                if Router.PendingAccept == reservation then Router.PendingAccept = nil end
+                return
+            end
+            local function active()
+                return routerAlive() and Router.Enabled == true
+                    and Router.AcceptEpoch == reservation.Epoch
+                    and Router.PendingAccept == reservation
+            end
+            local token = coord.beginTradeGate()
+            if not token then
+                if Router.PendingAccept == reservation then Router.PendingAccept = nil end
+                return
+            end
+            local okAccept, accepted = false, false
+            pcall(function()
+                if coord.waitTradeSafe(active) and active() then
+                    okAccept, accepted = coord.callRemote(
+                        "tradeAcceptOffer", 10, active, sender)
                 end
             end)
+            -- If the server accepted, keep the reservation briefly until the
+            -- authoritative IsTrading transition closes the pre-session race.
+            if okAccept and accepted ~= false then
+                local deadline = os.clock() + 3
+                while active() and Service.LocalPlayer:GetAttribute("IsTrading") ~= true
+                    and os.clock() < deadline
+                do task.wait(0.05) end
+            end
+            coord.endTradeGate(token)
+            if Router.PendingAccept == reservation then Router.PendingAccept = nil end
         end)
+    end)
+    Router.RespawnConnection = Service.LocalPlayer.CharacterAdded:Connect(function()
+        task.delay(1, function()
+            if routerAlive() and Router.Enabled == true then
+                Remote.RequestTradeOfferRefresh(10)
+            end
+        end)
+    end)
     return true
 end
 
@@ -839,6 +1005,9 @@ Runtime.isTrading = function()
         or (char and char:GetAttribute("IsTrading") == true) or false
 end
 Runtime.beginTradeGate = function()
+    -- One local trade intent at a time.  This prevents an incoming Auto Accept
+    -- from racing an outgoing SendTradeOffer before IsTrading becomes true.
+    if next(Runtime.Trade.Gates) ~= nil then return nil end
     Runtime.Trade.Serial = Runtime.Trade.Serial + 1
     local token = Runtime.Trade.Serial
     Runtime.Trade.Gates[token] = true
@@ -7552,10 +7721,13 @@ do
         RequestReady = nil,
         LastActivityAt = nil,
         Serial = 0,
+        Generation = TradeLifecycleGeneration,
     }
 
     local function runTradeSession(tradeReplion, sessionId, managed, owner)
-        if not tradeReplion or tradeReplion.Destroyed then return end
+        local sessionGeneration = S_Trade.Generation
+        if not Remote.TradeGenerationAlive(sessionGeneration)
+            or not tradeReplion or tradeReplion.Destroyed then return end
         if S_Trade.ActiveSession == tradeReplion then
             S_Trade.Managed = S_Trade.Managed or managed == true
             return
@@ -7619,7 +7791,8 @@ do
         S_Trade.LastActivityAt = os.clock()
 
         local function alive()
-            return not ended and S_Trade.Serial == serial
+            return Remote.TradeGenerationAlive(sessionGeneration)
+                and not ended and S_Trade.Serial == serial
                 and S_Trade.ActiveSession == tradeReplion
                 and not tradeReplion.Destroyed
                 and LP:GetAttribute("IsTrading") == true
@@ -7749,13 +7922,14 @@ do
             end)
         end
 
-        table.insert(connections, tradeReplion:OnChange("LastModifiedTime", function()
+        local connLastModified = tradeReplion:OnChange("LastModifiedTime", function()
             markActivity()
             readyForKey = nil
             confirmLoopKey = nil
             scheduleReady()
-        end))
-        table.insert(connections, tradeReplion:OnChange("Players." .. myId .. ".IsReady", function(isReady)
+        end)
+        table.insert(connections, Remote.TrackTradeConnection(connLastModified))
+        local connMyReady = tradeReplion:OnChange("Players." .. myId .. ".IsReady", function(isReady)
             markActivity()
             if isReady then
                 confirmIfReady()
@@ -7763,14 +7937,16 @@ do
                 readyForKey = nil
                 scheduleReady()
             end
-        end))
-        table.insert(connections, tradeReplion:OnChange("PlayersReady", function(isReady)
+        end)
+        table.insert(connections, Remote.TrackTradeConnection(connMyReady))
+        local connPlayersReady = tradeReplion:OnChange("PlayersReady", function(isReady)
             markActivity()
             if isReady then confirmIfReady() end
-        end))
+        end)
+        table.insert(connections, Remote.TrackTradeConnection(connPlayersReady))
         if otherId then
             otherOfferItemCount = readOtherOffer()
-            table.insert(connections, tradeReplion:OnDescendantChange(
+            local connOtherItems = tradeReplion:OnDescendantChange(
                 "Players." .. otherId .. ".Items",
                 function()
                     -- AddItem/RemoveItem lawan telah diakui server dan
@@ -7783,7 +7959,8 @@ do
                     confirmLoopKey = nil
                     scheduleReady()
                 end
-            ))
+            )
+            table.insert(connections, Remote.TrackTradeConnection(connOtherItems))
         end
         local function finishSession(eventSession)
             if eventSession ~= nil and type(eventSession) ~= "boolean"
@@ -7795,7 +7972,10 @@ do
             SupportState.recheckAutoEquipRod(0.2)
         end
         for _, event in ipairs({Remote.tradeCompleted, Remote.tradeEnded}) do
-            if event then table.insert(connections, event.OnClientEvent:Connect(finishSession)) end
+            if event then
+                table.insert(connections, Remote.TrackTradeConnection(
+                    event.OnClientEvent:Connect(finishSession)))
+            end
         end
         S_Trade.RequestReady = function()
             readyForKey = nil
@@ -7822,7 +8002,10 @@ do
                 end
                 task.wait(0.25)
             end
-            for _, connection in ipairs(connections) do pcall(function() connection:Disconnect() end) end
+            for _, connection in ipairs(connections) do
+                Remote.UntrackTradeConnection(connection)
+                pcall(function() connection:Disconnect() end)
+            end
             if S_Trade.Serial == serial then
                 if Runtime.Trade.SessionId == sessionKey then Runtime.Trade.SessionId = nil end
                 SupportState.recheckAutoEquipRod(0.2)
@@ -7852,8 +8035,11 @@ do
     -- Keep the visual control and runtime state inseparable.  A validation
     -- failure used to change only S.Trading.*, leaving the Gen2 toggle drawn
     -- as enabled even though its worker had already stopped.
-    local function setTradeRunning(stateKey, state)
-        if not S.Trading then return end
+    local function setTradeRunning(stateKey, state, ownerSerial)
+        if not S.Trading then return false end
+        if ownerSerial ~= nil and (S.Trading.RunSerial ~= ownerSerial
+            or S.Trading.ActiveMode ~= stateKey)
+        then return false end
         S.Trading[stateKey] = state == true
         if state ~= true then
             local controls = S.Trading.ToggleControls
@@ -7862,6 +8048,7 @@ do
                 pcall(function() control:Set(false) end)
             end
         end
+        return true
     end
 
     local function runTradeLoop(opts)
@@ -7898,9 +8085,11 @@ do
         S.Trading.ActiveMode = stateKey
         S.Trading.RunSerial = (S.Trading.RunSerial or 0) + 1
         local runSerial = S.Trading.RunSerial
+        local runGeneration = S_Trade.Generation
 
         local function runActive()
-            return S.Trading.RunSerial == runSerial
+            return Remote.TradeGenerationAlive(runGeneration)
+                and S.Trading.RunSerial == runSerial
                 and S.Trading.ActiveMode == stateKey
                 and S.Trading[stateKey] == true
         end
@@ -7978,22 +8167,28 @@ do
         end
 
         local totalSent, retryCount, success, failed = 0, 0, 0, 0
+        local currentOwnerToken = nil
 
         setStatus(statusPara, "Retry: 0 | Success: 0 | Failed: 0 | Sent: 0")
 
         task.spawn(function()
-            local gate = Runtime.beginTradeGate()
+            local gate = nil
+            while runActive() and not gate do
+                gate = Runtime.beginTradeGate()
+                if not gate then task.wait(0.05) end
+            end
+            if not gate then return end
             local batchConnections = {}
             local workerOk, workerErr = pcall(function()
             if not Runtime.waitTradeSafe(runActive) then
-                setTradeRunning(stateKey, false)
+                setTradeRunning(stateKey, false, runSerial)
                 setStatus(statusPara, "Waiting for item/fishing action timed out. Stopped.")
                 return
             end
             while runActive() and totalSent < targetAmount do
                 local target = game:GetService("Players"):FindFirstChild(targetPlayer)
                 if not target then
-                    setTradeRunning(stateKey, false)
+                    setTradeRunning(stateKey, false, runSerial)
                     setStatus(statusPara, "Player not found. Stopped.")
                     break
                 end
@@ -8018,7 +8213,7 @@ do
 
                 local items = pendingPlanItems()
                 if #items == 0 then
-                    setTradeRunning(stateKey, false)
+                    setTradeRunning(stateKey, false, runSerial)
                     setStatus(statusPara, "Done -- Inventory empty. Sent: " .. totalSent)
                     break
                 end
@@ -8048,6 +8243,7 @@ do
                     TargetUserId = tostring(target.UserId),
                     SessionId = nil,
                 }
+                currentOwnerToken = batchOwner.Token
                 local function clearPendingOwner()
                     if S_Trade.PendingOutgoing == batchOwner then
                         S_Trade.PendingOutgoing = nil
@@ -8266,7 +8462,7 @@ do
                             end
                             if confirmedCount ~= #batch then
                                 failed = failed + 1
-                                setTradeRunning(stateKey, false)
+                                setTradeRunning(stateKey, false, runSerial)
                                 setStatus(statusPara, "Inventory sync timeout. Trade stopped safely.")
                             else
                                 success = success + 1
@@ -8292,16 +8488,17 @@ do
                 S_Trade.PendingOutgoing = nil
             end
             -- User turned the worker off while its outgoing session is open.
-            if LP:GetAttribute("IsTrading") == true and S_Trade.Managed
-                and S_Trade.ActiveOwnerToken
-                and tostring(S_Trade.ActiveOwnerToken):match(
-                    "^" .. tostring(runSerial) .. ":")
+            if Remote.TradeGenerationAlive(runGeneration)
+                and LP:GetAttribute("IsTrading") == true and S_Trade.Managed
+                and currentOwnerToken ~= nil
+                and S_Trade.ActiveOwnerToken == currentOwnerToken
+                and S.Trading.RunSerial == runSerial
             then
                 Runtime.callRemote("tradeCancel", 5, nil)
             end
 
             if runActive() and totalSent >= targetAmount then
-                setTradeRunning(stateKey, false)
+                setTradeRunning(stateKey, false, runSerial)
                 UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Trade done! Sent: " .. totalSent, Color=Color3.fromRGB(150,150,170), Delay=4 })
             end
             if S.Trading.RunSerial == runSerial then
@@ -8316,7 +8513,7 @@ do
             Runtime.endTradeGate(gate)
             if S.Trading.RunSerial == runSerial then S.Trading.ActiveMode = nil end
             if not workerOk and S.Trading.RunSerial == runSerial then
-                setTradeRunning(stateKey, false)
+                setTradeRunning(stateKey, false, runSerial)
                 Runtime.LastError = "Trade: " .. tostring(workerErr)
                 setStatus(statusPara, "Trade stopped after an error; local gate released.")
             end
@@ -8346,11 +8543,22 @@ do
         ToggleControls  = {},
     }
 
-    -- All session listeners are installed only after S.Trading exists. This
-    -- avoids the startup nil window in the previous auto-accept listener.
+    -- All global Trade listeners are generation-owned.  A re-execution
+    -- disconnects them at bootstrap and delayed callbacks also self-invalidate.
+    local globalTradeGeneration = S_Trade.Generation
+    local function globalTradeAlive()
+        return Remote.TradeGenerationAlive(globalTradeGeneration)
+    end
+
     if Remote.tradeStarted then
-        Remote.tradeStarted.OnClientEvent:Connect(function(sessionId)
+        Remote.TrackTradeConnection(Remote.tradeStarted.OnClientEvent:Connect(function(sessionId)
+            if not globalTradeAlive() then return end
             Runtime.Trade.SessionId = tostring(sessionId)
+            -- TradeStarted closes the incoming-offer reservation.  IsTrading now
+            -- owns the transaction barrier instead of the pre-accept gate.
+            if Router.PendingAccept and Router.Generation == RouterGeneration then
+                Router.PendingAccept = nil
+            end
             local owner = S_Trade.PendingOutgoing
             if type(owner) == "table" then
                 owner.SessionId = tostring(sessionId)
@@ -8365,49 +8573,64 @@ do
             task.spawn(function()
                 local replion = nil
                 local elapsed = 0
-                while not replion and elapsed < 3 and Runtime.Trade.SessionId == tostring(sessionId) do
+                while globalTradeAlive() and not replion and elapsed < 3
+                    and Runtime.Trade.SessionId == tostring(sessionId)
+                do
                     pcall(function() replion = Data.Replion.Client:GetReplion(sessionId) end)
                     if not replion then task.wait(0.05) elapsed = elapsed + 0.05 end
                 end
+                if not globalTradeAlive() then return end
                 if replion and Runtime.Trade.SessionId == tostring(sessionId) then
                     local deadline = os.clock() + 2
-                    while Service.LocalPlayer:GetAttribute("IsTrading") ~= true
-                        and os.clock() < deadline and Runtime.Trade.SessionId == tostring(sessionId)
+                    while globalTradeAlive()
+                        and Service.LocalPlayer:GetAttribute("IsTrading") ~= true
+                        and os.clock() < deadline
+                        and Runtime.Trade.SessionId == tostring(sessionId)
                     do task.wait(0.05) end
-                    if Runtime.Trade.SessionId == tostring(sessionId) then
+                    if globalTradeAlive()
+                        and Runtime.Trade.SessionId == tostring(sessionId)
+                    then
                         runTradeSession(replion, sessionId, managed, owner)
                     end
                 elseif Runtime.Trade.SessionId == tostring(sessionId)
                     and Service.LocalPlayer:GetAttribute("IsTrading") ~= true
                 then Runtime.Trade.SessionId = nil end
             end)
-        end)
+        end))
     end
 
     -- Register terminal events even if the session Replion arrived too late.
     for _, event in ipairs({Remote.tradeCompleted, Remote.tradeEnded}) do
-        if event then event.OnClientEvent:Connect(function(sessionId)
-            local current = Runtime.Trade.SessionId
-            if current and (sessionId == nil or type(sessionId) == "boolean"
-                or tostring(sessionId) == current) then
-                Runtime.Trade.SessionId = nil
-                SupportState.recheckAutoEquipRod(0.2)
-            end
-        end) end
-    end
-    -- A missing TradeEnded must not leave a local session gate forever.
-    Service.LocalPlayer:GetAttributeChangedSignal("IsTrading"):Connect(function()
-        if Service.LocalPlayer:GetAttribute("IsTrading") ~= true then
-            local current = Runtime.Trade.SessionId
-            task.delay(0.5, function()
-                if Runtime.Trade.SessionId == current
-                    and Service.LocalPlayer:GetAttribute("IsTrading") ~= true then
+        if event then
+            Remote.TrackTradeConnection(event.OnClientEvent:Connect(function(sessionId)
+                if not globalTradeAlive() then return end
+                local current = Runtime.Trade.SessionId
+                if current and (sessionId == nil or type(sessionId) == "boolean"
+                    or tostring(sessionId) == current)
+                then
                     Runtime.Trade.SessionId = nil
-                    SupportState.recheckAutoEquipRod()
+                    SupportState.recheckAutoEquipRod(0.2)
                 end
-            end)
+            end))
         end
-    end)
+    end
+
+    -- A missing TradeEnded must not leave a local session gate forever.
+    Remote.TrackTradeConnection(
+        Service.LocalPlayer:GetAttributeChangedSignal("IsTrading"):Connect(function()
+            if not globalTradeAlive() then return end
+            if Service.LocalPlayer:GetAttribute("IsTrading") ~= true then
+                local current = Runtime.Trade.SessionId
+                task.delay(0.5, function()
+                    if globalTradeAlive() and Runtime.Trade.SessionId == current
+                        and Service.LocalPlayer:GetAttribute("IsTrading") ~= true
+                    then
+                        Runtime.Trade.SessionId = nil
+                        SupportState.recheckAutoEquipRod()
+                    end
+                end)
+            end
+        end))
 
     -- ====== SELECT PLAYER ======
     local TradingPlayerSection = UI.Window:AddCollapsible(UI.TradingTab, "Select Player", false)
@@ -8675,19 +8898,15 @@ do
     UI.Window:AddToggle(AutoAcceptSection, "Auto Accept & Confirm Trade", "", false,
         function(state)
             S.Trading.AutoAccept = state
-            Remote.TradeOfferRouter.AcceptEpoch = (Remote.TradeOfferRouter.AcceptEpoch or 0) + 1
-            Remote.TradeOfferRouter.Enabled = state == true
+            Remote.SetTradeOfferRouterEnabled(state == true)
             if state == true then
                 if S_Trade.ActiveSession and S_Trade.ActiveOwnerToken == nil then
                     S_Trade.Managed = true
                     S_Trade.BlockedSessionId = nil
                     if S_Trade.RequestReady then S_Trade.RequestReady() end
                 end
-                task.spawn(function()
-                    while UI.Window.AutoloadState == "Loading" do task.wait() end
-                    if S.Trading.AutoAccept ~= true then return end
-                    Remote.RefreshTradeOfferRouter(10)
-                end)
+                -- Router refresh is serialized by SetTradeOfferRouterEnabled.
+                -- No second autoload refresh worker is created here.
             elseif S_Trade.ActiveSession
                 and S_Trade.ActiveOwnerToken == nil
                 and S_Trade.Managed
