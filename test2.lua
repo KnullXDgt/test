@@ -1,7 +1,7 @@
 -- ====================================================================
 --                 INSTANT FISHING V2 - CLEAN
 --          Fishing + AutoSell + Auto Small Notification
--- Fish-tier + Quest/Trade lifecycle hardening build: 20260903-R23
+-- Fish-tier + Quest/Trade lifecycle hardening build: 20260903-R26-TradeToggleUserOwned
 -- ====================================================================
 
 -- ====== SERVICES ======
@@ -8125,24 +8125,10 @@ do
         S.setParagraphText(para, txt)
     end
 
-    -- Keep the visual control and runtime state inseparable.  A validation
-    -- failure used to change only S.Trading.*, leaving the Gen2 toggle drawn
-    -- as enabled even though its worker had already stopped.
-    local function setTradeRunning(stateKey, state, ownerSerial)
-        if not S.Trading then return false end
-        if ownerSerial ~= nil and (S.Trading.RunSerial ~= ownerSerial
-            or S.Trading.ActiveMode ~= stateKey)
-        then return false end
-        S.Trading[stateKey] = state == true
-        if state ~= true then
-            local controls = S.Trading.ToggleControls
-            local control = controls and controls[stateKey]
-            if control then
-                pcall(function() control:Set(false) end)
-            end
-        end
-        return true
-    end
+    -- R26: Trade toggles are USER-OWNED. Runtime/validation/completion must never
+    -- call Set(true/false) or rewrite a toggle state behind the user's back.
+    -- S.Trading.*_Running reflects only the last UI callback from the user.
+    -- Worker termination is tracked locally inside runTradeLoop instead.
 
     local function runTradeLoop(opts)
         local getItemsFn      = opts.getItemsFn
@@ -8150,7 +8136,20 @@ do
         local stateKey        = opts.stateRunningKey
         local targetAmount    = tonumber(opts.targetAmount) or 1
         local targetPlayer    = opts.targetPlayer
+        local toggleControl   = opts.toggleControl
         local LP              = Service.LocalPlayer
+        local workerStopRequested = false
+
+        -- R28: every terminal/invalid/error exit owns its own UI toggle.
+        -- User can still turn it OFF manually at any time; runtime never forces ON.
+        local function autoOffOwnToggle(reason)
+            workerStopRequested = true
+            S.Trading[stateKey] = false
+            if toggleControl then
+                pcall(function() toggleControl:Set(false) end)
+            end
+            return reason
+        end
 
         for key, remoteName in pairs({
             tradeSendOffer="RF/Trading/SendTradeOffer",
@@ -8163,16 +8162,16 @@ do
             tradeCompleted="RE/Trading/TradeCompleted",
         }) do
             if not Remote[key] then
-                setTradeRunning(stateKey, false)
-                setStatus(statusPara, remoteName .. " unavailable. Stopped.")
+                autoOffOwnToggle("REMOTE_UNAVAILABLE")
+                setStatus(statusPara, remoteName .. " unavailable. Worker stopped.")
                 return
             end
         end
 
         -- Satu worker outgoing per account: server hanya mengizinkan satu session.
         if S.Trading.ActiveMode ~= nil and S.Trading.ActiveMode ~= stateKey then
-            UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Stop current trade mode first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-            setTradeRunning(stateKey, false)
+            autoOffOwnToggle("OTHER_WORKER_ACTIVE")
+            UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Another trade worker is active. This toggle was turned OFF.", Color=Color3.fromRGB(255,80,80), Delay=3 })
             return
         end
         S.Trading.ActiveMode = stateKey
@@ -8180,8 +8179,22 @@ do
         local runSerial = S.Trading.RunSerial
         local runGeneration = S_Trade.Generation
 
+        local function stopOwnWorker(reason)
+            if S.Trading.RunSerial == runSerial and S.Trading.ActiveMode == stateKey then
+                autoOffOwnToggle(reason or "WORKER_STOPPED")
+                return true
+            end
+            workerStopRequested = true
+            return false
+        end
+
+        local function terminalAutoOff(reason)
+            return stopOwnWorker(reason)
+        end
+
         local function runActive()
-            return Remote.TradeGenerationAlive(runGeneration)
+            return not workerStopRequested
+                and Remote.TradeGenerationAlive(runGeneration)
                 and S.Trading.RunSerial == runSerial
                 and S.Trading.ActiveMode == stateKey
                 and S.Trading[stateKey] == true
@@ -8274,14 +8287,14 @@ do
             local batchConnections = {}
             local workerOk, workerErr = pcall(function()
             if not Runtime.waitTradeSafe(runActive) then
-                setTradeRunning(stateKey, false, runSerial)
+                stopOwnWorker("SAFEPOINT_TIMEOUT")
                 setStatus(statusPara, "Waiting for item/fishing action timed out. Stopped.")
                 return
             end
             while runActive() and totalSent < targetAmount do
                 local target = game:GetService("Players"):FindFirstChild(targetPlayer)
                 if not target then
-                    setTradeRunning(stateKey, false, runSerial)
+                    stopOwnWorker("PLAYER_LEFT")
                     setStatus(statusPara, "Player not found. Stopped.")
                     break
                 end
@@ -8306,7 +8319,7 @@ do
 
                 local items = pendingPlanItems()
                 if #items == 0 then
-                    setTradeRunning(stateKey, false, runSerial)
+                    terminalAutoOff("INVENTORY_EXHAUSTED")
                     setStatus(statusPara, "Done -- Inventory empty. Sent: " .. totalSent)
                     break
                 end
@@ -8382,7 +8395,15 @@ do
                 batchConnections = {startConn, endConn, compConn}
                 S_Trade.PendingOutgoing = batchOwner
                 local ok, sendResult = Runtime.callRemote("tradeSendOffer", 10, runActive, target)
-                if not ok or sendResult == false then
+                if not ok then
+                    clearPendingOwner()
+                    if startConn then pcall(function() startConn:Disconnect() end) end
+                    if endConn then pcall(function() endConn:Disconnect() end) end
+                    if compConn then pcall(function() compConn:Disconnect() end) end
+                    failed = failed + 1
+                    stopOwnWorker("REMOTE_ERROR")
+                    setStatus(statusPara, "SendTradeOffer error. Worker stopped.")
+                elseif sendResult == false then
                     clearPendingOwner()
                     if startConn then pcall(function() startConn:Disconnect() end) end
                     if endConn then pcall(function() endConn:Disconnect() end) end
@@ -8403,7 +8424,8 @@ do
                         if endConn then pcall(function() endConn:Disconnect() end) end
                         if compConn then pcall(function() compConn:Disconnect() end) end
                         failed = failed + 1
-                        task.wait(2.5)
+                        stopOwnWorker("TRADE_START_TIMEOUT")
+                        setStatus(statusPara, "TradeStarted timeout. Worker stopped.")
                     else
                         clearPendingOwner()
                         -- Let Replion/session handler initialize, not a fixed delay.
@@ -8434,8 +8456,8 @@ do
                             if startConn then pcall(function() startConn:Disconnect() end) end
                             if endConn then pcall(function() endConn:Disconnect() end) end
                             if compConn then pcall(function() compConn:Disconnect() end) end
-                            setStatus(statusPara, "Retry: " .. retryCount .. " | Success: " .. success .. " | Failed: " .. failed .. " | Sent: " .. totalSent)
-                            task.wait(2.5)
+                            stopOwnWorker("SESSION_INIT_TIMEOUT")
+                            setStatus(statusPara, "Trade session init timeout. Worker stopped.")
                         else
                         -- Add items
                         -- Quantity before AddItem is the receipt baseline.
@@ -8453,7 +8475,12 @@ do
                             local ok2, added = Runtime.callRemote("tradeAddItem", 6,
                                 function() return runActive() and exactSessionReady() end,
                                 itemData.ItemType, itemData.UUID)
-                            if ok2 and added == true then addedCount = addedCount + 1 end
+                            if not ok2 then
+                                stopOwnWorker("REMOTE_ERROR")
+                                setStatus(statusPara, "AddItem remote error. Worker stopped.")
+                                break
+                            end
+                            if added == true then addedCount = addedCount + 1 end
                             task.wait(math.random(1, 3) / 8)
                         end
                         local offerVerified = addedCount == #batch
@@ -8555,7 +8582,7 @@ do
                             end
                             if confirmedCount ~= #batch then
                                 failed = failed + 1
-                                setTradeRunning(stateKey, false, runSerial)
+                                stopOwnWorker("INVENTORY_SYNC_TIMEOUT")
                                 setStatus(statusPara, "Inventory sync timeout. Trade stopped safely.")
                             else
                                 success = success + 1
@@ -8591,7 +8618,7 @@ do
             end
 
             if runActive() and totalSent >= targetAmount then
-                setTradeRunning(stateKey, false, runSerial)
+                terminalAutoOff("TARGET_REACHED")
                 UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Trade done! Sent: " .. totalSent, Color=Color3.fromRGB(150,150,170), Delay=4 })
             end
             if S.Trading.RunSerial == runSerial then
@@ -8606,7 +8633,7 @@ do
             Runtime.endTradeGate(gate)
             if S.Trading.RunSerial == runSerial then S.Trading.ActiveMode = nil end
             if not workerOk and S.Trading.RunSerial == runSerial then
-                setTradeRunning(stateKey, false, runSerial)
+                stopOwnWorker("WORKER_ERROR")
                 Runtime.LastError = "Trade: " .. tostring(workerErr)
                 setStatus(statusPara, "Trade stopped after an error; local gate released.")
             end
@@ -8633,7 +8660,6 @@ do
         AutoAccept      = false,
         ActiveMode      = nil,  -- guard: hanya 1 mode boleh jalan
         RunSerial       = 0,    -- invalidates an older worker of the same mode
-        ToggleControls  = {},
     }
 
     -- All global Trade listeners are generation-owned.  A re-execution
@@ -8774,13 +8800,15 @@ do
             S.Trading.ByName_Running = state
             if state then
                 if S.Trading.TargetPlayer == "" or S.Trading.TargetPlayer == "Select Option" then
+                    S.Trading.ByName_Running = false
+                    pcall(function() ByNameToggle:Set(false) end)
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a player first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    setTradeRunning("ByName_Running", false)
                     return
                 end
                 if S.Trading.ByName_Item == "" or S.Trading.ByName_Item == "Select Option" then
+                    S.Trading.ByName_Running = false
+                    pcall(function() ByNameToggle:Set(false) end)
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select an item first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    setTradeRunning("ByName_Running", false)
                     return
                 end
                 local cleanName = (S.Trading.ByName_Item:match("^x%d+ (.+)$") or S.Trading.ByName_Item)
@@ -8797,10 +8825,10 @@ do
                     stateRunningKey = "ByName_Running",
                     targetAmount    = S.Trading.ByName_Amount,
                     targetPlayer    = S.Trading.TargetPlayer,
+                    toggleControl   = ByNameToggle,
                 })
             end
         end, "Toggle_Trade_ByName")
-    S.Trading.ToggleControls.ByName_Running = ByNameToggle
 
     -- ====== TRADE BY COINS ======
     local ByCoinsSection = UI.Window:AddCollapsible(UI.TradingTab, "Trade by Coins", false)
@@ -8819,15 +8847,17 @@ do
             S.Trading.ByCoins_Running = state
             if state then
                 if S.Trading.TargetPlayer == "" or S.Trading.TargetPlayer == "Select Option" then
+                    S.Trading.ByCoins_Running = false
+                    pcall(function() ByCoinsToggle:Set(false) end)
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a player first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    setTradeRunning("ByCoins_Running", false)
                     return
                 end
                 -- Greedy all tradable fish sampai melebihi target coins
                 local byCoinsFullList = getItemsByCoins(S.Trading.ByCoins_Target)
                 if #byCoinsFullList == 0 then
+                    S.Trading.ByCoins_Running = false
+                    pcall(function() ByCoinsToggle:Set(false) end)
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="No tradable fish for target coins!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    setTradeRunning("ByCoins_Running", false)
                     return
                 end
                 -- Freeze the chosen UUID set, then revalidate it every trade.
@@ -8856,10 +8886,10 @@ do
                     stateRunningKey = "ByCoins_Running",
                     targetAmount    = #byCoinsFullList,  -- stop setelah semua item terkirim
                     targetPlayer    = S.Trading.TargetPlayer,
+                    toggleControl   = ByCoinsToggle,
                 })
             end
         end, "Toggle_Trade_ByCoins")
-    S.Trading.ToggleControls.ByCoins_Running = ByCoinsToggle
 
 
     -- ====== TRADE BY RARITIES ======
@@ -8884,8 +8914,9 @@ do
             S.Trading.ByRarity_Running = state
             if state then
                 if S.Trading.TargetPlayer == "" or S.Trading.TargetPlayer == "Select Option" then
+                    S.Trading.ByRarity_Running = false
+                    pcall(function() ByRarityToggle:Set(false) end)
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a player first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    setTradeRunning("ByRarity_Running", false)
                     return
                 end
                 local selectedRarity = S.Trading.ByRarity_Rarity
@@ -8897,10 +8928,10 @@ do
                     stateRunningKey = "ByRarity_Running",
                     targetAmount    = S.Trading.ByRarity_Amount,
                     targetPlayer    = S.Trading.TargetPlayer,
+                    toggleControl   = ByRarityToggle,
                 })
             end
         end, "Toggle_Trade_ByRarity")
-    S.Trading.ToggleControls.ByRarity_Running = ByRarityToggle
 
     -- ====== TRADE ENCHANT STONE ======
     local ByStoneSection = UI.Window:AddCollapsible(UI.TradingTab, "Trade Enchant Stone", false)
@@ -8931,13 +8962,15 @@ do
             S.Trading.ByStone_Running = state
             if state then
                 if S.Trading.TargetPlayer == "" or S.Trading.TargetPlayer == "Select Option" then
+                    S.Trading.ByStone_Running = false
+                    pcall(function() ByStoneToggle:Set(false) end)
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a player first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    setTradeRunning("ByStone_Running", false)
                     return
                 end
                 if S.Trading.ByStone_Stone == "" or S.Trading.ByStone_Stone == "Select Option" then
+                    S.Trading.ByStone_Running = false
+                    pcall(function() ByStoneToggle:Set(false) end)
                     UI.Library:Notify({ Title="Orvion", Subtitle="Hub", Description="", Content="Select a stone first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
-                    setTradeRunning("ByStone_Running", false)
                     return
                 end
                 local cleanName = (S.Trading.ByStone_Stone:match("^x%d+ (.+)$") or S.Trading.ByStone_Stone)
@@ -8980,10 +9013,10 @@ do
                     stateRunningKey = "ByStone_Running",
                     targetAmount    = S.Trading.ByStone_Amount,
                     targetPlayer    = S.Trading.TargetPlayer,
+                    toggleControl   = ByStoneToggle,
                 })
             end
         end, "Toggle_Trade_ByStone")
-    S.Trading.ToggleControls.ByStone_Running = ByStoneToggle
 
     -- ====== AUTO ACCEPT TRADE ======
     local AutoAcceptSection = UI.Window:AddCollapsible(UI.TradingTab, "Auto Accept Trade", false)
