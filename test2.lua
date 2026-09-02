@@ -1,7 +1,7 @@
 -- ====================================================================
 --                 INSTANT FISHING V2 - CLEAN
 --          Fishing + AutoSell + Auto Small Notification
--- Fish-tier + Quest/Trade lifecycle hardening build: 20260903-R26-TradeToggleUserOwned
+-- Fish-tier + Quest/Trade lifecycle hardening build: 20260903-R30-TradeAFKHardening
 -- ====================================================================
 
 -- ====== SERVICES ======
@@ -252,6 +252,11 @@ for _, connection in ipairs(Router.StockConnections or {}) do
     pcall(function() connection:Enable() end)
 end
 Router.StockConnections = {}
+-- AFK hardening: avoid retaining the exact same getconnections() wrapper
+-- thousands of times during the 0.75s R25 watchdog. Weak keys do not keep
+-- wrappers alive by themselves and do not rely on identity for suppression;
+-- they only reduce duplicate retention when an executor returns stable wrappers.
+Router.StockConnectionSeen = setmetatable({}, { __mode = "k" })
 Router.RefreshRequested = 0
 Router.RefreshHandled = 0
 Router.RefreshAttempts = 0
@@ -269,6 +274,7 @@ Remote.RestoreStockTradeOfferConnections = function()
         restored = true
     end
     Router.StockConnections = {}
+    Router.StockConnectionSeen = setmetatable({}, { __mode = "k" })
     return restored
 end
 
@@ -315,10 +321,19 @@ Remote.DisableStockTradeOfferConnections = function(attempts)
             for _, connection in ipairs(connections) do
                 local disabled = pcall(function() connection:Disable() end)
                 if disabled then
-                    -- Keeping duplicate wrapper handles is harmless; OFF enables
-                    -- every handle we actually touched.  Avoid relying on wrapper
-                    -- identity/dedup semantics across executors.
-                    table.insert(Router.StockConnections, connection)
+                    -- Suppression never depends on wrapper identity.  For retention
+                    -- only, skip an exact wrapper object already cached so the
+                    -- long-running watchdog does not grow the restore list needlessly
+                    -- on executors that return stable getconnections() wrappers.
+                    local seen = Router.StockConnectionSeen
+                    if type(seen) ~= "table" then
+                        seen = setmetatable({}, { __mode = "k" })
+                        Router.StockConnectionSeen = seen
+                    end
+                    if not seen[connection] then
+                        seen[connection] = true
+                        table.insert(Router.StockConnections, connection)
+                    end
                     found = true
                 end
             end
@@ -8201,11 +8216,12 @@ do
         end
 
         -- A declined/cancelled offer never changes inventory.  Therefore
-        -- create a fresh candidate snapshot immediately before *every* new
-        -- offer, rather than keeping the first snapshot for the full toggle
-        -- lifetime.  `acknowledged` remains the only cross-trade memory, so a
-        -- successfully transferred UUID still cannot appear again.
-        local acknowledged = {}
+        -- create a fresh candidate snapshot immediately before *every* new offer.
+        -- Do NOT permanently blacklist a successful UUID: stacked enchant stones
+        -- keep the same UUID while Quantity decreases and the game only allows
+        -- one unit of that UUID per trade. Receipt verification below already
+        -- guarantees that the inventory decreased before this UUID can be planned
+        -- again for the next trade.
 
         -- Read the authoritative local inventory once per check.  Besides
         -- being much lighter on a 4k+ inventory, Quantity makes the receipt
@@ -8262,7 +8278,7 @@ do
             local seen = {}
             for _, entry in ipairs(getItemsFn() or {}) do
                 local uuid = entry and entry.UUID and tostring(entry.UUID)
-                if uuid and not seen[uuid] and not acknowledged[uuid]
+                if uuid and not seen[uuid]
                     and (owned[uuid] or 0) > 0
                 then
                     seen[uuid] = true
@@ -8283,7 +8299,17 @@ do
                 gate = Runtime.beginTradeGate()
                 if not gate then task.wait(0.05) end
             end
-            if not gate then return end
+            if not gate then
+                -- runActive() became false before this worker acquired the gate.
+                -- Release only our own mode lock; otherwise a dead pre-gate worker
+                -- can block every other outgoing trade mode indefinitely.
+                if S.Trading.RunSerial == runSerial
+                    and S.Trading.ActiveMode == stateKey
+                then
+                    S.Trading.ActiveMode = nil
+                end
+                return
+            end
             local batchConnections = {}
             local workerOk, workerErr = pcall(function()
             if not Runtime.waitTradeSafe(runActive) then
@@ -8574,11 +8600,8 @@ do
                             until os.clock() >= receiptDeadline or not runActive()
 
                             local confirmedCount = 0
-                            for uuid in pairs(confirmed) do
-                                if not acknowledged[uuid] then
-                                    acknowledged[uuid] = true
-                                    confirmedCount = confirmedCount + 1
-                                end
+                            for _ in pairs(confirmed) do
+                                confirmedCount = confirmedCount + 1
                             end
                             if confirmedCount ~= #batch then
                                 failed = failed + 1
