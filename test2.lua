@@ -8644,6 +8644,8 @@ do
                     if S_Trade.RequestReady then S_Trade.RequestReady() end
                 end
                 task.spawn(function()
+                    while UI.Window.AutoloadState == "Loading" do task.wait() end
+                    if S.Trading.AutoAccept ~= true then return end
                     Remote.RefreshTradeOfferRouter(10)
                 end)
             elseif S_Trade.ActiveSession
@@ -8781,6 +8783,32 @@ do
         end
     end)
 end
+
+    -- ====== WEBHOOK SKELETON ======
+    UI.WebhookTab = UI.Window:CreateTab("Webhook", "rbxassetid://106168327267607")
+    local FishCaught = UI.Window:AddCollapsible(UI.WebhookTab, "Webhook Fish Caught", false)
+    UI.Window:AddInput(FishCaught, "Webhook URL", "", "Write your input here...", function() end, "Webhook_Fish_URL")
+    UI.Window:AddDropdown(FishCaught, "Tier Filter", "", {"Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret", "Forgotten"}, true, {}, function() end, "Webhook_Fish_Tier")
+    local NameMutation = UI.Window:AddCollapsible(UI.WebhookTab, "Webhook by Name & Mutation", false)
+    UI.Window:AddDropdown(NameMutation, "Name Filter", "", {"Select Options"}, true, {}, function() end, "Webhook_Name_Filter")
+    UI.Window:AddDropdown(NameMutation, "Mutation Filter", "", {"Select Options"}, true, {}, function() end, "Webhook_Mutation_Filter")
+    UI.Window:AddToggle(NameMutation, "Censored Name", "", false, function() end, "Webhook_Censored_Name")
+    UI.Window:AddToggle(NameMutation, "Send Fish Webhook", "", false, function() end, "Webhook_Send_Fish")
+    UI.Window:AddButton(NameMutation, "Test Webhook Connection", "", "rbxassetid://16932740082", function() end)
+    local GlobalWebhook = UI.Window:AddCollapsible(UI.WebhookTab, "Webhook Fish Global", false)
+    UI.Window:AddInput(GlobalWebhook, "Discord ID (For Tag)", "", "Write your Discord ID here...", function() end, "Webhook_Global_Discord")
+    UI.Window:AddToggle(GlobalWebhook, "Send Webhook Global", "Only Secret & Forgotten", false, function() end, "Webhook_Global_Send")
+    local ServerWebhook = UI.Window:AddCollapsible(UI.WebhookTab, "Server Webhook", false)
+    UI.Window:AddTextHeader(ServerWebhook, "Webhook Protection")
+    UI.Window:AddToggle(ServerWebhook, "Censored Name", "", false, function() end, "Webhook_Server_Censored")
+    UI.Window:AddTextHeader(ServerWebhook, "Webhook Fish Caught Server")
+    UI.Window:AddInput(ServerWebhook, "Server Webhook URL", "", "Write your input here...", function() end, "Webhook_Server_URL")
+    for _, label in ipairs({"Evolved Enchant Stone", "Runic Enchant Stone", "Ruby Gemstone", "Withering Core", "Secret & Forgotten"}) do
+        UI.Window:AddToggle(ServerWebhook, label, "", false, function() end, "Webhook_Server_" .. label:gsub("[^%w]", "_"))
+    end
+    UI.Window:AddTextHeader(ServerWebhook, "Webhook Server Join / Leave")
+    UI.Window:AddInput(ServerWebhook, "Webhook Server Join / Leave URL", "", "Write your input here...", function() end, "Webhook_JoinLeave_URL")
+    UI.Window:AddToggle(ServerWebhook, "Send Webhook Global Join / Leave", "", false, function() end, "Webhook_JoinLeave_Send")
 
 -- ====== STARTUP ======
 SupportState.updateBigPopup()
