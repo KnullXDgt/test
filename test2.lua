@@ -210,7 +210,7 @@ local Router = Remote.TradeOfferRouter
 -- Recover those disabled native handlers before disconnecting the old Orvion
 -- listener so the first R23 execution does not require a rejoin.
 local previousRouterConnection = Router.Connection
-if Router.LifecycleVersion ~= 23 and Remote.tradeOfferReceived
+if Router.LifecycleVersion ~= 24 and Remote.tradeOfferReceived
     and type(getconnections) == "function"
 then
     local ok, connections = pcall(getconnections, Remote.tradeOfferReceived.OnClientEvent)
@@ -222,7 +222,7 @@ then
         end
     end
 end
-Router.LifecycleVersion = 23
+Router.LifecycleVersion = 24
 
 -- Clean the previous router deterministically.  Native connections disabled by
 -- Orvion are restored before the new generation starts.
@@ -267,31 +267,64 @@ Remote.RestoreStockTradeOfferConnections = function()
     return restored
 end
 
+-- IMPORTANT: executor getconnections() wrappers are not guaranteed to compare
+-- equal to the RBXScriptConnection returned by :Connect().  Therefore never try
+-- to protect Orvion's receiver with `connection ~= Router.Connection`.
+--
+-- Instead each suppression pass temporarily disconnects Orvion's own listener,
+-- scans/disables only what remains (the game's/native listeners), then reconnects
+-- Orvion immediately.  Because R23+ serializes refreshes, this no longer has the
+-- old overlapping-refresh race.
+Remote.ConnectTradeOfferRouter = function()
+    if not routerAlive() or not Remote.tradeOfferReceived then return false end
+    if Router.Connection then
+        pcall(function() Router.Connection:Disconnect() end)
+        Router.Connection = nil
+    end
+    if type(Router.HandleOffer) ~= "function" then return false end
+    Router.Connection = Remote.tradeOfferReceived.OnClientEvent:Connect(Router.HandleOffer)
+    return Router.Connection ~= nil
+end
+
 Remote.DisableStockTradeOfferConnections = function(attempts)
     if not routerAlive() or Router.Enabled ~= true
         or not Remote.tradeOfferReceived or type(getconnections) ~= "function"
     then return false end
+
     local wantedAttempts = math.max(1, tonumber(attempts) or 1)
     local found = false
-    local known = {}
-    for _, connection in ipairs(Router.StockConnections or {}) do known[connection] = true end
     for attempt = 1, wantedAttempts do
         if not routerAlive() or Router.Enabled ~= true then break end
-        local ok, connections = pcall(getconnections, Remote.tradeOfferReceived.OnClientEvent)
+
+        -- Remove our listener BEFORE getconnections().  This is the only robust
+        -- way to guarantee a getconnections wrapper for Orvion itself cannot be
+        -- mistaken for a stock handler on executors with wrapper identity quirks.
+        if Router.Connection then
+            pcall(function() Router.Connection:Disconnect() end)
+            Router.Connection = nil
+        end
+
+        local ok, connections = pcall(getconnections,
+            Remote.tradeOfferReceived.OnClientEvent)
         if ok and type(connections) == "table" then
             for _, connection in ipairs(connections) do
-                -- Never disable our current listener.  Only remember connections
-                -- that this generation actually disabled so OFF can restore them.
-                if connection ~= Router.Connection and not known[connection] then
-                    local disabled = pcall(function() connection:Disable() end)
-                    if disabled then
-                        known[connection] = true
-                        table.insert(Router.StockConnections, connection)
-                        found = true
-                    end
+                local disabled = pcall(function() connection:Disable() end)
+                if disabled then
+                    -- Keeping duplicate wrapper handles is harmless; OFF enables
+                    -- every handle we actually touched.  Avoid relying on wrapper
+                    -- identity/dedup semantics across executors.
+                    table.insert(Router.StockConnections, connection)
+                    found = true
                 end
             end
         end
+
+        -- Reconnect immediately after every scan so the receiver is absent only
+        -- for the tiny synchronous getconnections window, not the whole retry pass.
+        if routerAlive() and Router.Enabled == true then
+            Remote.ConnectTradeOfferRouter()
+        end
+
         if attempt < wantedAttempts then task.wait(0.1) end
     end
     return found
@@ -356,11 +389,15 @@ end
 
 Remote.InstallTradeOfferRouter = function()
     if not Remote.tradeOfferReceived or not routerAlive() then return false end
-    Router.Connection = Remote.tradeOfferReceived.OnClientEvent:Connect(function(sender)
+
+    Router.HandleOffer = function(sender)
         if not routerAlive() or Router.Enabled ~= true
             or Service.LocalPlayer:GetAttribute("IsTrading") == true
             or Router.PendingAccept ~= nil
         then return end
+
+        Router.LastOfferAt = os.clock()
+        Router.LastOfferSender = sender
 
         -- Reserve this offer immediately.  A second incoming offer cannot wait in
         -- parallel during the fishing/sell/quest safe-point window.
@@ -373,6 +410,7 @@ Remote.InstallTradeOfferRouter = function()
         task.spawn(function()
             local coord = Remote.RuntimeCoord
             if not coord then
+                Router.LastAcceptResult = "NO_RUNTIME"
                 if Router.PendingAccept == reservation then Router.PendingAccept = nil end
                 return
             end
@@ -383,6 +421,7 @@ Remote.InstallTradeOfferRouter = function()
             end
             local token = coord.beginTradeGate()
             if not token then
+                Router.LastAcceptResult = "GATE_BUSY"
                 if Router.PendingAccept == reservation then Router.PendingAccept = nil end
                 return
             end
@@ -391,8 +430,16 @@ Remote.InstallTradeOfferRouter = function()
                 if coord.waitTradeSafe(active) and active() then
                     okAccept, accepted = coord.callRemote(
                         "tradeAcceptOffer", 10, active, sender)
+                else
+                    Router.LastAcceptResult = "SAFEPOINT_TIMEOUT"
                 end
             end)
+            if okAccept then
+                Router.LastAcceptResult = accepted == false and "SERVER_FALSE" or "ACCEPT_SENT"
+            elseif Router.LastAcceptResult ~= "SAFEPOINT_TIMEOUT" then
+                Router.LastAcceptResult = "ACCEPT_CALL_FAILED"
+            end
+
             -- If the server accepted, keep the reservation briefly until the
             -- authoritative IsTrading transition closes the pre-session race.
             if okAccept and accepted ~= false then
@@ -404,7 +451,10 @@ Remote.InstallTradeOfferRouter = function()
             coord.endTradeGate(token)
             if Router.PendingAccept == reservation then Router.PendingAccept = nil end
         end)
-    end)
+    end
+
+    Remote.ConnectTradeOfferRouter()
+
     Router.RespawnConnection = Service.LocalPlayer.CharacterAdded:Connect(function()
         task.delay(1, function()
             if routerAlive() and Router.Enabled == true then
