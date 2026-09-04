@@ -9192,31 +9192,426 @@ do
     end)
 end
 
-    -- ====== WEBHOOK SKELETON ======
+    -- ====== WEBHOOK ======
+do
+    local WORKER_URL = "https://orvion-discord.mrfajri70.workers.dev"
+    local WORKER_KEY = "orvion_111ajfkksdf12325778876"
+
+    S.Webhook = { NameDropdown = nil, MutationDropdown = nil }
+
+    -- HTTP send — fire and forget, no yield
+    local function wSend(route, body)
+        local fn = type(request) == "function" and request
+            or (type(http_request) == "function" and http_request)
+            or (type(syn) == "table" and type(syn.request) == "function" and syn.request)
+            or nil
+        if not fn then return end
+        local ok, encoded = pcall(function()
+            return Service.HttpService:JSONEncode(body)
+        end)
+        if not ok or not encoded then return end
+        pcall(fn, {
+            Url     = WORKER_URL .. route,
+            Method  = "POST",
+            Headers = {
+                ["Content-Type"]  = "application/json",
+                ["Authorization"] = "Bearer " .. WORKER_KEY,
+            },
+            Body = encoded,
+        })
+    end
+
+    -- Resolve fish info from catalog — all data needed for embed
+    local function resolveWebhookFish(fishName, metadata)
+        local record = Data.FishCatalog.ByName[fishName]
+        if not record then record = Data.getFishRecord(fishName) end
+        local tierNum, tierName, rarity, iconAssetId, sellPrice =
+            nil, "UNKNOWN", "N/A", nil, nil
+        if record then
+            tierNum = Data.resolveFishTier(record)
+            if tierNum then
+                local ok2, td = pcall(function()
+                    return Data.TierUtility:GetTier(tierNum)
+                end)
+                if ok2 and td and td.Name then
+                    tierName = td.Name:upper()
+                end
+            end
+            local prob = record.Probability
+            if type(prob) == "table" and type(prob.Chance) == "number" and prob.Chance > 0 then
+                local n = math.round(1 / prob.Chance)
+                local s = tostring(n)
+                local result, offset = "", #s % 3
+                for i = 1, #s do
+                    if i > 1 and (i - 1 - offset) % 3 == 0 then result = result .. "," end
+                    result = result .. s:sub(i, i)
+                end
+                rarity = "1 in " .. result
+            end
+            local d = type(record.Data) == "table" and record.Data
+            if d and type(d.Icon) == "string" and d.Icon ~= "" then
+                iconAssetId = d.Icon:match("^rbxassetid://(%d+)$") or (d.Icon:match("^%d+$") and d.Icon)
+            end
+            if type(record.SellPrice) == "number" then sellPrice = record.SellPrice end
+        end
+        local meta = type(metadata) == "table" and metadata or {}
+        return {
+            tierNum     = tierNum,
+            tierName    = tierName,
+            rarity      = rarity,
+            iconAssetId = iconAssetId,
+            sellPrice   = sellPrice,
+            weight      = type(meta.Weight) == "number" and meta.Weight or nil,
+            shiny       = meta.Shiny == true,
+            mutation    = type(meta.VariantId) == "string" and meta.VariantId or nil,
+        }
+    end
+
+    -- Guard helpers
+    local function tierMatches(tierName, filter)
+        if type(filter) ~= "table" or #filter == 0 then return true end
+        for _, t in ipairs(filter) do
+            if t:upper() == tierName:upper() then return true end
+        end
+        return false
+    end
+    local function nameMatches(fishName, filter)
+        if type(filter) ~= "table" or #filter == 0 then return true end
+        for _, n in ipairs(filter) do
+            if (n:match("^x%d+ (.+)$") or n) == fishName then return true end
+        end
+        return false
+    end
+    local function mutationMatches(mutation, filter)
+        if type(filter) ~= "table" or #filter == 0 then return true end
+        local mut = mutation or "None"
+        for _, m in ipairs(filter) do
+            if m == mut then return true end
+        end
+        return false
+    end
+    local function urlValid(v)
+        return type(v) == "string" and v ~= "" and v ~= "Write your input here..."
+    end
+
+    -- /catch — personal webhook (own fish only)
+    local function sendPersonalFish(fishName, meta, R)
+        if not Config["Webhook_Send_Fish"] then return end
+        if not urlValid(Config["Webhook_Fish_URL"]) then return end
+        if not tierMatches(R.tierName, Config["Webhook_Fish_Tier"]) then return end
+        if not nameMatches(fishName, Config["Webhook_Name_Filter"]) then return end
+        if not mutationMatches(R.mutation, Config["Webhook_Mutation_Filter"]) then return end
+        local name = Service.LocalPlayer.Name
+        if Config["Webhook_Censored_Name"] then name = "||" .. name .. "||" end
+        wSend("/catch", {
+            webhookUrl = Config["Webhook_Fish_URL"],
+            event = {
+                name           = fishName,
+                category       = "fish",
+                tier           = R.tierName,
+                rarity         = R.rarity,
+                mutation       = R.mutation or "None",
+                shiny          = R.shiny,
+                weight         = R.weight,
+                baseSellPrice  = R.sellPrice,
+                robloxUsername = name,
+                iconAssetId    = R.iconAssetId,
+                caughtAt       = os.time(),
+            }
+        })
+    end
+
+    -- /global — SECRET & FORGOTTEN only (own fish, anonymous)
+    local function sendGlobalFish(fishName, meta, R)
+        if not Config["Webhook_Global_Send"] then return end
+        if R.tierNum ~= 7 and R.tierNum ~= 8 then return end
+        local did = Config["Webhook_Global_Discord"]
+        local discordId = type(did) == "string" and did ~= "" and did ~= "Write your Discord ID here..." and did or nil
+        -- eventId deduplicated per 2-minute window
+        local window = math.floor(os.time() / 120)
+        wSend("/global", {
+            eventId       = "fish:" .. fishName .. ":" .. tostring(window),
+            discordUserId = discordId,
+            event = {
+                name          = fishName,
+                category      = "fish",
+                tier          = R.tierName,
+                rarity        = R.rarity,
+                mutation      = R.mutation or "None",
+                shiny         = R.shiny,
+                weight        = R.weight,
+                baseSellPrice = R.sellPrice,
+                iconAssetId   = R.iconAssetId,
+                caughtAt      = os.time(),
+            }
+        })
+    end
+
+    -- /server-event — one-server fish (other players, from CaughtFishVisual)
+    local function sendOneServerFish(playerName, fishName, meta, R)
+        if not urlValid(Config["Webhook_OneServer_URL"]) then return end
+        local isSecret  = R.tierNum == 7 or R.tierNum == 8
+        local isRubyGem = fishName == "Ruby" and R.mutation == "Gemstone"
+        local send = false
+        if isRubyGem and Config["Webhook_OneServer_Ruby_Gemstone"] then send = true end
+        if isSecret and Config["Webhook_OneServer_Secret___Forgotten"] then send = true end
+        if not send then return end
+        local name = playerName
+        if Config["Webhook_OneServer_Censored"] then name = "||" .. name .. "||" end
+        wSend("/server-event", {
+            webhookUrl = Config["Webhook_OneServer_URL"],
+            event = {
+                name           = fishName,
+                category       = "fish",
+                tier           = R.tierName,
+                rarity         = R.rarity,
+                mutation       = R.mutation or "None",
+                shiny          = R.shiny,
+                weight         = R.weight,
+                baseSellPrice  = R.sellPrice,
+                robloxUsername = name,
+                iconAssetId    = R.iconAssetId,
+                caughtAt       = os.time(),
+            }
+        })
+    end
+
+    -- /server-event — one-server items (Evo/Runic/Withering from ReplicateCutscene)
+    local ITEM_TOGGLE = {
+        ["Evolved Enchant Stone"] = "Webhook_OneServer_Evolved_Enchant_Stone",
+        ["Runic Enchant Stone"]   = "Webhook_OneServer_Runic_Enchant_Stone",
+        ["Withering Core"]        = "Webhook_OneServer_Withering_Core",
+    }
+    local ITEM_TIER = {
+        ["Evolved Enchant Stone"] = "LEGENDARY",
+        ["Runic Enchant Stone"]   = "SECRET",
+        ["Withering Core"]        = "SECRET",
+    }
+    local ITEM_ICON = {
+        ["Evolved Enchant Stone"] = "117432341595763",
+        ["Runic Enchant Stone"]   = "139603424264761",
+        ["Withering Core"]        = "116659997697473",
+    }
+    local function sendOneServerItem(playerName, itemName)
+        if not urlValid(Config["Webhook_OneServer_URL"]) then return end
+        local tkey = ITEM_TOGGLE[itemName]
+        if not tkey or not Config[tkey] then return end
+        local name = playerName
+        if Config["Webhook_OneServer_Censored"] then name = "||" .. name .. "||" end
+        wSend("/server-event", {
+            webhookUrl = Config["Webhook_OneServer_URL"],
+            event = {
+                name           = itemName,
+                category       = "item",
+                tier           = ITEM_TIER[itemName] or "SECRET",
+                rarity         = "N/A",
+                mutation       = "None",
+                shiny          = false,
+                weight         = nil,
+                baseSellPrice  = nil,
+                robloxUsername = name,
+                iconAssetId    = ITEM_ICON[itemName],
+                caughtAt       = os.time(),
+            }
+        })
+    end
+
+    -- Hook: RE/FishCaught AdjacentCandidate (own catches) — numpang existing
+    if Remote.fishCaught then
+        Remote.fishCaught.OnClientEvent:Connect(function(fishName, metadata)
+            task.delay(0.2, function()
+                local R = resolveWebhookFish(fishName, metadata)
+                sendPersonalFish(fishName, metadata, R)
+                sendGlobalFish(fishName, metadata, R)
+            end)
+        end)
+    end
+
+    -- Hook: RE/CaughtFishVisual AdjacentCandidate (all players) — one-server fish
+    local wVisual = Remote.Resolve("RE/CaughtFishVisual")
+    if wVisual and wVisual:IsA("RemoteEvent") then
+        wVisual.OnClientEvent:Connect(function(player, pos, fishName, metadata)
+            if typeof(player) == "Instance" and player == Service.LocalPlayer then return end
+            local playerName = typeof(player) == "Instance" and player.Name or "?"
+            task.delay(0.1, function()
+                local R = resolveWebhookFish(fishName, metadata)
+                sendOneServerFish(playerName, fishName, metadata, R)
+            end)
+        end)
+    end
+
+    -- Hook: RE/ReplicateCutscene AdjacentCandidate (all players) — one-server items
+    local wCutscene = Remote.Resolve("RE/ReplicateCutscene")
+    if wCutscene and wCutscene:IsA("RemoteEvent") then
+        wCutscene.OnClientEvent:Connect(function(tier, charOrPlayer, pos, itemName)
+            if not ITEM_TOGGLE[itemName] then return end
+            local playerName = "?"
+            pcall(function()
+                local p = typeof(charOrPlayer) == "Instance"
+                    and (charOrPlayer:IsA("Player") and charOrPlayer
+                        or Service.Players:GetPlayerFromCharacter(charOrPlayer))
+                if p then playerName = p.Name end
+            end)
+            task.delay(0.1, function()
+                sendOneServerItem(playerName, itemName)
+            end)
+        end)
+    end
+
+    -- Hook: PlayerAdded/Removing — one-server join/leave
+    Service.Players.PlayerAdded:Connect(function(player)
+        if not Config["Webhook_OneServer_JoinLeave_Send"] then return end
+        if not urlValid(Config["Webhook_OneServer_JoinLeave_URL"]) then return end
+        local all = Service.Players:GetPlayers()
+        local players = {}
+        for _, p in ipairs(all) do
+            table.insert(players, { displayName = p.DisplayName, username = p.Name })
+        end
+        wSend("/presence", {
+            webhookUrl        = Config["Webhook_OneServer_JoinLeave_URL"],
+            action            = "join",
+            playerDisplayName = player.DisplayName,
+            playerUsername    = player.Name,
+            currentPlayers    = #all,
+            maxPlayers        = game.Players.MaxPlayers,
+            players           = players,
+            timestamp         = os.time(),
+        })
+    end)
+
+    Service.Players.PlayerRemoving:Connect(function(player)
+        if not Config["Webhook_OneServer_JoinLeave_Send"] then return end
+        if not urlValid(Config["Webhook_OneServer_JoinLeave_URL"]) then return end
+        local all = Service.Players:GetPlayers()
+        local remaining = {}
+        for _, p in ipairs(all) do
+            if p ~= player then
+                table.insert(remaining, { displayName = p.DisplayName, username = p.Name })
+            end
+        end
+        wSend("/presence", {
+            webhookUrl        = Config["Webhook_OneServer_JoinLeave_URL"],
+            action            = "leave",
+            playerDisplayName = player.DisplayName,
+            playerUsername    = player.Name,
+            currentPlayers    = math.max(0, #all - 1),
+            maxPlayers        = game.Players.MaxPlayers,
+            players           = remaining,
+            timestamp         = os.time(),
+        })
+    end)
+
+    -- UI
     UI.WebhookTab = UI.Window:CreateTab("Webhook", "rbxassetid://106168327267607")
     local FishCaught = UI.Window:AddCollapsible(UI.WebhookTab, "Webhook Fish Caught", false)
-    UI.Window:AddInput(FishCaught, "Webhook URL", "", "Write your input here...", function() end, "Webhook_Fish_URL")
-    UI.Window:AddDropdown(FishCaught, "Tier Filter", "", {"Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret", "Forgotten"}, true, {}, function() end, "Webhook_Fish_Tier")
-    local NameMutation = UI.Window:AddTextHeader(FishCaught, "Webhook by Name & Mutation")
-    UI.Window:AddDropdown(FishCaught, "Name Filter", "", {"Select Options"}, true, {}, function() end, "Webhook_Name_Filter")
-    UI.Window:AddDropdown(FishCaught, "Mutation Filter", "", {"Select Options"}, true, {}, function() end, "Webhook_Mutation_Filter")
-    UI.Window:AddToggle(FishCaught, "Censored Name", "", false, function() end, "Webhook_Censored_Name")
-    UI.Window:AddToggle(FishCaught, "Send Fish Webhook", "", false, function() end, "Webhook_Send_Fish")
-    UI.Window:AddButton(FishCaught, "Test Webhook Connection", "", "rbxassetid://16932740082", function() end)
+
+    UI.Window:AddInput(FishCaught, "Webhook URL", "", "Write your input here...",
+        function(v) Config["Webhook_Fish_URL"] = v end, "Webhook_Fish_URL")
+
+    UI.Window:AddDropdown(FishCaught, "Tier Filter", "",
+        {"Uncommon","Rare","Epic","Legendary","Mythic","Secret","Forgotten"}, true, {},
+        function(v) Config["Webhook_Fish_Tier"] = v end, "Webhook_Fish_Tier")
+
+    UI.Window:AddTextHeader(FishCaught, "Webhook by Name & Mutation")
+
+    local NameFilterDropdown = UI.Window:AddDropdown(FishCaught, "Name Filter", "", {}, true, {},
+        function(v) Config["Webhook_Name_Filter"] = v end, "Webhook_Name_Filter")
+    S.Webhook.NameDropdown = NameFilterDropdown
+
+    -- Mutation list from catalog
+    local mutationList = {}
+    pcall(function()
+        local variants = Data.ItemUtility:GetVariants()
+        for _, v in pairs(variants) do
+            if type(v) == "table" and type(v.Data) == "table" and v.Data.Name then
+                table.insert(mutationList, v.Data.Name)
+            end
+        end
+        table.sort(mutationList)
+    end)
+    local MutationFilterDropdown = UI.Window:AddDropdown(FishCaught, "Mutation Filter", "",
+        mutationList, true, {},
+        function(v) Config["Webhook_Mutation_Filter"] = v end, "Webhook_Mutation_Filter")
+    S.Webhook.MutationDropdown = MutationFilterDropdown
+
+    UI.Window:AddToggle(FishCaught, "Censored Name", "", false,
+        function(v) Config["Webhook_Censored_Name"] = v end, "Webhook_Censored_Name")
+
+    UI.Window:AddToggle(FishCaught, "Send Fish Webhook", "", false,
+        function(v) Config["Webhook_Send_Fish"] = v end, "Webhook_Send_Fish")
+
+    UI.Window:AddButton(FishCaught, "Test Webhook Connection", "", "rbxassetid://16932740082",
+        function()
+            if not urlValid(Config["Webhook_Fish_URL"]) then
+                UI.Library:Notify({ Title="Orvion", Subtitle="Hub",
+                    Content="Fill in Webhook URL first!", Color=Color3.fromRGB(255,80,80), Delay=3 })
+                return
+            end
+            wSend("/catch", {
+                webhookUrl = Config["Webhook_Fish_URL"],
+                event = {
+                    name           = "Test Fish",
+                    category       = "fish",
+                    tier           = "SECRET",
+                    rarity         = "Test",
+                    mutation       = "None",
+                    shiny          = false,
+                    weight         = 0,
+                    baseSellPrice  = 0,
+                    robloxUsername = Service.LocalPlayer.Name,
+                    caughtAt       = os.time(),
+                }
+            })
+            UI.Library:Notify({ Title="Orvion", Subtitle="Hub",
+                Content="Test webhook sent!", Color=Color3.fromRGB(150,150,170), Delay=3 })
+        end)
+
     UI.Window:AddTextHeader(FishCaught, "Webhook Fish Global")
-    UI.Window:AddInput(FishCaught, "Discord ID (For Tag)", "", "Write your Discord ID here...", function() end, "Webhook_Global_Discord")
-    UI.Window:AddToggle(FishCaught, "Send Webhook Global", "Only Secret & Forgotten", false, function() end, "Webhook_Global_Send")
+
+    UI.Window:AddInput(FishCaught, "Discord ID (For Tag)", "", "Write your Discord ID here...",
+        function(v) Config["Webhook_Global_Discord"] = v end, "Webhook_Global_Discord")
+
+    UI.Window:AddToggle(FishCaught, "Send Webhook Global", "Only Secret & Forgotten", false,
+        function(v) Config["Webhook_Global_Send"] = v end, "Webhook_Global_Send")
+
     local WebhookOneServer = UI.Window:AddCollapsible(UI.WebhookTab, "Webhook One-server", false)
+
     UI.Window:AddTextHeader(WebhookOneServer, "Webhook Protection")
-    UI.Window:AddToggle(WebhookOneServer, "Censored Name", "", false, function() end, "Webhook_OneServer_Censored")
+
+    UI.Window:AddToggle(WebhookOneServer, "Censored Name", "", false,
+        function(v) Config["Webhook_OneServer_Censored"] = v end, "Webhook_OneServer_Censored")
+
     UI.Window:AddTextHeader(WebhookOneServer, "Webhook Fish Caught One-server")
-    UI.Window:AddInput(WebhookOneServer, "One-server Webhook URL", "", "Write your input here...", function() end, "Webhook_OneServer_URL")
-    for _, label in ipairs({"Evolved Enchant Stone", "Runic Enchant Stone", "Ruby Gemstone", "Withering Core", "Secret & Forgotten"}) do
-        UI.Window:AddToggle(WebhookOneServer, label, "", false, function() end, "Webhook_OneServer_" .. label:gsub("[^%w]", "_"))
+
+    UI.Window:AddInput(WebhookOneServer, "One-server Webhook URL", "", "Write your input here...",
+        function(v) Config["Webhook_OneServer_URL"] = v end, "Webhook_OneServer_URL")
+
+    for _, label in ipairs({"Evolved Enchant Stone","Runic Enchant Stone","Ruby Gemstone","Withering Core","Secret & Forgotten"}) do
+        local key = "Webhook_OneServer_" .. label:gsub("[^%w]", "_")
+        UI.Window:AddToggle(WebhookOneServer, label, "", false,
+            function(v) Config[key] = v end, key)
     end
+
     UI.Window:AddTextHeader(WebhookOneServer, "Webhook One-server Join / Leave")
-    UI.Window:AddInput(WebhookOneServer, "Webhook One-server Join / Leave URL", "", "Write your input here...", function() end, "Webhook_OneServer_JoinLeave_URL")
-    UI.Window:AddToggle(WebhookOneServer, "Send Webhook One-server Join / Leave", "", false, function() end, "Webhook_OneServer_JoinLeave_Send")
+
+    UI.Window:AddInput(WebhookOneServer, "Webhook One-server Join / Leave URL", "", "Write your input here...",
+        function(v) Config["Webhook_OneServer_JoinLeave_URL"] = v end, "Webhook_OneServer_JoinLeave_URL")
+
+    UI.Window:AddToggle(WebhookOneServer, "Send Webhook One-server Join / Leave", "", false,
+        function(v) Config["Webhook_OneServer_JoinLeave_Send"] = v end, "Webhook_OneServer_JoinLeave_Send")
+
+    -- Populate name filter after catalog loaded (defer so catalog is ready)
+    task.defer(function()
+        local names = {}
+        for name in pairs(Data.FishCatalog.ByName) do
+            table.insert(names, name)
+        end
+        table.sort(names)
+        if S.Webhook.NameDropdown and #names > 0 then
+            pcall(function() S.Webhook.NameDropdown:Refresh(names, nil) end)
+        end
+    end)
+end
 
 -- ====== STARTUP ======
 SupportState.updateBigPopup()
