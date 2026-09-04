@@ -2338,7 +2338,7 @@ end
 do
     local origClick = FishingModes.Controller.RequestFishingMinigameClick
     FishingModes.Controller.RequestFishingMinigameClick = function(self, ...)
-        if FishingModes.Legit.Active and not FishingModes.Legit._ourClick then
+        if FishingModes.Legit.Active and Config.LegitAutoShake and not FishingModes.Legit._ourClick then
             return
         end
         return origClick(self, ...)
