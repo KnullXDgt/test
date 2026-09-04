@@ -2333,6 +2333,18 @@ do
     end
 end
 
+-- Legit Fishing: block AutoFishingController click saat Legit aktif,
+-- hanya izinkan click dari worker kita via flag _ourClick
+do
+    local origClick = FishingModes.Controller.RequestFishingMinigameClick
+    FishingModes.Controller.RequestFishingMinigameClick = function(self, ...)
+        if FishingModes.Legit.Active and not FishingModes.Legit._ourClick then
+            return
+        end
+        return origClick(self, ...)
+    end
+end
+
 -- Re-invoke true kalau server matiin auto fishing (movement detection dll)
 Data.Player:OnChange("AutoFishing", function(value)
     if Runtime.StableResult and not value then
@@ -2399,7 +2411,9 @@ FishingModes.Legit.Start = function()
             if ok and guid then
                 -- Minigame active: shake
                 if Config.LegitAutoShake then
+                    FishingModes.Legit._ourClick = true
                     pcall(function() controller:RequestFishingMinigameClick() end)
+                    FishingModes.Legit._ourClick = false
                     task.wait(Config.LegitShakeDelay)
                 else
                     task.wait(0.05)
