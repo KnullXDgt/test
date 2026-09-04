@@ -2402,21 +2402,15 @@ FishingModes.Legit.Start = function()
         end
     end)
     FishingModes.Legit.Thread = task.spawn(function()
+        local controller = FishingModes.Controller
         while FishingModes.Legit.Active do
-            if not Runtime.Fishing.WaitReady("Legit") then break end
-            local controller = FishingModes.Controller
-            if not controller then
-                Runtime.Fishing.Recover("Legit")
-                task.wait(0.5)
-                continue
-            end
-
-            -- Inner cycle: cast → wait minigame → shake until done
-            local casted = false
-            while FishingModes.Legit.Active do
-                local ok, guid = pcall(function() return controller:GetCurrentGUID() end)
-                if ok and guid then
-                    -- Minigame active: shake
+            if not controller then task.wait(0.5) continue end
+            local ok, guid = pcall(function() return controller:GetCurrentGUID() end)
+            if ok and guid then
+                -- Minigame active — take over shake if AutoShake ON
+                while FishingModes.Legit.Active do
+                    local ok2, guid2 = pcall(function() return controller:GetCurrentGUID() end)
+                    if not (ok2 and guid2) then break end
                     if Config.LegitAutoShake then
                         FishingModes.Legit._ourClick = true
                         pcall(function() controller:RequestFishingMinigameClick() end)
@@ -2425,40 +2419,13 @@ FishingModes.Legit.Start = function()
                     else
                         task.wait(0.05)
                     end
-                else
-                    local isOnCooldown = false
-                    pcall(function() isOnCooldown = controller:OnCooldown() end)
-                    if isOnCooldown then
-                        task.wait(0.2)
-                    elseif not casted then
-                        -- Cast once
-                        local cam = workspace.CurrentCamera
-                        if cam then
-                            pcall(function()
-                                controller:RequestChargeFishingRod(
-                                    Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2),
-                                    false
-                                )
-                            end)
-                        end
-                        casted = true
-                        task.wait(0.1)
-                    else
-                        -- Waiting for minigame to start after cast
-                        task.wait(0.1)
-                        -- If no minigame after reasonable time, cast again
-                        local ok2, guid2 = pcall(function() return controller:GetCurrentGUID() end)
-                        if not (ok2 and guid2) then
-                            casted = false
-                        end
-                    end
                 end
+            else
+                task.wait(0.05)
             end
-            Runtime.Fishing.Recover("Legit")
         end
         FishingModes.Legit.Active = false
         FishingModes.Active = false
-        Runtime.Fishing.Recover("Legit")
     end)
 end
 
