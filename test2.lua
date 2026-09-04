@@ -2411,12 +2411,12 @@ FishingModes.Legit.Start = function()
                 continue
             end
 
-            local ok, guid = pcall(function() return controller:GetCurrentGUID() end)
-            if ok and guid then
-                -- Minigame already active: inner shake loop
-                while FishingModes.Legit.Active do
-                    local ok2, guid2 = pcall(function() return controller:GetCurrentGUID() end)
-                    if not (ok2 and guid2) then break end
+            -- Inner cycle: cast → wait minigame → shake until done
+            local casted = false
+            while FishingModes.Legit.Active do
+                local ok, guid = pcall(function() return controller:GetCurrentGUID() end)
+                if ok and guid then
+                    -- Minigame active: shake
                     if Config.LegitAutoShake then
                         FishingModes.Legit._ourClick = true
                         pcall(function() controller:RequestFishingMinigameClick() end)
@@ -2425,26 +2425,36 @@ FishingModes.Legit.Start = function()
                     else
                         task.wait(0.05)
                     end
-                end
-                Runtime.Fishing.Recover("Legit")
-            else
-                -- Idle: cast rod then release immediately
-                local isOnCooldown = false
-                pcall(function() isOnCooldown = controller:OnCooldown() end)
-                if not isOnCooldown then
-                    local cam = workspace.CurrentCamera
-                    if cam then
-                        pcall(function()
-                            controller:RequestChargeFishingRod(
-                                Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2),
-                                false
-                            )
-                        end)
+                else
+                    local isOnCooldown = false
+                    pcall(function() isOnCooldown = controller:OnCooldown() end)
+                    if isOnCooldown then
+                        task.wait(0.2)
+                    elseif not casted then
+                        -- Cast once
+                        local cam = workspace.CurrentCamera
+                        if cam then
+                            pcall(function()
+                                controller:RequestChargeFishingRod(
+                                    Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2),
+                                    false
+                                )
+                            end)
+                        end
+                        casted = true
+                        task.wait(0.1)
+                    else
+                        -- Waiting for minigame to start after cast
+                        task.wait(0.1)
+                        -- If no minigame after reasonable time, cast again
+                        local ok2, guid2 = pcall(function() return controller:GetCurrentGUID() end)
+                        if not (ok2 and guid2) then
+                            casted = false
+                        end
                     end
                 end
-                task.wait(0.2)
-                Runtime.Fishing.Recover("Legit")
             end
+            Runtime.Fishing.Recover("Legit")
         end
         FishingModes.Legit.Active = false
         FishingModes.Active = false
