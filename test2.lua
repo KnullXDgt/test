@@ -2347,12 +2347,13 @@ end
 
 -- Re-invoke true kalau server matiin auto fishing (movement detection dll)
 Data.Player:OnChange("AutoFishing", function(value)
-    if Runtime.StableResult and not value then
+    if (Runtime.StableResult or FishingModes.Legit.Active) and not value then
         task.wait(0.1)
-        if not Runtime.StableResult then return end
-        pcall(function()
-            Remote.updateAutoFishing:InvokeServer(true)
-        end)
+        if not (Runtime.StableResult or FishingModes.Legit.Active) then return end
+        pcall(function() Remote.cancel:InvokeServer(true) end)
+        task.wait(0.3)
+        if not (Runtime.StableResult or FishingModes.Legit.Active) then return end
+        pcall(function() Remote.updateAutoFishing:InvokeServer(true) end)
     end
 end)
 SupportState.updateBigPopup = function()
