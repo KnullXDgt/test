@@ -687,6 +687,8 @@ local Config = {
     PerfectCast       = false,
     BlatantActive     = false,
     BlatantDelay      = 0,
+    LegitShakeDelay   = 0.05,
+    LegitAutoShake    = false,
     PriorityEvent         = "Select Option",
     SelectEvent           = "Select Option",
     SelectedWeatherEvents = {},
@@ -790,6 +792,7 @@ local FishingModes = {
     Active = false,
     V1 = { Thread = nil },
     V2 = { Thread = nil, Active = false, Delay = 0, SnapReel = false },
+    Legit = { Thread = nil, Active = false },
     Blatant = {
         Thread = nil,
         Generation = 0,
@@ -1141,6 +1144,7 @@ Runtime.Fishing.IsModeActive = function(mode)
     if mode == "V1" then return Config.InstantFishing end
     if mode == "V2" then return FishingModes.V2.Active end
     if mode == "Blatant" then return Config.BlatantActive end
+    if mode == "Legit" then return FishingModes.Legit.Active end
     return true
 end
 
@@ -2356,6 +2360,73 @@ end
 
 -- ====== SUPPORT FEATURES FUNCTIONS ======
 
+-- ====== LEGIT FISHING ======
+FishingModes.Legit.Stop = function()
+    FishingModes.Legit.Active = false
+    FishingModes.Active = false
+    if FishingModes.Legit.Thread then
+        pcall(task.cancel, FishingModes.Legit.Thread)
+        FishingModes.Legit.Thread = nil
+    end
+    Runtime.Fishing.Recover("Legit")
+    pcall(function()
+        if Remote.updateAutoFishing then
+            Remote.updateAutoFishing:InvokeServer(false)
+        end
+    end)
+end
+
+FishingModes.Legit.Start = function()
+    if FishingModes.Legit.Thread then
+        pcall(task.cancel, FishingModes.Legit.Thread)
+    end
+    FishingModes.Legit.Active = true
+    pcall(function()
+        if Remote.updateAutoFishing then
+            Remote.updateAutoFishing:InvokeServer(true)
+            if Remote.markAutoFishing then
+                pcall(function() Remote.markAutoFishing:InvokeServer() end)
+            end
+        end
+    end)
+    FishingModes.Legit.Thread = task.spawn(function()
+        while FishingModes.Legit.Active do
+            if not Runtime.Fishing.WaitReady("Legit") then break end
+            local controller = FishingModes.Controller
+            if not controller then task.wait(0.5) continue end
+
+            local ok, guid = pcall(function() return controller:GetCurrentGUID() end)
+            if ok and guid then
+                -- Minigame active: shake
+                if Config.LegitAutoShake then
+                    pcall(function() controller:RequestFishingMinigameClick() end)
+                    task.wait(Config.LegitShakeDelay)
+                else
+                    task.wait(0.05)
+                end
+            elseif pcall(function() return controller:OnCooldown() end) and controller:OnCooldown() then
+                task.wait(0.2)
+            else
+                -- Idle: cast rod
+                local cam = workspace.CurrentCamera
+                if cam then
+                    pcall(function()
+                        controller:RequestChargeFishingRod(
+                            Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2),
+                            false
+                        )
+                    end)
+                end
+                task.wait(0.5)
+                Runtime.Fishing.Recover("Legit")
+            end
+        end
+        FishingModes.Legit.Active = false
+        FishingModes.Active = false
+        Runtime.Fishing.Recover("Legit")
+    end)
+end
+
 -- The EquippedId listener intentionally ignores an empty hand while a quest
 -- transaction owns it. A transaction can finish after the only EquipId change
 -- has already happened, so recheck after the owner releases it.
@@ -3507,6 +3578,53 @@ UI.Window:AddToggle(UI.SupportSection, "Anti AFK", "", true, function(state)
         end
     end
 end)
+-- Stable Results
+UI.StableSection = UI.Window:AddCollapsible(UI.FishingTab, "Stable Results", false)
+
+UI.Window:AddToggle(UI.StableSection, "Stable Result", "", false, function(state)
+    if Remote.updateAutoFishing then
+        pcall(function()
+            if state then
+                Runtime.StableResult = true
+                Remote.updateAutoFishing:InvokeServer(true)
+                if Remote.markAutoFishing then
+                    pcall(function() Remote.markAutoFishing:InvokeServer() end)
+                end
+            else
+                Runtime.StableResult = false
+                Remote.updateAutoFishing:InvokeServer(false)
+                pcall(function() Remote.cancel:InvokeServer(true) end)
+            end
+        end)
+    end
+end, "Toggle_Stable Result")
+
+UI.Window:AddToggle(UI.StableSection, "Random Results", "", false, function(state)
+    Config.RandomResults = state
+end, "Toggle_Random Results")
+
+UI.Window:AddToggle(UI.StableSection, "Auto Perfect", "", false, function(state)
+    Config.PerfectCast = state
+end, "Toggle_Auto Perfect")
+
+-- Legit Fishing
+UI.LegitSection = UI.Window:AddCollapsible(UI.FishingTab, "Legit Fishing", false)
+
+local legitShakeInput = UI.Window:AddInput(UI.LegitSection, "Shake Delay", "", "Write your input here...", function(v)
+    local n = tonumber(v)
+    if n and n >= 0 then Config.LegitShakeDelay = n end
+end, "Input_Legit Shake Delay")
+legitShakeInput:Set("0.05")
+
+UI.Window:AddToggle(UI.LegitSection, "Enable Legit Fishing", "", false, function(state)
+    FishingModes.Legit.Active = state
+    if state then FishingModes.Legit.Start() else FishingModes.Legit.Stop() end
+end, "Toggle_Legit Fishing")
+
+UI.Window:AddToggle(UI.LegitSection, "Auto Shake", "", false, function(state)
+    Config.LegitAutoShake = state
+end, "Toggle_Legit Auto Shake")
+
 -- Instant Fishing v1
 UI.FishingSection = UI.Window:AddCollapsible(UI.FishingTab, "Instant Fishing", false)
 
@@ -3543,35 +3661,6 @@ UI.Window:AddToggle(UI.BlatantSection, "Blatant (Visual)", "", false, function(s
     Config.BlatantActive = state
     if state then FishingModes.Blatant.Start() else FishingModes.Blatant.Stop() end
 end, "Toggle_Blatant Visual")
-
--- Stable Results
-UI.StableSection = UI.Window:AddCollapsible(UI.FishingTab, "Stable Results", false)
-
-UI.Window:AddToggle(UI.StableSection, "Stable Result", "", false, function(state)
-    if Remote.updateAutoFishing then
-        pcall(function()
-            if state then
-                Runtime.StableResult = true
-                Remote.updateAutoFishing:InvokeServer(true)
-                if Remote.markAutoFishing then
-                    pcall(function() Remote.markAutoFishing:InvokeServer() end)
-                end
-            else
-                Runtime.StableResult = false
-                Remote.updateAutoFishing:InvokeServer(false)
-                pcall(function() Remote.cancel:InvokeServer(true) end)
-            end
-        end)
-    end
-end, "Toggle_Stable Result")
-
-UI.Window:AddToggle(UI.StableSection, "Random Results", "", false, function(state)
-    Config.RandomResults = state
-end, "Toggle_Random Results")
-
-UI.Window:AddToggle(UI.StableSection, "Auto Perfect", "", false, function(state)
-    Config.PerfectCast = state
-end, "Toggle_Auto Perfect")
 
 -- ====== SELL FEATURES (under Main tab) ======
 UI.SellSection = UI.Window:AddCollapsible(UI.FishingTab, "Sell Features", false)
