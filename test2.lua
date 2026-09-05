@@ -2333,18 +2333,6 @@ do
     end
 end
 
--- Legit Fishing: block AutoFishingController click saat Legit aktif,
--- hanya izinkan click dari worker kita via flag _ourClick
-do
-    local origClick = FishingModes.Controller.RequestFishingMinigameClick
-    FishingModes.Controller.RequestFishingMinigameClick = function(self, ...)
-        if FishingModes.Legit.Active and Config.LegitAutoShake and not FishingModes.Legit._ourClick then
-            return
-        end
-        return origClick(self, ...)
-    end
-end
-
 -- Re-invoke true kalau server matiin auto fishing (movement detection dll)
 Data.Player:OnChange("AutoFishing", function(value)
     if (Runtime.StableResult or FishingModes.Legit.Active) and not value then
@@ -2381,6 +2369,10 @@ FishingModes.Legit.Stop = function()
         pcall(task.cancel, FishingModes.Legit.Thread)
         FishingModes.Legit.Thread = nil
     end
+    if FishingModes.Legit._origClickDelay ~= nil then
+        Data.FishingConstants.ClickDelay = FishingModes.Legit._origClickDelay
+        FishingModes.Legit._origClickDelay = nil
+    end
     Runtime.Fishing.Recover("Legit")
     pcall(function()
         if Remote.updateAutoFishing then
@@ -2394,6 +2386,10 @@ FishingModes.Legit.Start = function()
         pcall(task.cancel, FishingModes.Legit.Thread)
     end
     FishingModes.Legit.Active = true
+    if Config.LegitAutoShake then
+        FishingModes.Legit._origClickDelay = Data.FishingConstants.ClickDelay
+        Data.FishingConstants.ClickDelay = 0
+    end
     pcall(function()
         if Remote.updateAutoFishing then
             Remote.updateAutoFishing:InvokeServer(true)
@@ -2408,18 +2404,11 @@ FishingModes.Legit.Start = function()
             if not controller then task.wait(0.5) continue end
             local ok, guid = pcall(function() return controller:GetCurrentGUID() end)
             if ok and guid then
-                -- Minigame active — take over shake if AutoShake ON
-                while FishingModes.Legit.Active do
-                    local ok2, guid2 = pcall(function() return controller:GetCurrentGUID() end)
-                    if not (ok2 and guid2) then break end
-                    if Config.LegitAutoShake then
-                        FishingModes.Legit._ourClick = true
-                        pcall(function() controller:RequestFishingMinigameClick() end)
-                        FishingModes.Legit._ourClick = false
-                        task.wait(Config.LegitShakeDelay)
-                    else
-                        task.wait(0.05)
-                    end
+                if Config.LegitAutoShake then
+                    pcall(function() controller:RequestFishingMinigameClick() end)
+                    task.wait(Config.LegitShakeDelay)
+                else
+                    task.wait(0.05)
                 end
             else
                 task.wait(0.05)
