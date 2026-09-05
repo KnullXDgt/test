@@ -1299,7 +1299,7 @@ Runtime.requestConfiguredCast = function(mode)
                     pcall(function()
                         local tier = Data.TierUtility:GetTierFromRarity(minigameData.SelectedRarity)
                         local name = type(tier) == "table" and (tier.Name or "") or ""
-                        if table.find(Config.SkipRarityTiers, name) then
+                        if #Config.SkipRarityTiers > 0 and not table.find(Config.SkipRarityTiers, name) then
                             skip = true
                             pcall(function() Remote.cancel:InvokeServer(true) end)
                         end
@@ -2369,7 +2369,7 @@ do
             pcall(function()
                 local tier = Data.TierUtility:GetTierFromRarity(data.SelectedRarity)
                 local name = type(tier) == "table" and (tier.Name or "") or ""
-                if table.find(Config.SkipRarityTiers, name) then
+                if #Config.SkipRarityTiers > 0 and not table.find(Config.SkipRarityTiers, name) then
                     pcall(function() Remote.cancel:InvokeServer(true) end)
                     success = false
                     data = nil
@@ -3647,7 +3647,7 @@ UI.Window:AddToggle(UI.StableSection, "Auto Perfect", "", false, function(state)
 end, "Toggle_Auto Perfect")
 
 -- Skip Rarity Features
-UI.SkipRaritySection = UI.Window:AddCollapsible(UI.FishingTab, "Skip Rarity Features", false)
+UI.SkipRaritySection = UI.Window:AddCollapsible(UI.FishingTab, "Skip Rarity", false)
 
 UI.Window:AddParagraph(UI.SkipRaritySection, "Notes!",
     "this feature only works on legit fishing, instant fishing, and instant fishing v2")
