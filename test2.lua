@@ -2370,6 +2370,7 @@ do
                 local tier = Data.TierUtility:GetTierFromRarity(data.SelectedRarity)
                 local name = type(tier) == "table" and (tier.Name or "") or ""
                 if #Config.SkipRarityTiers > 0 and not table.find(Config.SkipRarityTiers, name) then
+                    pcall(function() Remote.cancel:InvokeServer(true) end)
                     success = false
                     data = nil
                 end
