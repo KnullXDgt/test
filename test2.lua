@@ -1304,7 +1304,10 @@ Runtime.requestConfiguredCast = function(mode)
                             skip = true
                             Runtime.SkipRarityCancel = true
                             pcall(function() Remote.cancel:InvokeServer(true) end)
-                            task.defer(function() Runtime.SkipRarityCancel = false end)
+                            Runtime.SkipRarityCancel = false
+                            if Runtime.StableResult then
+                                pcall(function() Remote.updateAutoFishing:InvokeServer(true) end)
+                            end
                         end
                     end)
                     if skip then
@@ -1553,6 +1556,9 @@ Runtime.Sell.Finish = function(ticket)
     Runtime.Sell.Worker = nil
     Runtime.Sell.Monitor = nil
     Runtime.Sell.CompletedAt = os.clock()
+    if Runtime.StableResult or FishingModes.Legit.Active then
+        pcall(function() Remote.updateAutoFishing:InvokeServer(true) end)
+    end
     -- Fake Blatant inventory entries represent the sold batch and must not
     -- survive into later sell cycles.
     pcall(FishingModes.Blatant.Visual.clearInventoryVisuals)
@@ -2375,7 +2381,10 @@ do
                 if #Config.SkipRarityTiers > 0 and not table.find(Config.SkipRarityTiers, name) then
                     Runtime.SkipRarityCancel = true
                     pcall(function() Remote.cancel:InvokeServer(true) end)
-                    task.defer(function() Runtime.SkipRarityCancel = false end)
+                    Runtime.SkipRarityCancel = false
+                    if FishingModes.Legit.Active then
+                        pcall(function() Remote.updateAutoFishing:InvokeServer(true) end)
+                    end
                     success = false
                     data = nil
                 end
