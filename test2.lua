@@ -724,6 +724,7 @@ local Runtime = {
     RemoteCalls = {},
     Trade = { Gates={}, Serial=0, SessionId=nil },
     StableResult = false,
+    SkipRarityCancel = false,
     Random = Random.new(),
     Fishing = {
         Phase = "Idle",
@@ -1301,7 +1302,9 @@ Runtime.requestConfiguredCast = function(mode)
                         local name = type(tier) == "table" and (tier.Name or "") or ""
                         if #Config.SkipRarityTiers > 0 and not table.find(Config.SkipRarityTiers, name) then
                             skip = true
+                            Runtime.SkipRarityCancel = true
                             pcall(function() Remote.cancel:InvokeServer(true) end)
+                            task.defer(function() Runtime.SkipRarityCancel = false end)
                         end
                     end)
                     if skip then
@@ -2370,7 +2373,9 @@ do
                 local tier = Data.TierUtility:GetTierFromRarity(data.SelectedRarity)
                 local name = type(tier) == "table" and (tier.Name or "") or ""
                 if #Config.SkipRarityTiers > 0 and not table.find(Config.SkipRarityTiers, name) then
+                    Runtime.SkipRarityCancel = true
                     pcall(function() Remote.cancel:InvokeServer(true) end)
+                    task.defer(function() Runtime.SkipRarityCancel = false end)
                     success = false
                     data = nil
                 end
@@ -2384,6 +2389,8 @@ end
 Data.Player:OnChange("AutoFishing", function(value)
     if (Runtime.StableResult or FishingModes.Legit.Active) and not value then
         if not (Runtime.StableResult or FishingModes.Legit.Active) then return end
+        if Runtime.SkipRarityCancel then return end
+        if Runtime.Sell.Busy then return end
         pcall(function() Remote.updateAutoFishing:InvokeServer(true) end)
     end
 end)
