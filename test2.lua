@@ -3649,7 +3649,7 @@ end, "Toggle_Auto Perfect")
 UI.SkipRaritySection = UI.Window:AddCollapsible(UI.FishingTab, "Skip Rarity", false)
 
 UI.Window:AddParagraph(UI.SkipRaritySection, "Notes!",
-    "this feature only works on legit fishing, instant fishing, and instant fishing v2")
+    "This feature only works on Legit Fishing,\nInstant Fishing and Instant Fishing V2")
 
 UI.Window:AddDropdown(UI.SkipRaritySection, "Select Skip Rarity", "",
     Catalog.RarityTiers, true, {},
