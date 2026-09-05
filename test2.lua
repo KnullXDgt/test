@@ -689,6 +689,8 @@ local Config = {
     BlatantDelay      = 0,
     LegitShakeDelay   = 0.05,
     LegitAutoShake    = false,
+    SkipRarityEnabled = false,
+    SkipRarityTiers   = {},
     PriorityEvent         = "Select Option",
     SelectEvent           = "Select Option",
     SelectedWeatherEvents = {},
@@ -964,6 +966,8 @@ end
 
 
 Catalog.SavedLocationFile = "OrvionFishIt/SavedLocation.json"
+Catalog.RarityTiers = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Secret","Forgotten"}
+Catalog.RarityTiersNoCommon = {"Uncommon","Rare","Epic","Legendary","Mythic","Secret","Forgotten"}
 
 Navigation.getSavedLocation = function()
     if not isfile(Catalog.SavedLocationFile) then return nil end
@@ -1284,10 +1288,29 @@ Runtime.requestConfiguredCast = function(mode)
             local requestTime = workspace:GetServerTimeNow()
             local waterY = Runtime.getCastWaterY(currentPower)
             Runtime.Fishing.Phase = "Minigame"
-            local minigameCallOk, started = Runtime.callRemote("minigame", 5,
+            local minigameCallOk, started, minigameData = Runtime.callRemote("minigame", 5,
                 function() return Runtime.Fishing.CanContinue(mode) end,
                 waterY, currentPower, requestTime)
-            if minigameCallOk and started ~= false then return true end
+            if minigameCallOk and started ~= false then
+                if Config.SkipRarityEnabled and #Config.SkipRarityTiers > 0
+                    and type(minigameData) == "table"
+                then
+                    local skip = false
+                    pcall(function()
+                        local tier = Data.TierUtility:GetTierFromRarity(minigameData.SelectedRarity)
+                        local name = type(tier) == "table" and (tier.Name or "") or ""
+                        if table.find(Config.SkipRarityTiers, name) then
+                            skip = true
+                            pcall(function() Remote.cancel:InvokeServer(true) end)
+                        end
+                    end)
+                    if skip then
+                        Runtime.Fishing.Recover(mode)
+                        return false
+                    end
+                end
+                return true
+            end
             Runtime.Fishing.Recover(mode)
             return false
         end
@@ -2330,6 +2353,30 @@ do
     FishingModes.Controller.RequestChargeFishingRod = function(self, pos, isAuto, ...)
         if Runtime.StableResult and isAuto == true then return end
         return origCharge(self, pos, isAuto, ...)
+    end
+end
+
+-- Skip Rarity untuk Legit: intercept SendFishingRequestToServer
+do
+    local origSend = FishingModes.Controller.SendFishingRequestToServer
+    FishingModes.Controller.SendFishingRequestToServer = function(self, a, p134, ...)
+        local success, data = origSend(self, a, p134, ...)
+        if success and type(data) == "table"
+            and FishingModes.Legit.Active
+            and Config.SkipRarityEnabled
+            and #Config.SkipRarityTiers > 0
+        then
+            pcall(function()
+                local tier = Data.TierUtility:GetTierFromRarity(data.SelectedRarity)
+                local name = type(tier) == "table" and (tier.Name or "") or ""
+                if table.find(Config.SkipRarityTiers, name) then
+                    pcall(function() Remote.cancel:InvokeServer(true) end)
+                    success = false
+                    data = nil
+                end
+            end)
+        end
+        return success, data
     end
 end
 
@@ -3599,7 +3646,20 @@ UI.Window:AddToggle(UI.StableSection, "Auto Perfect", "", false, function(state)
     Config.PerfectCast = state
 end, "Toggle_Auto Perfect")
 
--- Legit Fishing
+-- Skip Rarity Features
+UI.SkipRaritySection = UI.Window:AddCollapsible(UI.FishingTab, "Skip Rarity Features", false)
+
+UI.Window:AddParagraph(UI.SkipRaritySection, "Notes!",
+    "this feature only works on legit fishing, instant fishing, and instant fishing v2")
+
+UI.Window:AddDropdown(UI.SkipRaritySection, "Select Skip Rarity", "",
+    Catalog.RarityTiers, true, {},
+    function(v) Config.SkipRarityTiers = v end,
+    "Dropdown_Skip Rarity Tiers")
+
+UI.Window:AddToggle(UI.SkipRaritySection, "Skip Rarity", "", false, function(state)
+    Config.SkipRarityEnabled = state
+end, "Toggle_Skip Rarity")
 UI.LegitSection = UI.Window:AddCollapsible(UI.FishingTab, "Legit Fishing", false)
 
 local legitShakeInput = UI.Window:AddInput(UI.LegitSection, "Shake Delay", "", "Write your input here...", function(v)
@@ -9003,7 +9063,7 @@ do
 
     UI.Window:AddDropdown(
         ByRaritySection, "Select Rarity", "",
-        {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Secret","Forgotten"},
+        Catalog.RarityTiers,
         false, "Common",
         function(v) S.Trading.ByRarity_Rarity = v end,
         "Dropdown_Trade_ByRarity_Rarity")
@@ -9590,7 +9650,7 @@ do
         function(v) Config["Webhook_Fish_URL"] = v end, "Webhook_Fish_URL")
 
     UI.Window:AddDropdown(FishCaught, "Tier Filter", "",
-        {"Uncommon","Rare","Epic","Legendary","Mythic","Secret","Forgotten"}, true, {},
+        Catalog.RarityTiersNoCommon, true, {},
         function(v) Config["Webhook_Fish_Tier"] = v end, "Webhook_Fish_Tier")
 
     UI.Window:AddTextHeader(FishCaught, "Webhook by Name & Mutation")
